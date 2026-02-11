@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<meta name="theme-color" content="#2563eb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>UDD - 统一数据展示系统</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --blue-50:#eff6ff;--blue-100:#dbeafe;--blue-200:#bfdbfe;--blue-300:#93c5fd;
+  --blue-500:#3b82f6;--blue-600:#2563eb;--blue-700:#1d4ed8;--blue-800:#1e40af;
+  --gray-50:#f8fafc;--gray-100:#f1f5f9;--gray-200:#e2e8f0;--gray-300:#cbd5e1;
+  --gray-400:#94a3b8;--gray-500:#64748b;--gray-600:#475569;--gray-700:#334155;
+  --gray-800:#1e293b;--gray-900:#0f172a;
+  --bg:#ffffff;--border:var(--gray-200);--text:var(--gray-800);
+  --text-sec:var(--gray-500);--primary:var(--blue-600);--primary-h:var(--blue-700);
+  --primary-l:var(--blue-50);--radius:6px;--shadow:0 1px 3px rgba(0,0,0,.08);
+}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif;font-size:14px;color:var(--text);background:var(--gray-100)}
+
+/* ===== LAYOUT ===== */
+#app{display:flex;flex-direction:column;height:100%;background:var(--bg)}
+#header{flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg)}
+#menu-bar{display:flex;align-items:center;height:40px;padding:0 12px;gap:2px;border-bottom:1px solid var(--gray-100)}
+#menu-bar .logo{font-weight:700;font-size:15px;color:var(--primary);margin-right:12px;letter-spacing:1px}
+#menu-bar .doc-title{flex:1;font-size:13px;color:var(--gray-600);border:none;background:none;outline:none;padding:4px 8px;border-radius:var(--radius);min-width:120px}
+#menu-bar .doc-title:hover{background:var(--gray-50)}
+#menu-bar .doc-title:focus{background:var(--blue-50);color:var(--text)}
+.menu-btn{background:none;border:none;padding:4px 10px;font-size:13px;color:var(--gray-600);cursor:pointer;border-radius:var(--radius);white-space:nowrap}
+.menu-btn:hover{background:var(--gray-100);color:var(--text)}
+.menu-btn.primary{color:var(--primary);font-weight:600}
+.menu-sep{width:1px;height:18px;background:var(--gray-200);margin:0 4px}
+
+#toolbar{display:flex;align-items:center;height:38px;padding:0 12px;gap:2px;overflow-x:auto}
+.tool-btn{background:none;border:1px solid transparent;width:32px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:var(--radius);font-size:14px;color:var(--gray-600)}
+.tool-btn:hover{background:var(--gray-100);border-color:var(--gray-200)}
+.tool-btn.active{background:var(--blue-50);color:var(--primary);border-color:var(--blue-200)}
+.tool-select{height:28px;border:1px solid var(--gray-200);border-radius:var(--radius);padding:0 6px;font-size:12px;color:var(--text);background:var(--bg);cursor:pointer;outline:none}
+.tool-select:hover{border-color:var(--gray-300)}
+.tool-select:focus{border-color:var(--primary)}
+.tool-color{width:28px;height:28px;border:1px solid var(--gray-200);border-radius:var(--radius);cursor:pointer;padding:2px;background:var(--bg)}
+.tool-color::-webkit-color-swatch-wrapper{padding:0}
+.tool-color::-webkit-color-swatch{border:none;border-radius:3px}
+.tool-sep{width:1px;height:20px;background:var(--gray-200);margin:0 4px;flex-shrink:0}
+
+#view-tabs{display:flex;align-items:center;height:34px;padding:0 12px;gap:0;background:var(--gray-50);border-bottom:1px solid var(--border)}
+.view-tab{background:none;border:none;padding:6px 16px;font-size:13px;color:var(--gray-500);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.view-tab:hover{color:var(--text)}
+.view-tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+#view-tabs .spacer{flex:1}
+#sidebar-toggle{background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)}
+#sidebar-toggle:hover{background:var(--gray-100);color:var(--text)}
+#sidebar-toggle.active{background:var(--blue-50);color:var(--primary);border-color:var(--blue-200)}
+
+#main{flex:1;display:flex;overflow:hidden}
+#editor{flex:1;overflow:auto;position:relative}
+#outline-view{padding:16px 20px 80px 20px;display:none;max-width:960px;margin:0 auto}
+#outline-view.active{display:block}
+#document-view{display:none;padding:20px}
+#document-view.active{display:block}
+
+#sidebar{width:340px;border-left:1px solid var(--border);display:none;flex-direction:column;background:var(--bg)}
+#sidebar.active{display:flex}
+#sidebar .sidebar-header{padding:10px 14px;font-size:13px;font-weight:600;color:var(--gray-600);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+#sidebar .sidebar-header button{background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:16px}
+#sidebar .sidebar-header button:hover{color:var(--text)}
+#sidebar-content{flex:1;overflow:auto;padding:8px}
+#sidebar-json{width:100%;height:100%;border:none;resize:none;font-family:'Cascadia Code','Fira Code','Consolas',monospace;font-size:12px;line-height:1.5;color:var(--gray-700);outline:none;padding:8px;background:var(--gray-50);border-radius:var(--radius)}
+
+#status-bar{height:26px;display:flex;align-items:center;padding:0 14px;font-size:12px;color:var(--text-sec);border-top:1px solid var(--border);background:var(--bg);gap:16px;flex-shrink:0}
+#status-bar .sep{width:1px;height:12px;background:var(--gray-200)}
+
+/* ===== OUTLINE VIEW ===== */
+.outline-node{position:relative}
+.outline-row{display:flex;align-items:flex-start;padding:2px 0;min-height:28px;border-radius:var(--radius)}
+.outline-row:hover{background:var(--gray-50)}
+.outline-row .indent{flex-shrink:0}
+.outline-arrow{width:22px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-400);font-size:11px;flex-shrink:0;border-radius:var(--radius);user-select:none;margin-top:1px}
+.outline-arrow:hover{background:var(--gray-200);color:var(--text)}
+.outline-arrow.leaf{cursor:default;font-size:6px;color:var(--gray-300)}
+.outline-arrow.leaf:hover{background:transparent;color:var(--gray-300)}
+.outline-content{flex:1;padding:2px 6px;line-height:1.6;outline:none;border-radius:3px;min-height:24px;word-break:break-word}
+.outline-content:focus{background:var(--blue-50)}
+.outline-content:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
+.outline-body-toggle{width:18px;height:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-300);font-size:10px;border-radius:3px;margin-top:4px;flex-shrink:0}
+.outline-body-toggle:hover{background:var(--gray-200);color:var(--gray-500)}
+.outline-body{padding:3px 6px;margin-left:22px;color:var(--gray-500);font-size:13px;line-height:1.5;outline:none;border-left:2px solid var(--gray-200);border-radius:0 3px 3px 0;min-height:20px;word-break:break-word}
+.outline-body:focus{background:var(--blue-50);border-left-color:var(--primary)}
+.outline-body:empty::before{content:'输入正文...';color:var(--gray-300);pointer-events:none}
+.outline-children{margin-left:0}
+.outline-add-body{font-size:11px;color:var(--gray-300);cursor:pointer;padding:2px 6px;margin-left:22px;border-radius:3px;display:inline-block}
+.outline-add-body:hover{color:var(--primary);background:var(--blue-50)}
+
+/* ===== DOCUMENT VIEW ===== */
+.doc-page{max-width:780px;margin:0 auto 40px;padding:60px 72px;background:var(--bg);box-shadow:var(--shadow);border:1px solid var(--gray-200);border-radius:var(--radius);min-height:600px}
+.doc-h1{font-size:22px;font-weight:700;color:var(--gray-900);margin:28px 0 10px;line-height:1.4}
+.doc-h2{font-size:18px;font-weight:600;color:var(--gray-800);margin:20px 0 8px;line-height:1.4}
+.doc-h3{font-size:15px;font-weight:600;color:var(--gray-700);margin:14px 0 6px;line-height:1.4}
+.doc-h4,.doc-h5,.doc-h6{font-size:14px;font-weight:600;color:var(--gray-600);margin:10px 0 4px;line-height:1.4}
+.doc-body{font-size:14px;line-height:1.8;color:var(--gray-700);margin:4px 0 10px;text-indent:2em}
+.doc-page .doc-h1:first-child{margin-top:0}
+.doc-num{color:var(--gray-400);margin-right:6px;font-weight:400;font-size:90%}
+
+/* ===== MODAL ===== */
+.modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:1000;display:flex;align-items:center;justify-content:center}
+.modal{background:var(--bg);border-radius:10px;padding:24px;min-width:360px;max-width:500px;box-shadow:0 20px 60px rgba(0,0,0,.15)}
+.modal h3{font-size:16px;margin-bottom:14px;color:var(--gray-800)}
+.modal p{font-size:13px;color:var(--gray-600);margin-bottom:16px;line-height:1.6}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px}
+.btn{padding:6px 16px;border-radius:var(--radius);font-size:13px;cursor:pointer;border:1px solid var(--gray-200);background:var(--bg);color:var(--text)}
+.btn:hover{background:var(--gray-50)}
+.btn-primary{background:var(--primary);color:white;border-color:var(--primary)}
+.btn-primary:hover{background:var(--primary-h)}
+
+/* ===== TOAST ===== */
+#toast{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);background:var(--gray-800);color:white;padding:8px 20px;border-radius:20px;font-size:13px;z-index:2000;opacity:0;transition:opacity .3s;pointer-events:none}
+#toast.show{opacity:1}
+
+/* ===== RESPONSIVE ===== */
+@media(max-width:768px){
+  #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:100;box-shadow:-4px 0 20px rgba(0,0,0,.1)}
+  .doc-page{padding:24px 20px;margin:10px}
+  #outline-view{padding:10px 8px 60px}
+  #toolbar{padding:0 6px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- HEADER -->
+  <header id="header">
+    <div id="menu-bar">
+      <span class="logo">UDD</span>
+      <input id="doc-title" class="doc-title" value="未命名文档" spellcheck="false">
+      <button class="menu-btn primary" onclick="app.newFile()" title="Ctrl+N">新建</button>
+      <button class="menu-btn" onclick="app.openFile()" title="Ctrl+O">打开</button>
+      <button class="menu-btn" onclick="app.saveFile()" title="Ctrl+S">保存</button>
+      <button class="menu-btn" onclick="app.saveFileAs()">另存为</button>
+      <div class="menu-sep"></div>
+      <button class="menu-btn" onclick="app.exportJSON()">导出JSON</button>
+      <button class="menu-btn" onclick="app.importJSON()">导入JSON</button>
+    </div>
+    <div id="toolbar">
+      <button class="tool-btn" onclick="app.undo()" title="撤销 Ctrl+Z">↩</button>
+      <button class="tool-btn" onclick="app.redo()" title="重做 Ctrl+Shift+Z">↪</button>
+      <div class="tool-sep"></div>
+      <select id="tool-font" class="tool-select" onchange="app.setNodeStyle('font',this.value)" title="字体">
+        <option value="微软雅黑">微软雅黑</option>
+        <option value="宋体">宋体</option>
+        <option value="黑体">黑体</option>
+        <option value="楷体">楷体</option>
+        <option value="仿宋">仿宋</option>
+        <option value="Arial">Arial</option>
+        <option value="Times New Roman">Times New Roman</option>
+      </select>
+      <select id="tool-size" class="tool-select" onchange="app.setNodeStyle('font_size',+this.value)" title="字号" style="width:60px">
+        <option value="12">12</option><option value="14">14</option><option value="16">16</option>
+        <option value="18">18</option><option value="20">20</option><option value="24">24</option>
+        <option value="28">28</option><option value="32">32</option><option value="36">36</option>
+      </select>
+      <div class="tool-sep"></div>
+      <button id="tool-bold" class="tool-btn" onclick="app.toggleStyle('bold')" title="加粗 Ctrl+B"><b>B</b></button>
+      <button id="tool-italic" class="tool-btn" onclick="app.toggleStyle('italic')" title="斜体 Ctrl+I"><i>I</i></button>
+      <button id="tool-underline" class="tool-btn" onclick="app.toggleStyle('underline')" title="下划线 Ctrl+U"><u>U</u></button>
+      <button id="tool-strike" class="tool-btn" onclick="app.toggleStyle('strikethrough')" title="删除线"><s>S</s></button>
+      <div class="tool-sep"></div>
+      <input type="color" id="tool-color" class="tool-color" value="#1e293b" onchange="app.setColor(this.value)" title="字体颜色">
+      <input type="color" id="tool-bg" class="tool-color" value="#ffffff" onchange="app.setBgColor(this.value)" title="背景色">
+      <div class="tool-sep"></div>
+      <select id="tool-numbering" class="tool-select" onchange="app.setNumbering(this.value)" title="编号样式" style="width:80px">
+        <option value="1.1.1">1.1.1</option>
+        <option value="一.1.1">一.1.1</option>
+        <option value="I.A.1">I.A.1</option>
+        <option value="bullet">无序</option>
+        <option value="none">无编号</option>
+      </select>
+    </div>
+    <div id="view-tabs">
+      <button class="view-tab active" data-view="outline" onclick="app.switchView('outline')">大纲</button>
+      <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
+      <div class="spacer"></div>
+      <button id="sidebar-toggle" onclick="app.toggleSidebar()">侧边栏</button>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main id="main">
+    <div id="editor">
+      <div id="outline-view" class="active"></div>
+      <div id="document-view"></div>
+    </div>
+    <div id="sidebar">
+      <div class="sidebar-header">
+        <span>原始数据</span>
+        <button onclick="app.applySidebarJSON()" title="应用修改">✓</button>
+      </div>
+      <div id="sidebar-content">
+        <textarea id="sidebar-json" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </main>
+
+  <!-- STATUS BAR -->
+  <footer id="status-bar">
+    <span id="stat-nodes">节点: 0</span>
+    <span class="sep"></span>
+    <span id="stat-words">字数: 0</span>
+    <span class="sep"></span>
+    <span id="stat-level">层级: -</span>
+    <span class="sep"></span>
+    <span id="stat-save">未保存</span>
+  </footer>
+</div>
+
+<div id="toast"></div>
+
+<!-- JSZip for .udd file support -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+// ================================================================
+//  ESCAPE TABLE
+// ================================================================
+const ESCAPE_TABLE = {
+  meta:"m",title:"tt",author:"au",created:"cr",modified:"md",version:"v",
+  description:"desc",tags:"tgs",language:"lang",type_global:"tg",
+  content:"c",body:"b",note:"nt",comment:"cmt",
+  font:"f",font_size:"fs",color:"c1",bold:"bd",italic:"it",
+  underline:"ul",underline_color:"ulc",strikethrough:"st",
+  superscript:"sup",subscript:"sub",highlight:"hl",
+  letter_spacing:"ls",text_shadow:"ts",text_outline:"to",
+  small_caps:"sc",font_scale:"fsc",
+  align:"al",vertical_align:"va",
+  paragraph_before:"pb",paragraph_after:"pa",paragraph_line:"pl",
+  paragraph_line_fixed:"plf",paragraph_first_indent:"pfi",
+  indent_left:"il",indent_right:"ir",indent_hanging:"ih",
+  text_direction:"td",word_wrap:"ww",keep_together:"kt",
+  keep_with_next:"kwn",page_break_before:"pbb",widow_control:"wc",
+  hide:"h",hide_t:"ht",hide_body:"hb",visible:"vis",
+  locked:"loc",read_only:"ro",collapsed_default:"cd",
+  numbering_style:"ns",numbering_format:"nf",numbering_start:"nst",list_style:"lst",
+  background_color:"bgc",background_opacity:"bgo",
+  border:"bdr",border_style:"bdrs",border_color:"bdrc",
+  border_width:"bdrw",border_radius:"bdrr",shadow:"shd",opacity:"op",rotation:"rot"
+};
+const REVERSE_ESCAPE = {};
+for (const [k,v] of Object.entries(ESCAPE_TABLE)) REVERSE_ESCAPE[v] = k;
+
+function compressKey(key) {
+  if (ESCAPE_TABLE[key]) return ESCAPE_TABLE[key];
+  const dot = key.indexOf('.');
+  if (dot > 0) {
+    const pre = key.substring(0, dot), suf = key.substring(dot + 1);
+    return (ESCAPE_TABLE[pre] || pre) + '.' + compressKey(suf);
+  }
+  return key;
+}
+function decompressKey(key) {
+  if (REVERSE_ESCAPE[key]) return REVERSE_ESCAPE[key];
+  const dot = key.indexOf('.');
+  if (dot > 0) {
+    const pre = key.substring(0, dot), suf = key.substring(dot + 1);
+    return (REVERSE_ESCAPE[pre] || pre) + '.' + decompressKey(suf);
+  }
+  return key;
+}
+function compressData(obj) {
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return obj;
+  const r = {};
+  for (const [k,v] of Object.entries(obj)) r[compressKey(k)] = compressData(v);
+  return r;
+}
+function decompressData(obj) {
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return obj;
+  const r = {};
+  for (const [k,v] of Object.entries(obj)) r[decompressKey(k)] = decompressData(v);
+  return r;
+}
+
+// ================================================================
+//  UTILITY FUNCTIONS
+// ================================================================
+function getLevel(key) { const m = key.match(/^t(\d+)-/); return m ? +m[1] : 0; }
+function getSeq(key) { const m = key.match(/^t\d+-(\d+)$/); return m ? +m[1] : 0; }
+function isTNode(key) { return /^t\d+-\d+$/.test(key); }
+function getChildTKeys(node, level) {
+  if (!node || typeof node !== 'object') return [];
+  const re = new RegExp(`^t${level}-\\d+$`);
+  return Object.keys(node).filter(k => re.test(k));
+}
+function getAllTKeys(node) {
+  if (!node || typeof node !== 'object') return [];
+  return Object.keys(node).filter(k => isTNode(k));
+}
+function getNodeByPath(data, path) {
+  const parts = path.split('.');
+  let n = data;
+  for (const p of parts) { if (!n || typeof n !== 'object') return null; n = n[p]; }
+  return n;
+}
+function getParentAndKey(data, path) {
+  const parts = path.split('.');
+  const key = parts.pop();
+  let parent = data;
+  for (const p of parts) parent = parent[p];
+  return { parent, key, parentPath: parts.join('.') };
+}
+function insertAfter(obj, afterKey, newKey, newValue) {
+  const entries = Object.entries(obj);
+  const temp = {};
+  let found = false;
+  for (const [k,v] of entries) {
+    temp[k] = v;
+    if (k === afterKey) { temp[newKey] = newValue; found = true; }
+  }
+  if (!found) temp[newKey] = newValue;
+  for (const k of Object.keys(obj)) delete obj[k];
+  Object.assign(obj, temp);
+}
+function insertBefore(obj, beforeKey, newKey, newValue) {
+  const entries = Object.entries(obj);
+  const temp = {};
+  for (const [k,v] of entries) {
+    if (k === beforeKey) temp[newKey] = newValue;
+    temp[k] = v;
+  }
+  for (const k of Object.keys(obj)) delete obj[k];
+  Object.assign(obj, temp);
+}
+function relevelNode(node, levelDiff) {
+  const result = {};
+  for (const [k,v] of Object.entries(node)) {
+    if (isTNode(k)) {
+      const nl = getLevel(k) + levelDiff;
+      const ns = getSeq(k);
+      result[`t${nl}-${ns}`] = relevelNode(v, levelDiff);
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+function nextSeq(node, level) {
+  const keys = getChildTKeys(node, level);
+  return keys.reduce((mx, k) => Math.max(mx, getSeq(k)), 0) + 1;
+}
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+function rgbToHex(rgb) {
+  if (!rgb || typeof rgb !== 'string') return '#1e293b';
+  const parts = rgb.split(',').map(s => +s.trim());
+  if (parts.length < 3) return '#1e293b';
+  return '#' + parts.slice(0,3).map(n => Math.max(0,Math.min(255,n)).toString(16).padStart(2,'0')).join('');
+}
+function hexToRgb(hex) {
+  const h = hex.replace('#','');
+  return [parseInt(h.substring(0,2),16), parseInt(h.substring(2,4),16), parseInt(h.substring(4,6),16)].join(',');
+}
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+// ================================================================
+//  DEFAULT DATA
+// ================================================================
+function createDefaultData() {
+  return {
+    meta: {
+      title: "未命名文档", author: "", created: new Date().toISOString(),
+      modified: new Date().toISOString(), version: "1.0"
+    },
+    type_global: {
+      "t1-*.font": "微软雅黑", "t1-*.font_size": 22, "t1-*.color": "30,41,59",
+      "t1-*.bold": 1, "t1-*.paragraph_before": 1, "t1-*.paragraph_after": 0.5,
+      "t2-*.font": "微软雅黑", "t2-*.font_size": 17, "t2-*.color": "51,65,85",
+      "t2-*.bold": 1, "t2-*.paragraph_before": 0.5, "t2-*.paragraph_after": 0.3,
+      "t3-*.font": "微软雅黑", "t3-*.font_size": 14, "t3-*.color": "71,85,105",
+      "t3-*.paragraph_line": 1.3,
+      "body.font": "宋体", "body.font_size": 14, "body.color": "51,65,85",
+      "body.paragraph_line": 1.8, "body.paragraph_first_indent": 2,
+      hide_t: "t>3", numbering_style: "1.1.1"
+    },
+    "t1-1": { content: "", hide: 0, hide_body: 0 }
+  };
+}
+
+// ================================================================
+//  INDEXEDDB STORAGE
+// ================================================================
+const DB_NAME = 'udd-db', DB_VER = 1, STORE = 'docs';
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => { e.target.result.createObjectStore(STORE, { keyPath: 'id' }); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbSave(id, data) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put({ id, data: deepClone(data), ts: Date.now() });
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+async function dbLoad(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get(id);
+    req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+  });
+}
+
+// ================================================================
+//  UNDO MANAGER
+// ================================================================
+class UndoManager {
+  constructor(limit = 80) { this.stack = []; this.pos = -1; this.limit = limit; }
+  push(data) {
+    this.stack = this.stack.slice(0, this.pos + 1);
+    this.stack.push(deepClone(data));
+    if (this.stack.length > this.limit) this.stack.shift();
+    this.pos = this.stack.length - 1;
+  }
+  undo() { return this.pos > 0 ? deepClone(this.stack[--this.pos]) : null; }
+  redo() { return this.pos < this.stack.length - 1 ? deepClone(this.stack[++this.pos]) : null; }
+}
+
+// ================================================================
+//  TOAST
+// ================================================================
+function toast(msg, ms = 2000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), ms);
+}
+
+// ================================================================
+//  OUTLINE VIEW
+// ================================================================
+class OutlineView {
+  constructor(container) {
+    this.el = container;
+    this.focusPath = null;
+    this.focusField = 'content';
+    this.focusCursorEnd = true;
+    this.el.addEventListener('keydown', e => this.onKeyDown(e));
+    this.el.addEventListener('input', e => this.onInput(e));
+    this.el.addEventListener('focusin', e => this.onFocusIn(e));
+  }
+
+  render(data) {
+    this.data = data;
+    this.el.innerHTML = '';
+    const rootKeys = getAllTKeys(data);
+    for (const key of rootKeys) {
+      this.renderNode(data[key], key, getLevel(key), this.el);
+    }
+    if (this.focusPath) {
+      requestAnimationFrame(() => this.restoreFocus());
+    }
+    this.updateStatus();
+  }
+
+  renderNode(node, path, level, container) {
+    if (!node || typeof node !== 'object') return;
+    const div = document.createElement('div');
+    div.className = 'outline-node';
+    div.dataset.path = path;
+
+    const row = document.createElement('div');
+    row.className = 'outline-row';
+
+    // indent
+    const indent = document.createElement('span');
+    indent.className = 'indent';
+    indent.style.width = ((level - 1) * 24) + 'px';
+    row.appendChild(indent);
+
+    // fold arrow
+    const childLevel = level + 1;
+    const childKeys = getChildTKeys(node, childLevel);
+    const arrow = document.createElement('span');
+    arrow.className = 'outline-arrow' + (childKeys.length === 0 ? ' leaf' : '');
+    arrow.textContent = childKeys.length === 0 ? '•' : (node.hide ? '▶' : '▼');
+    arrow.onclick = () => {
+      if (childKeys.length === 0) return;
+      node.hide = node.hide ? 0 : 1;
+      this.focusPath = path;
+      this.render(this.data);
+      app.markDirty();
+    };
+    row.appendChild(arrow);
+
+    // content
+    const style = this.getStyle(path, level);
+    const content = document.createElement('div');
+    content.className = 'outline-content';
+    content.contentEditable = 'plaintext-only';
+    if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
+    content.textContent = node.content || '';
+    content.dataset.path = path;
+    content.dataset.field = 'content';
+    content.dataset.placeholder = level === 1 ? '输入标题...' : '输入内容...';
+    content.spellcheck = false;
+    this.applyStyle(content, style);
+    row.appendChild(content);
+
+    // body toggle
+    const hasBody = node.body !== undefined && node.body !== '';
+    if (hasBody) {
+      const tog = document.createElement('span');
+      tog.className = 'outline-body-toggle';
+      tog.textContent = node.hide_body ? '▸' : '▾';
+      tog.title = node.hide_body ? '展开正文' : '折叠正文';
+      tog.onclick = () => {
+        node.hide_body = node.hide_body ? 0 : 1;
+        this.focusPath = path;
+        this.render(this.data);
+        app.markDirty();
+      };
+      row.appendChild(tog);
+    }
+
+    div.appendChild(row);
+
+    // body content
+    if (!node.hide_body && (hasBody || this.isBodyEditing(path))) {
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'outline-body';
+      bodyEl.contentEditable = 'plaintext-only';
+      if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
+      bodyEl.textContent = node.body || '';
+      bodyEl.dataset.path = path;
+      bodyEl.dataset.field = 'body';
+      bodyEl.spellcheck = false;
+      bodyEl.style.marginLeft = ((level - 1) * 24 + 22) + 'px';
+      div.appendChild(bodyEl);
+    }
+
+    // add-body hint (if no body yet)
+    if (!hasBody && !node.hide_body) {
+      const addBody = document.createElement('span');
+      addBody.className = 'outline-add-body';
+      addBody.textContent = '+ 正文';
+      addBody.style.marginLeft = ((level - 1) * 24 + 22) + 'px';
+      addBody.onclick = () => {
+        node.body = '';
+        node.hide_body = 0;
+        this.focusPath = path;
+        this.focusField = 'body';
+        this.render(this.data);
+        app.markDirty();
+      };
+      div.appendChild(addBody);
+    }
+
+    // children
+    if (!node.hide && childKeys.length > 0) {
+      const childContainer = document.createElement('div');
+      childContainer.className = 'outline-children';
+      for (const ck of childKeys) {
+        this.renderNode(node[ck], path + '.' + ck, childLevel, childContainer);
+      }
+      div.appendChild(childContainer);
+    }
+
+    container.appendChild(div);
+  }
+
+  isBodyEditing(path) { return this.focusPath === path && this.focusField === 'body'; }
+
+  getStyle(path, level) {
+    const tg = this.data.type_global || {};
+    const node = getNodeByPath(this.data, path);
+    const style = {};
+    const prefix = `t${level}-*.`;
+    // from type_global
+    for (const [k,v] of Object.entries(tg)) {
+      if (k.startsWith(prefix)) {
+        const field = k.substring(prefix.length);
+        style[field] = v;
+      }
+    }
+    // from node
+    if (node) {
+      for (const field of ['font','font_size','color','bold','italic','underline','strikethrough','background_color']) {
+        if (node[field] !== undefined) style[field] = node[field];
+      }
+    }
+    return style;
+  }
+
+  applyStyle(el, style) {
+    if (style.font) el.style.fontFamily = style.font;
+    if (style.font_size) el.style.fontSize = style.font_size + 'pt';
+    if (style.color) el.style.color = rgbToHex(String(style.color));
+    if (style.bold) el.style.fontWeight = '700';
+    if (style.italic) el.style.fontStyle = 'italic';
+    if (style.underline) el.style.textDecoration = 'underline';
+    if (style.strikethrough) {
+      el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
+    }
+    if (style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
+  }
+
+  // Sync all editable elements to data
+  syncAll() {
+    this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
+      const node = getNodeByPath(this.data, el.dataset.path);
+      if (node) node[el.dataset.field] = el.textContent;
+    });
+  }
+
+  onInput(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    const node = getNodeByPath(this.data, el.dataset.path);
+    if (node) {
+      node[el.dataset.field] = el.textContent;
+      app.markDirty();
+    }
+    this.updateStatus();
+  }
+
+  onFocusIn(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path) return;
+    this.focusPath = el.dataset.path;
+    this.focusField = el.dataset.field || 'content';
+    app.updateToolbar(this.focusPath);
+    this.updateStatus();
+    app.updateSidebar(this.focusPath);
+  }
+
+  onKeyDown(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path) return;
+    const path = el.dataset.path;
+    const field = el.dataset.field || 'content';
+
+    if (field === 'body') {
+      // In body, Enter just adds newlines normally, Tab does nothing special
+      return;
+    }
+
+    switch (e.key) {
+      case 'Enter':
+        e.preventDefault();
+        this.syncAll();
+        app.pushUndo();
+        this.addSiblingAfter(path);
+        break;
+      case 'Tab':
+        e.preventDefault();
+        this.syncAll();
+        app.pushUndo();
+        if (e.shiftKey) this.outdentNode(path);
+        else this.indentNode(path);
+        break;
+      case 'Backspace':
+        if (el.textContent === '') {
+          e.preventDefault();
+          this.syncAll();
+          app.pushUndo();
+          this.deleteNode(path);
+        }
+        break;
+      case 'ArrowUp':
+        if (this.getCursorLine(el) === 0) {
+          e.preventDefault();
+          this.moveFocus(path, -1);
+        }
+        break;
+      case 'ArrowDown':
+        if (this.getCursorLine(el) === this.getLineCount(el) - 1) {
+          e.preventDefault();
+          this.moveFocus(path, 1);
+        }
+        break;
+    }
+  }
+
+  getCursorLine() { return 0; }
+  getLineCount() { return 1; }
+
+  addSiblingAfter(path) {
+    const parts = path.split('.');
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+    const newSeqNum = nextSeq(parent, level);
+    const newKey = `t${level}-${newSeqNum}`;
+    const newNode = { content: '', hide: 0, hide_body: 0 };
+    insertAfter(parent, currentKey, newKey, newNode);
+    const newPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
+    this.focusPath = newPath;
+    this.focusField = 'content';
+    this.focusCursorEnd = false;
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  indentNode(path) {
+    const parts = path.split('.');
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+    const siblings = getChildTKeys(parent, level);
+    const idx = siblings.indexOf(currentKey);
+    if (idx <= 0) return; // can't indent first sibling
+
+    const prevKey = siblings[idx - 1];
+    const prevNode = parent[prevKey];
+    const node = parent[currentKey];
+    delete parent[currentKey];
+
+    // Re-level and add as child of previous sibling
+    const newLevel = level + 1;
+    const newSeqNum = nextSeq(prevNode, newLevel);
+    const newKey = `t${newLevel}-${newSeqNum}`;
+    prevNode[newKey] = relevelNode(node, 1);
+    // Fix: relevelNode adds diff, but the node itself needs content/body/hide preserved
+    prevNode[newKey].content = node.content;
+    prevNode[newKey].body = node.body;
+    prevNode[newKey].hide = node.hide || 0;
+    prevNode[newKey].hide_body = node.hide_body || 0;
+    // Copy style fields
+    for (const k of Object.keys(node)) {
+      if (!isTNode(k) && prevNode[newKey][k] === undefined) prevNode[newKey][k] = node[k];
+    }
+
+    const prevPath = parts.length === 1 ? prevKey : parts.slice(0,-1).join('.') + '.' + prevKey;
+    this.focusPath = prevPath + '.' + newKey;
+    this.focusField = 'content';
+    // Make sure parent is expanded
+    prevNode.hide = 0;
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  outdentNode(path) {
+    const parts = path.split('.');
+    if (parts.length <= 1) return; // already root
+
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    const parentPath = parts.slice(0, -1).join('.');
+    const parentParts = parentPath.split('.');
+    const parentKey = parentParts[parentParts.length - 1];
+
+    let grandParent = parentParts.length === 1 ? this.data : getNodeByPath(this.data, parentParts.slice(0,-1).join('.'));
+    let parentNode = grandParent[parentKey];
+
+    const node = parentNode[currentKey];
+    delete parentNode[currentKey];
+
+    const newLevel = level - 1;
+    const newSeqNum = nextSeq(grandParent, newLevel);
+    const newKey = `t${newLevel}-${newSeqNum}`;
+
+    const newNode = relevelNode(node, -1);
+    newNode.content = node.content;
+    newNode.body = node.body;
+    newNode.hide = node.hide || 0;
+    newNode.hide_body = node.hide_body || 0;
+    for (const k of Object.keys(node)) {
+      if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
+    }
+
+    insertAfter(grandParent, parentKey, newKey, newNode);
+
+    const newPath = parentParts.length === 1 ? newKey : parentParts.slice(0,-1).join('.') + '.' + newKey;
+    this.focusPath = newPath;
+    this.focusField = 'content';
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  deleteNode(path) {
+    const parts = path.split('.');
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+    const siblings = getChildTKeys(parent, level);
+
+    // Don't delete the very last root node
+    if (parts.length === 1 && getAllTKeys(this.data).length <= 1) return;
+
+    const idx = siblings.indexOf(currentKey);
+    const node = parent[currentKey];
+    const childKeys = getAllTKeys(node);
+    if (childKeys.length > 0) {
+      if (!confirm('该节点下有子节点，确定删除？')) return;
+    }
+
+    delete parent[currentKey];
+
+    // Focus previous sibling or parent
+    if (idx > 0) {
+      const prevKey = siblings[idx - 1];
+      this.focusPath = parts.length === 1 ? prevKey : parts.slice(0,-1).join('.') + '.' + prevKey;
+    } else if (parts.length > 1) {
+      this.focusPath = parts.slice(0,-1).join('.');
+    } else {
+      // Find another root node
+      const remaining = getAllTKeys(this.data);
+      this.focusPath = remaining.length > 0 ? remaining[0] : null;
+    }
+    this.focusField = 'content';
+    this.focusCursorEnd = true;
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  moveFocus(currentPath, direction) {
+    const visible = this.getVisiblePaths();
+    const idx = visible.indexOf(currentPath);
+    if (idx < 0) return;
+    const newIdx = idx + direction;
+    if (newIdx >= 0 && newIdx < visible.length) {
+      this.focusPath = visible[newIdx];
+      this.focusField = 'content';
+      this.focusCursorEnd = direction > 0 ? false : true;
+      this.restoreFocus();
+    }
+  }
+
+  getVisiblePaths() {
+    const paths = [];
+    const walk = (obj, prefix) => {
+      const tkeys = getAllTKeys(obj);
+      for (const k of tkeys) {
+        const p = prefix ? prefix + '.' + k : k;
+        paths.push(p);
+        if (!obj[k].hide) walk(obj[k], p);
+      }
+    };
+    walk(this.data, '');
+    return paths;
+  }
+
+  restoreFocus() {
+    if (!this.focusPath) return;
+    const sel = `[data-path="${this.focusPath}"][data-field="${this.focusField}"]`;
+    const el = this.el.querySelector(sel);
+    if (el) {
+      el.focus();
+      // Move cursor to end or beginning
+      const range = document.createRange();
+      const selObj = window.getSelection();
+      if (el.childNodes.length > 0) {
+        if (this.focusCursorEnd) {
+          range.selectNodeContents(el);
+          range.collapse(false);
+        } else {
+          range.selectNodeContents(el);
+          range.collapse(true);
+        }
+        selObj.removeAllRanges();
+        selObj.addRange(range);
+      }
+    }
+    this.focusCursorEnd = true;
+  }
+
+  updateStatus() {
+    let nodeCount = 0, wordCount = 0;
+    const countNodes = (obj) => {
+      for (const k of getAllTKeys(obj)) {
+        nodeCount++;
+        wordCount += (obj[k].content || '').length + (obj[k].body || '').length;
+        countNodes(obj[k]);
+      }
+    };
+    countNodes(this.data);
+    document.getElementById('stat-nodes').textContent = '节点: ' + nodeCount;
+    document.getElementById('stat-words').textContent = '字数: ' + wordCount;
+    if (this.focusPath) {
+      const parts = this.focusPath.split('.');
+      const key = parts[parts.length - 1];
+      document.getElementById('stat-level').textContent = '层级: ' + getLevel(key);
+    }
+  }
+}
+
+// ================================================================
+//  DOCUMENT VIEW
+// ================================================================
+class DocumentView {
+  constructor(container) { this.el = container; }
+
+  render(data) {
+    this.data = data;
+    this.el.innerHTML = '';
+    const page = document.createElement('div');
+    page.className = 'doc-page';
+    const tg = data.type_global || {};
+    const numStyle = tg.numbering_style || '1.1.1';
+    this.counters = {};
+    this.renderChildren(data, '', 0, page, numStyle);
+    this.el.appendChild(page);
+  }
+
+  renderChildren(parentObj, parentPath, parentLevel, container, numStyle) {
+    const tkeys = getAllTKeys(parentObj);
+    for (const key of tkeys) {
+      const node = parentObj[key];
+      const level = getLevel(key);
+      const path = parentPath ? parentPath + '.' + key : key;
+
+      // Count for numbering
+      const counterKey = parentPath + '|' + level;
+      this.counters[counterKey] = (this.counters[counterKey] || 0) + 1;
+
+      const num = this.getNumber(path, numStyle);
+      const style = this.getStyle(level);
+
+      // Heading
+      const hClass = level <= 3 ? `doc-h${level}` : 'doc-h4';
+      const heading = document.createElement('div');
+      heading.className = hClass;
+
+      if (numStyle !== 'none' && numStyle !== 'bullet') {
+        const numSpan = document.createElement('span');
+        numSpan.className = 'doc-num';
+        numSpan.textContent = num;
+        heading.appendChild(numSpan);
+      }
+      if (numStyle === 'bullet') {
+        const bullet = document.createElement('span');
+        bullet.className = 'doc-num';
+        const bullets = ['●','○','■','▪'];
+        bullet.textContent = bullets[Math.min(level - 1, bullets.length - 1)] + ' ';
+        heading.appendChild(bullet);
+      }
+
+      const contentSpan = document.createElement('span');
+      contentSpan.textContent = node.content || '';
+      this.applyInlineStyle(contentSpan, style);
+      heading.appendChild(contentSpan);
+      container.appendChild(heading);
+
+      // Body
+      if (node.body && !node.hide_body) {
+        const bodyDiv = document.createElement('div');
+        bodyDiv.className = 'doc-body';
+        bodyDiv.textContent = node.body;
+        const bodyStyle = this.getBodyStyle();
+        this.applyInlineStyle(bodyDiv, bodyStyle);
+        container.appendChild(bodyDiv);
+      }
+
+      // Recurse
+      this.renderChildren(node, path, level, container, numStyle);
+    }
+  }
+
+  getNumber(path, numStyle) {
+    const parts = path.split('.');
+    const nums = [];
+    let obj = this.data;
+    for (const part of parts) {
+      const level = getLevel(part);
+      const siblings = getChildTKeys(obj, level);
+      const idx = siblings.indexOf(part);
+      nums.push(idx + 1);
+      obj = obj[part];
+    }
+    if (numStyle === '1.1.1') return nums.join('.');
+    if (numStyle === '一.1.1') {
+      const cn = ['零','一','二','三','四','五','六','七','八','九','十',
+                   '十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
+      const first = cn[nums[0]] || nums[0];
+      return nums.length === 1 ? first : first + '.' + nums.slice(1).join('.');
+    }
+    if (numStyle === 'I.A.1') {
+      const roman = ['','I','II','III','IV','V','VI','VII','VIII','IX','X'];
+      const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      let result = '';
+      if (nums[0]) result = roman[nums[0]] || nums[0];
+      if (nums[1]) result += '.' + (alpha[nums[1]-1] || nums[1]);
+      if (nums[2]) result += '.' + nums[2];
+      for (let i = 3; i < nums.length; i++) result += '.' + nums[i];
+      return result;
+    }
+    return nums.join('.');
+  }
+
+  getStyle(level) {
+    const tg = this.data.type_global || {};
+    const style = {};
+    const prefix = `t${level}-*.`;
+    for (const [k,v] of Object.entries(tg)) {
+      if (k.startsWith(prefix)) style[k.substring(prefix.length)] = v;
+    }
+    return style;
+  }
+
+  getBodyStyle() {
+    const tg = this.data.type_global || {};
+    const style = {};
+    for (const [k,v] of Object.entries(tg)) {
+      if (k.startsWith('body.')) style[k.substring(5)] = v;
+    }
+    return style;
+  }
+
+  applyInlineStyle(el, style) {
+    if (style.font) el.style.fontFamily = style.font;
+    if (style.font_size) el.style.fontSize = style.font_size + 'pt';
+    if (style.color) el.style.color = rgbToHex(String(style.color));
+    if (style.bold) el.style.fontWeight = '700';
+    if (style.italic) el.style.fontStyle = 'italic';
+    if (style.paragraph_line) el.style.lineHeight = style.paragraph_line;
+    if (style.paragraph_first_indent) el.style.textIndent = style.paragraph_first_indent + 'em';
+  }
+}
+
+// ================================================================
+//  FILE MANAGER
+// ================================================================
+async function createUDDBlob(data) {
+  const zip = new JSZip();
+  const bottom = compressData(data);
+  zip.file('data.json', JSON.stringify(bottom, null, 2));
+  const meta = data.meta || {};
+  zip.file('meta.json', JSON.stringify({
+    format_version: '1.0', app_version: '1.0.0',
+    title: meta.title || '', author: meta.author || '',
+    created: meta.created || '', modified: new Date().toISOString()
+  }, null, 2));
+  zip.file('view_state.json', JSON.stringify({ last_view: 'outline' }, null, 2));
+  return await zip.generateAsync({ type: 'blob' });
+}
+
+async function parseUDDBlob(blob) {
+  const zip = await JSZip.loadAsync(blob);
+  const dataFile = zip.file('data.json');
+  if (!dataFile) throw new Error('无效的 .udd 文件：缺少 data.json');
+  const json = await dataFile.async('string');
+  const bottom = JSON.parse(json);
+  return decompressData(bottom);
+}
+
+// ================================================================
+//  APP CONTROLLER
+// ================================================================
+class App {
+  constructor() {
+    this.data = createDefaultData();
+    this.currentView = 'outline';
+    this.dirty = false;
+    this.fileHandle = null;
+    this.fileName = '未命名文档';
+    this.undoMgr = new UndoManager();
+    this.outlineView = new OutlineView(document.getElementById('outline-view'));
+    this.documentView = new DocumentView(document.getElementById('document-view'));
+
+    // Auto-save
+    this.autoSaveTimer = setInterval(() => this.autoSave(), 30000);
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', e => this.onGlobalKey(e));
+
+    // Doc title
+    document.getElementById('doc-title').addEventListener('input', e => {
+      this.data.meta.title = e.target.value;
+      this.fileName = e.target.value || '未命名文档';
+      document.title = 'UDD - ' + this.fileName;
+      this.markDirty();
+    });
+
+    this.undoMgr.push(this.data);
+  }
+
+  async init() {
+    // Try restore from IndexedDB
+    try {
+      const saved = await dbLoad('current');
+      if (saved && saved.data) {
+        this.data = saved.data;
+        this.fileName = this.data.meta?.title || '未命名文档';
+        document.getElementById('doc-title').value = this.fileName;
+        document.title = 'UDD - ' + this.fileName;
+        this.undoMgr.push(this.data);
+        toast('已恢复上次编辑');
+      }
+    } catch (e) { /* ignore */ }
+    this.renderCurrentView();
+  }
+
+  renderCurrentView() {
+    if (this.currentView === 'outline') {
+      this.outlineView.render(this.data);
+    } else {
+      this.documentView.render(this.data);
+    }
+  }
+
+  switchView(view) {
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    this.currentView = view;
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
+    document.getElementById('outline-view').classList.toggle('active', view === 'outline');
+    document.getElementById('document-view').classList.toggle('active', view === 'document');
+    this.renderCurrentView();
+  }
+
+  toggleSidebar() {
+    const sb = document.getElementById('sidebar');
+    const btn = document.getElementById('sidebar-toggle');
+    sb.classList.toggle('active');
+    btn.classList.toggle('active');
+    if (sb.classList.contains('active')) {
+      this.updateSidebar(this.outlineView.focusPath);
+    }
+  }
+
+  updateSidebar(path) {
+    if (!document.getElementById('sidebar').classList.contains('active')) return;
+    const json = document.getElementById('sidebar-json');
+    if (path) {
+      const node = getNodeByPath(this.data, path);
+      json.value = JSON.stringify(node, null, 2);
+      json.dataset.path = path;
+    } else {
+      json.value = JSON.stringify(this.data, null, 2);
+      json.dataset.path = '';
+    }
+  }
+
+  applySidebarJSON() {
+    const json = document.getElementById('sidebar-json');
+    const path = json.dataset.path;
+    try {
+      const parsed = JSON.parse(json.value);
+      this.pushUndo();
+      if (path) {
+        const { parent, key } = getParentAndKey(this.data, path);
+        parent[key] = parsed;
+      } else {
+        this.data = parsed;
+      }
+      this.renderCurrentView();
+      this.markDirty();
+      toast('已应用修改');
+    } catch (e) {
+      toast('JSON 格式错误: ' + e.message);
+    }
+  }
+
+  updateToolbar(path) {
+    if (!path) return;
+    const node = getNodeByPath(this.data, path);
+    if (!node) return;
+    const level = getLevel(path.split('.').pop());
+    const tg = this.data.type_global || {};
+    const prefix = `t${level}-*.`;
+
+    const get = (field) => {
+      if (node[field] !== undefined) return node[field];
+      if (tg[prefix + field] !== undefined) return tg[prefix + field];
+      return undefined;
+    };
+
+    const font = get('font');
+    const size = get('font_size');
+    const bold = get('bold');
+    const italic = get('italic');
+    const underline = get('underline');
+    const strike = get('strikethrough');
+    const color = get('color');
+    const bgc = get('background_color');
+
+    if (font) document.getElementById('tool-font').value = font;
+    if (size) document.getElementById('tool-size').value = size;
+    document.getElementById('tool-bold').classList.toggle('active', !!bold);
+    document.getElementById('tool-italic').classList.toggle('active', !!italic);
+    document.getElementById('tool-underline').classList.toggle('active', !!underline);
+    document.getElementById('tool-strike').classList.toggle('active', !!strike);
+    if (color) document.getElementById('tool-color').value = rgbToHex(String(color));
+    if (bgc) document.getElementById('tool-bg').value = rgbToHex(String(bgc));
+  }
+
+  setNodeStyle(field, value) {
+    const path = this.outlineView.focusPath;
+    if (!path) return;
+    this.pushUndo();
+    const node = getNodeByPath(this.data, path);
+    if (node) { node[field] = value; this.renderCurrentView(); this.markDirty(); }
+  }
+
+  toggleStyle(field) {
+    const path = this.outlineView.focusPath;
+    if (!path) return;
+    this.pushUndo();
+    const node = getNodeByPath(this.data, path);
+    if (!node) return;
+    node[field] = node[field] ? 0 : 1;
+    this.renderCurrentView();
+    this.markDirty();
+  }
+
+  setColor(hex) {
+    this.setNodeStyle('color', hexToRgb(hex));
+  }
+
+  setBgColor(hex) {
+    this.setNodeStyle('background_color', hexToRgb(hex));
+  }
+
+  setNumbering(style) {
+    this.pushUndo();
+    this.data.type_global.numbering_style = style;
+    if (this.currentView === 'document') this.documentView.render(this.data);
+    this.markDirty();
+  }
+
+  // Undo / Redo
+  pushUndo() { this.undoMgr.push(this.data); }
+  undo() {
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    const d = this.undoMgr.undo();
+    if (d) { this.data = d; this.renderCurrentView(); this.markDirty(); toast('撤销'); }
+  }
+  redo() {
+    const d = this.undoMgr.redo();
+    if (d) { this.data = d; this.renderCurrentView(); this.markDirty(); toast('重做'); }
+  }
+
+  // Dirty / save state
+  markDirty() {
+    this.dirty = true;
+    document.getElementById('stat-save').textContent = '● 未保存';
+    document.getElementById('stat-save').style.color = '#ef4444';
+    this.debouncedAutoSave();
+  }
+  markClean() {
+    this.dirty = false;
+    document.getElementById('stat-save').textContent = '✓ 已保存';
+    document.getElementById('stat-save').style.color = '#22c55e';
+  }
+
+  debouncedAutoSave = debounce(() => this.autoSave(), 5000);
+
+  async autoSave() {
+    if (!this.dirty) return;
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    this.data.meta.modified = new Date().toISOString();
+    try {
+      await dbSave('current', this.data);
+      this.markClean();
+    } catch (e) { console.error('Auto-save failed:', e); }
+  }
+
+  // File operations
+  async newFile() {
+    if (this.dirty && !confirm('当前文档未保存，是否新建？')) return;
+    this.data = createDefaultData();
+    this.fileHandle = null;
+    this.fileName = '未命名文档';
+    document.getElementById('doc-title').value = this.fileName;
+    document.title = 'UDD - ' + this.fileName;
+    this.undoMgr = new UndoManager();
+    this.undoMgr.push(this.data);
+    this.outlineView.focusPath = 't1-1';
+    this.renderCurrentView();
+    this.markDirty();
+    toast('已新建文档');
+  }
+
+  async openFile() {
+    try {
+      let file;
+      if (window.showOpenFilePicker) {
+        const [handle] = await window.showOpenFilePicker({
+          types: [
+            { description: 'UDD文档', accept: { 'application/zip': ['.udd'] } },
+            { description: 'JSON文件', accept: { 'application/json': ['.json'] } }
+          ]
+        });
+        this.fileHandle = handle;
+        file = await handle.getFile();
+      } else {
+        file = await new Promise(resolve => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = '.udd,.json';
+          input.onchange = () => resolve(input.files[0]);
+          input.click();
+        });
+      }
+
+      if (!file) return;
+
+      if (file.name.endsWith('.json')) {
+        const text = await file.text();
+        this.data = JSON.parse(text);
+      } else {
+        this.data = await parseUDDBlob(file);
+      }
+
+      this.fileName = this.data.meta?.title || file.name.replace(/\.(udd|json)$/, '');
+      document.getElementById('doc-title').value = this.fileName;
+      document.title = 'UDD - ' + this.fileName;
+      this.undoMgr = new UndoManager();
+      this.undoMgr.push(this.data);
+      this.outlineView.focusPath = null;
+      this.renderCurrentView();
+      this.markClean();
+      toast('已打开: ' + file.name);
+    } catch (e) {
+      if (e.name !== 'AbortError') toast('打开失败: ' + e.message);
+    }
+  }
+
+  async saveFile() {
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    this.data.meta.modified = new Date().toISOString();
+    this.data.meta.title = this.fileName;
+
+    try {
+      if (this.fileHandle) {
+        const blob = await createUDDBlob(this.data);
+        const writable = await this.fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        this.markClean();
+        toast('已保存');
+      } else {
+        await this.saveFileAs();
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') toast('保存失败: ' + e.message);
+    }
+  }
+
+  async saveFileAs() {
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    this.data.meta.modified = new Date().toISOString();
+    this.data.meta.title = this.fileName;
+
+    try {
+      const blob = await createUDDBlob(this.data);
+      if (window.showSaveFilePicker) {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: this.fileName + '.udd',
+          types: [{ description: 'UDD文档', accept: { 'application/zip': ['.udd'] } }]
+        });
+        this.fileHandle = handle;
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else {
+        // Fallback download
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = this.fileName + '.udd';
+        a.click(); URL.revokeObjectURL(url);
+      }
+      this.markClean();
+      toast('已保存');
+    } catch (e) {
+      if (e.name !== 'AbortError') toast('保存失败: ' + e.message);
+    }
+  }
+
+  async exportJSON() {
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    const json = JSON.stringify(this.data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = this.fileName + '.json';
+    a.click(); URL.revokeObjectURL(url);
+    toast('已导出 JSON');
+  }
+
+  async importJSON() {
+    try {
+      const file = await new Promise(resolve => {
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = '.json';
+        input.onchange = () => resolve(input.files[0]);
+        input.click();
+      });
+      if (!file) return;
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data.meta && !data.type_global) {
+        toast('JSON 不符合 UDD 数据格式'); return;
+      }
+      this.pushUndo();
+      this.data = data;
+      this.fileName = data.meta?.title || '导入文档';
+      document.getElementById('doc-title').value = this.fileName;
+      document.title = 'UDD - ' + this.fileName;
+      this.renderCurrentView();
+      this.markDirty();
+      toast('已导入');
+    } catch (e) {
+      toast('导入失败: ' + e.message);
+    }
+  }
+
+  // Global keyboard shortcuts
+  onGlobalKey(e) {
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && e.key === 's') { e.preventDefault(); this.saveFile(); }
+    if (ctrl && e.key === 'n') { e.preventDefault(); this.newFile(); }
+    if (ctrl && e.key === 'o') { e.preventDefault(); this.openFile(); }
+    if (ctrl && e.key === 'z' && !e.shiftKey) { e.preventDefault(); this.undo(); }
+    if (ctrl && e.key === 'z' && e.shiftKey) { e.preventDefault(); this.redo(); }
+    if (ctrl && e.key === 'Z') { e.preventDefault(); this.redo(); }
+    if (ctrl && e.key === '\\') { e.preventDefault(); this.toggleSidebar(); }
+    if (ctrl && e.key === '1') { e.preventDefault(); this.switchView('outline'); }
+    if (ctrl && e.key === '2') { e.preventDefault(); this.switchView('document'); }
+    if (ctrl && e.key === 'b' && this.currentView === 'outline') { e.preventDefault(); this.toggleStyle('bold'); }
+    if (ctrl && e.key === 'i' && this.currentView === 'outline') { e.preventDefault(); this.toggleStyle('italic'); }
+    if (ctrl && e.key === 'u' && this.currentView === 'outline') { e.preventDefault(); this.toggleStyle('underline'); }
+  }
+}
+
+// ================================================================
+//  PWA MANIFEST (inline)
+// ================================================================
+(function() {
+  const manifest = {
+    name: 'UDD - 统一数据展示系统',
+    short_name: 'UDD',
+    description: '一份数据，多种展示',
+    start_url: '.',
+    display: 'standalone',
+    background_color: '#ffffff',
+    theme_color: '#2563eb',
+    icons: [{
+      src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#2563eb"/><text x="32" y="42" text-anchor="middle" font-size="24" font-weight="bold" fill="white" font-family="Arial">U</text></svg>'),
+      sizes: '64x64', type: 'image/svg+xml'
+    }]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  const link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = URL.createObjectURL(blob);
+  document.head.appendChild(link);
+})();
+
+// ================================================================
+//  INITIALIZATION
+// ================================================================
+let app;
+document.addEventListener('DOMContentLoaded', () => {
+  app = new App();
+  app.init();
+});
+
+// Prevent accidental close
+window.addEventListener('beforeunload', e => {
+  if (app && app.dirty) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+</script>
+</body>
+</html>
