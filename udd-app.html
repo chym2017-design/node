@@ -81,20 +81,41 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .outline-arrow:hover{background:var(--gray-200);color:var(--text)}
 .outline-arrow.leaf{cursor:default;font-size:6px;color:var(--gray-300)}
 .outline-arrow.leaf:hover{background:transparent;color:var(--gray-300)}
-.outline-content{flex:1;padding:2px 6px;line-height:1.6;outline:none;border-radius:3px;min-height:24px;word-break:break-word}
+.outline-content-wrap{display:flex;align-items:baseline;flex:1;min-width:0}
+.outline-num{color:var(--gray-400);font-weight:400;font-size:90%;margin-right:6px;flex-shrink:0;white-space:nowrap}
+.outline-content{flex:0 1 auto;padding:2px 6px;line-height:1.6;outline:none;border-radius:3px;min-height:24px;word-break:break-word;max-width:calc(100% - 60px)}
 .outline-content:focus{background:var(--blue-50)}
 .outline-content:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
-.outline-body-toggle{width:18px;height:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-300);font-size:10px;border-radius:3px;margin-top:4px;flex-shrink:0}
-.outline-body-toggle:hover{background:var(--gray-200);color:var(--gray-500)}
+.body-btn{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-300);font-size:15px;border-radius:3px;flex-shrink:0;margin-left:3px;padding:2px 4px;line-height:1;user-select:none}
+.body-btn:hover{background:var(--gray-200);color:var(--gray-500)}
 .outline-body{padding:3px 6px;margin-left:22px;color:var(--gray-500);font-size:13px;line-height:1.5;outline:none;border-left:2px solid var(--gray-200);border-radius:0 3px 3px 0;min-height:20px;word-break:break-word}
 .outline-body:focus{background:var(--blue-50);border-left-color:var(--primary)}
 .outline-body:empty::before{content:'输入正文...';color:var(--gray-300);pointer-events:none}
 .outline-children{margin-left:0}
-.outline-add-body{font-size:11px;color:var(--gray-300);cursor:pointer;padding:2px 6px;margin-left:22px;border-radius:3px;display:inline-block}
-.outline-add-body:hover{color:var(--primary);background:var(--blue-50)}
+
+/* ===== FORMAT SWITCHES ===== */
+.fmt-sw{display:flex;align-items:center;gap:6px;padding:0 12px 4px;flex-wrap:wrap}
+.fmt-sw label{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--gray-400);cursor:pointer;user-select:none}
+.fmt-sw label:hover{color:var(--gray-600)}
+.fmt-sw input[type=checkbox]{width:13px;height:13px;accent-color:var(--primary)}
+
+/* ===== COLOR PALETTE ===== */
+.tool-color-wrap{position:relative;display:inline-flex;align-items:center}
+.tool-color-btn{width:28px;height:28px;border:1px solid var(--gray-200);border-radius:var(--radius) 0 0 var(--radius);cursor:pointer;padding:2px;background:var(--bg);display:flex;align-items:center;justify-content:center}
+.tool-color-btn:hover{border-color:var(--gray-300)}
+.tool-color-arrow{width:16px;height:28px;border:1px solid var(--gray-200);border-left:none;border-radius:0 var(--radius) var(--radius) 0;cursor:pointer;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--gray-400)}
+.tool-color-arrow:hover{background:var(--gray-100)}
+.color-palette{position:absolute;top:32px;left:0;background:var(--bg);border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:100;display:none}
+.color-palette.show{display:block}
+.color-palette-grid{display:grid;grid-template-columns:repeat(8,22px);gap:3px}
+.color-palette-grid span{width:22px;height:22px;border-radius:3px;cursor:pointer;border:1px solid var(--gray-200)}
+.color-palette-grid span:hover{transform:scale(1.15);border-color:var(--gray-400)}
+.color-palette-custom{margin-top:6px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--gray-500)}
+.color-palette-custom input{width:60px;height:22px;border:1px solid var(--gray-200);border-radius:3px;padding:0 4px;font-size:11px}
 
 /* ===== DOCUMENT VIEW ===== */
 .doc-page{max-width:780px;margin:0 auto 40px;padding:60px 72px;background:var(--bg);box-shadow:var(--shadow);border:1px solid var(--gray-200);border-radius:var(--radius);min-height:600px}
+.doc-node{position:relative}
 .doc-h1{font-size:22px;font-weight:700;color:var(--gray-900);margin:28px 0 10px;line-height:1.4}
 .doc-h2{font-size:18px;font-weight:600;color:var(--gray-800);margin:20px 0 8px;line-height:1.4}
 .doc-h3{font-size:15px;font-weight:600;color:var(--gray-700);margin:14px 0 6px;line-height:1.4}
@@ -102,6 +123,16 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .doc-body{font-size:14px;line-height:1.8;color:var(--gray-700);margin:4px 0 10px;text-indent:2em}
 .doc-page .doc-h1:first-child{margin-top:0}
 .doc-num{color:var(--gray-400);margin-right:6px;font-weight:400;font-size:90%}
+.doc-editable{outline:none;border-radius:3px;min-height:1em}
+.doc-editable:focus{background:var(--blue-50)}
+.doc-editable:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
+
+/* ===== MEDIA ===== */
+.media-inline{display:inline-block;max-width:100%;margin:4px 0;border-radius:var(--radius);cursor:pointer;position:relative}
+.media-inline img{max-width:100%;border-radius:var(--radius);display:block}
+.media-inline video,.media-inline audio{max-width:100%;border-radius:var(--radius)}
+.lightbox-mask{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:3000;display:flex;align-items:center;justify-content:center;cursor:zoom-out}
+.lightbox-mask img{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.4)}
 
 /* ===== MODAL ===== */
 .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:1000;display:flex;align-items:center;justify-content:center}
@@ -166,20 +197,55 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
       <button id="tool-underline" class="tool-btn" onclick="app.toggleStyle('underline')" title="下划线 Ctrl+U"><u>U</u></button>
       <button id="tool-strike" class="tool-btn" onclick="app.toggleStyle('strikethrough')" title="删除线"><s>S</s></button>
       <div class="tool-sep"></div>
-      <input type="color" id="tool-color" class="tool-color" value="#1e293b" onchange="app.setColor(this.value)" title="字体颜色">
-      <input type="color" id="tool-bg" class="tool-color" value="#ffffff" onchange="app.setBgColor(this.value)" title="背景色">
+      <div class="tool-color-wrap" id="color-wrap-fg">
+        <span class="tool-color-btn" id="tool-color-btn" onclick="app.applyLastColor('fg')" title="字体颜色">
+          <span style="display:block;width:18px;height:18px;border-radius:3px;background:#1e293b" id="tool-color-preview"></span>
+        </span>
+        <span class="tool-color-arrow" onclick="app.toggleColorPalette('fg')">▾</span>
+        <div class="color-palette" id="palette-fg"></div>
+      </div>
+      <div class="tool-color-wrap" id="color-wrap-bg">
+        <span class="tool-color-btn" id="tool-bg-btn" onclick="app.applyLastColor('bg')" title="背景色">
+          <span style="display:block;width:18px;height:18px;border-radius:3px;background:#ffffff;border:1px solid var(--gray-200)" id="tool-bg-preview"></span>
+        </span>
+        <span class="tool-color-arrow" onclick="app.toggleColorPalette('bg')">▾</span>
+        <div class="color-palette" id="palette-bg"></div>
+      </div>
       <div class="tool-sep"></div>
-      <select id="tool-numbering" class="tool-select" onchange="app.setNumbering(this.value)" title="编号样式" style="width:80px">
+      <button id="tool-align-left" class="tool-btn" onclick="app.setNodeStyle('text_align','left')" title="左对齐">≡</button>
+      <button id="tool-align-center" class="tool-btn" onclick="app.setNodeStyle('text_align','center')" title="居中">≡</button>
+      <button id="tool-align-right" class="tool-btn" onclick="app.setNodeStyle('text_align','right')" title="右对齐">≡</button>
+      <div class="tool-sep"></div>
+      <select id="tool-numbering" class="tool-select" onchange="app.setNumbering(this.value)" title="编号样式" style="width:90px">
         <option value="1.1.1">1.1.1</option>
         <option value="一.1.1">一.1.1</option>
         <option value="I.A.1">I.A.1</option>
         <option value="bullet">无序</option>
+        <option value="bullet-uniform">统一无序</option>
         <option value="none">无编号</option>
       </select>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" onclick="app.insertMedia()" title="插入媒体">🖼</button>
+    </div>
+    <div class="fmt-sw" id="fmt-switches" style="display:none">
+      <label><input type="checkbox" data-fmt="font" checked>字体</label>
+      <label><input type="checkbox" data-fmt="font_size" checked>字号</label>
+      <label><input type="checkbox" data-fmt="color" checked>颜色</label>
+      <label><input type="checkbox" data-fmt="bold" checked>加粗</label>
+      <label><input type="checkbox" data-fmt="italic">斜体</label>
+      <label><input type="checkbox" data-fmt="underline">下划线</label>
+      <label><input type="checkbox" data-fmt="strikethrough">删除线</label>
+      <label><input type="checkbox" data-fmt="background_color">背景色</label>
+      <label><input type="checkbox" data-fmt="text_align">对齐</label>
     </div>
     <div id="view-tabs">
       <button class="view-tab active" data-view="outline" onclick="app.switchView('outline')">大纲</button>
       <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
+      <select id="outline-mode" class="tool-select" onchange="app.setOutlineRenderMode(this.value)" style="width:90px;margin-left:8px;font-size:12px">
+        <option value="plain">纯文本</option>
+        <option value="partial" selected>部分渲染</option>
+        <option value="full">完全渲染</option>
+      </select>
       <div class="spacer"></div>
       <button id="sidebar-toggle" onclick="app.toggleSidebar()">侧边栏</button>
     </div>
@@ -357,6 +423,98 @@ function hexToRgb(hex) {
   return [parseInt(h.substring(0,2),16), parseInt(h.substring(2,4),16), parseInt(h.substring(4,6),16)].join(',');
 }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+function stripMediaTags(text) { return (text || '').replace(/\{\{[^}]*\}\}/g, ''); }
+function extractMediaTags(text) {
+  const tags = []; const re = /\{\{(img|video|audio):([^}]+)\}\}/g; let m;
+  while ((m = re.exec(text))) tags.push({ type: m[1], src: m[2] });
+  return tags;
+}
+
+// ================================================================
+//  SHARED BODY BUTTON
+// ================================================================
+function createBodyBtn(node, path, view) {
+  const hasBody = node.body !== undefined && node.body !== '';
+  const btn = document.createElement('span');
+  btn.className = 'body-btn';
+  if (hasBody) {
+    btn.textContent = node.hide_body ? '▸' : '▾';
+    btn.title = node.hide_body ? '展开正文' : '折叠正文';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      node.hide_body = node.hide_body ? 0 : 1;
+      view.focusPath = path;
+      view.render(view.data);
+      app.markDirty();
+    };
+  } else {
+    btn.textContent = '+';
+    btn.title = '添加正文';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      node.body = '';
+      node.hide_body = 0;
+      view.focusPath = path;
+      view.focusField = 'body';
+      view.render(view.data);
+      app.markDirty();
+    };
+  }
+  return btn;
+}
+
+// ================================================================
+//  COLOR PALETTE DATA
+// ================================================================
+const PALETTE_COLORS = [
+  '#000000','#434343','#666666','#999999','#b7b7b7','#cccccc','#d9d9d9','#ffffff',
+  '#980000','#ff0000','#ff9900','#ffff00','#00ff00','#00ffff','#4a86e8','#0000ff',
+  '#9900ff','#ff00ff','#e6b8af','#f4cccc','#fce5cd','#fff2cc','#d9ead3','#d0e0e3',
+  '#c9daf8','#cfe2f3','#d9d2e9','#ead1dc','#dd7e6b','#ea9999','#f9cb9c','#ffe599',
+  '#b6d7a8','#a2c4c9','#a4c2f4','#9fc5e8','#b4a7d6','#d5a6bd','#cc4125','#e06666',
+  '#f6b26b','#ffd966','#93c47d','#76a5af','#6d9eeb','#6fa8dc','#8e7cc3','#c27ba0'
+];
+
+// ================================================================
+//  MEDIA RENDERING
+// ================================================================
+function renderTextWithMedia(text, container) {
+  if (!text) return;
+  const parts = text.split(/(\{\{(?:img|video|audio):[^}]+\}\})/);
+  for (const part of parts) {
+    const m = part.match(/^\{\{(img|video|audio):(.+)\}\}$/);
+    if (m) {
+      const wrap = document.createElement('span');
+      wrap.className = 'media-inline';
+      if (m[1] === 'img') {
+        const img = document.createElement('img');
+        img.src = m[2]; img.alt = ''; img.loading = 'lazy';
+        img.onclick = () => showLightbox(m[2]);
+        wrap.appendChild(img);
+      } else if (m[1] === 'video') {
+        const vid = document.createElement('video');
+        vid.src = m[2]; vid.controls = true; vid.preload = 'metadata';
+        wrap.appendChild(vid);
+      } else {
+        const aud = document.createElement('audio');
+        aud.src = m[2]; aud.controls = true;
+        wrap.appendChild(aud);
+      }
+      container.appendChild(wrap);
+    } else if (part) {
+      container.appendChild(document.createTextNode(part));
+    }
+  }
+}
+function showLightbox(src) {
+  const mask = document.createElement('div');
+  mask.className = 'lightbox-mask';
+  const img = document.createElement('img');
+  img.src = src;
+  mask.appendChild(img);
+  mask.onclick = () => mask.remove();
+  document.body.appendChild(mask);
+}
 
 // ================================================================
 //  DEFAULT DATA
@@ -368,6 +526,8 @@ function createDefaultData() {
       modified: new Date().toISOString(), version: "1.0"
     },
     type_global: {
+      "t0-*.font": "微软雅黑", "t0-*.font_size": 22, "t0-*.color": "30,41,59",
+      "t0-*.bold": 1,
       "t1-*.font": "微软雅黑", "t1-*.font_size": 22, "t1-*.color": "30,41,59",
       "t1-*.bold": 1, "t1-*.paragraph_before": 1, "t1-*.paragraph_after": 0.5,
       "t2-*.font": "微软雅黑", "t2-*.font_size": 17, "t2-*.color": "51,65,85",
@@ -385,11 +545,15 @@ function createDefaultData() {
 // ================================================================
 //  INDEXEDDB STORAGE
 // ================================================================
-const DB_NAME = 'udd-db', DB_VER = 1, STORE = 'docs';
+const DB_NAME = 'udd-db', DB_VER = 2, STORE = 'docs', MEDIA_STORE = 'media';
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VER);
-    req.onupgradeneeded = e => { e.target.result.createObjectStore(STORE, { keyPath: 'id' }); };
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE, { keyPath: 'id' });
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -407,6 +571,22 @@ async function dbLoad(id) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readonly');
     const req = tx.objectStore(STORE).get(id);
+    req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+  });
+}
+async function dbSaveMedia(id, blob) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MEDIA_STORE, 'readwrite');
+    tx.objectStore(MEDIA_STORE).put({ id, blob, ts: Date.now() });
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+async function dbLoadMedia(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MEDIA_STORE, 'readonly');
+    const req = tx.objectStore(MEDIA_STORE).get(id);
     req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
   });
 }
@@ -444,13 +624,15 @@ class OutlineView {
     this.focusPath = null;
     this.focusField = 'content';
     this.focusCursorEnd = true;
+    this.renderMode = localStorage.getItem('udd-outline-mode') || 'partial';
     this.el.addEventListener('keydown', e => this.onKeyDown(e));
     this.el.addEventListener('input', e => this.onInput(e));
     this.el.addEventListener('focusin', e => this.onFocusIn(e));
   }
 
-  render(data) {
+  render(data, renderMode) {
     this.data = data;
+    if (renderMode !== undefined) this.renderMode = renderMode;
     this.el.innerHTML = '';
     const rootKeys = getAllTKeys(data);
     for (const key of rootKeys) {
@@ -471,10 +653,10 @@ class OutlineView {
     const row = document.createElement('div');
     row.className = 'outline-row';
 
-    // indent
+    // indent (t0 gets 0 indent)
     const indent = document.createElement('span');
     indent.className = 'indent';
-    indent.style.width = ((level - 1) * 24) + 'px';
+    indent.style.width = (Math.max(0, level - 1) * 24) + 'px';
     row.appendChild(indent);
 
     // fold arrow
@@ -492,6 +674,22 @@ class OutlineView {
     };
     row.appendChild(arrow);
 
+    // contentWrap: numbering + content + body-btn in one baseline-aligned container
+    const contentWrap = document.createElement('div');
+    contentWrap.className = 'outline-content-wrap';
+
+    // numbering (skip for t0)
+    if (level !== 0) {
+      const tg = this.data.type_global || {};
+      const numStyle = tg.numbering_style || '1.1.1';
+      if (numStyle !== 'none') {
+        const numSpan = document.createElement('span');
+        numSpan.className = 'outline-num';
+        numSpan.textContent = this.getNumber(path, numStyle);
+        contentWrap.appendChild(numSpan);
+      }
+    }
+
     // content
     const style = this.getStyle(path, level);
     const content = document.createElement('div');
@@ -501,30 +699,20 @@ class OutlineView {
     content.textContent = node.content || '';
     content.dataset.path = path;
     content.dataset.field = 'content';
-    content.dataset.placeholder = level === 1 ? '输入标题...' : '输入内容...';
+    content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
     content.spellcheck = false;
     this.applyStyle(content, style);
-    row.appendChild(content);
+    contentWrap.appendChild(content);
 
-    // body toggle
-    const hasBody = node.body !== undefined && node.body !== '';
-    if (hasBody) {
-      const tog = document.createElement('span');
-      tog.className = 'outline-body-toggle';
-      tog.textContent = node.hide_body ? '▸' : '▾';
-      tog.title = node.hide_body ? '展开正文' : '折叠正文';
-      tog.onclick = () => {
-        node.hide_body = node.hide_body ? 0 : 1;
-        this.focusPath = path;
-        this.render(this.data);
-        app.markDirty();
-      };
-      row.appendChild(tog);
-    }
+    // body button (shared function, inline after content)
+    const bodyBtn = createBodyBtn(node, path, this);
+    contentWrap.appendChild(bodyBtn);
 
+    row.appendChild(contentWrap);
     div.appendChild(row);
 
     // body content
+    const hasBody = node.body !== undefined && node.body !== '';
     if (!node.hide_body && (hasBody || this.isBodyEditing(path))) {
       const bodyEl = document.createElement('div');
       bodyEl.className = 'outline-body';
@@ -534,25 +722,8 @@ class OutlineView {
       bodyEl.dataset.path = path;
       bodyEl.dataset.field = 'body';
       bodyEl.spellcheck = false;
-      bodyEl.style.marginLeft = ((level - 1) * 24 + 22) + 'px';
+      bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
       div.appendChild(bodyEl);
-    }
-
-    // add-body hint (if no body yet)
-    if (!hasBody && !node.hide_body) {
-      const addBody = document.createElement('span');
-      addBody.className = 'outline-add-body';
-      addBody.textContent = '+ 正文';
-      addBody.style.marginLeft = ((level - 1) * 24 + 22) + 'px';
-      addBody.onclick = () => {
-        node.body = '';
-        node.hide_body = 0;
-        this.focusPath = path;
-        this.focusField = 'body';
-        this.render(this.data);
-        app.markDirty();
-      };
-      div.appendChild(addBody);
     }
 
     // children
@@ -570,21 +741,58 @@ class OutlineView {
 
   isBodyEditing(path) { return this.focusPath === path && this.focusField === 'body'; }
 
+  getNumber(path, numStyle) {
+    const parts = path.split('.');
+    const nums = [];
+    let obj = this.data;
+    for (const part of parts) {
+      const level = getLevel(part);
+      if (level === 0) { obj = obj[part]; continue; }
+      const siblings = getChildTKeys(obj, level);
+      const idx = siblings.indexOf(part);
+      nums.push(idx + 1);
+      obj = obj[part];
+    }
+    if (nums.length === 0) return '';
+    if (numStyle === '1.1.1') return nums.join('.');
+    if (numStyle === '一.1.1') {
+      const cn = ['零','一','二','三','四','五','六','七','八','九','十',
+                   '十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
+      const first = cn[nums[0]] || nums[0];
+      return nums.length === 1 ? first : first + '.' + nums.slice(1).join('.');
+    }
+    if (numStyle === 'I.A.1') {
+      const roman = ['','I','II','III','IV','V','VI','VII','VIII','IX','X'];
+      const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      let result = '';
+      if (nums[0]) result = roman[nums[0]] || nums[0];
+      if (nums[1]) result += '.' + (alpha[nums[1]-1] || nums[1]);
+      if (nums[2]) result += '.' + nums[2];
+      for (let i = 3; i < nums.length; i++) result += '.' + nums[i];
+      return result;
+    }
+    if (numStyle === 'bullet') {
+      const bullets = ['●','○','■','▪'];
+      const depth = nums.length - 1;
+      return bullets[Math.min(depth, bullets.length - 1)];
+    }
+    if (numStyle === 'bullet-uniform') return '●';
+    return nums.join('.');
+  }
+
   getStyle(path, level) {
     const tg = this.data.type_global || {};
     const node = getNodeByPath(this.data, path);
     const style = {};
     const prefix = `t${level}-*.`;
-    // from type_global
     for (const [k,v] of Object.entries(tg)) {
       if (k.startsWith(prefix)) {
         const field = k.substring(prefix.length);
         style[field] = v;
       }
     }
-    // from node
     if (node) {
-      for (const field of ['font','font_size','color','bold','italic','underline','strikethrough','background_color']) {
+      for (const field of ['font','font_size','color','bold','italic','underline','strikethrough','background_color','text_align']) {
         if (node[field] !== undefined) style[field] = node[field];
       }
     }
@@ -592,6 +800,24 @@ class OutlineView {
   }
 
   applyStyle(el, style) {
+    const mode = this.renderMode || 'partial';
+    const fmt = app && app.outlineFmt ? app.outlineFmt : {};
+    if (mode === 'plain') return;
+    if (mode === 'partial') {
+      if (fmt.font_size !== false && style.font_size) el.style.fontSize = style.font_size + 'pt';
+      if (fmt.color !== false && style.color) el.style.color = rgbToHex(String(style.color));
+      if (fmt.bold !== false && style.bold) el.style.fontWeight = '700';
+      if (fmt.font !== false && style.font) el.style.fontFamily = style.font;
+      if (fmt.italic && style.italic) el.style.fontStyle = 'italic';
+      if (fmt.underline && style.underline) el.style.textDecoration = 'underline';
+      if (fmt.strikethrough && style.strikethrough) {
+        el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
+      }
+      if (fmt.background_color && style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
+      if (fmt.text_align && style.text_align) el.style.textAlign = style.text_align;
+      return;
+    }
+    // full mode
     if (style.font) el.style.fontFamily = style.font;
     if (style.font_size) el.style.fontSize = style.font_size + 'pt';
     if (style.color) el.style.color = rgbToHex(String(style.color));
@@ -602,6 +828,7 @@ class OutlineView {
       el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
     }
     if (style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
+    if (style.text_align) el.style.textAlign = style.text_align;
   }
 
   // Sync all editable elements to data
@@ -888,7 +1115,14 @@ class OutlineView {
 //  DOCUMENT VIEW
 // ================================================================
 class DocumentView {
-  constructor(container) { this.el = container; }
+  constructor(container) {
+    this.el = container;
+    this.focusPath = null;
+    this.focusField = 'content';
+    this.el.addEventListener('input', e => this.onInput(e));
+    this.el.addEventListener('focusin', e => this.onFocusIn(e));
+    this.el.addEventListener('keydown', e => this.onKeyDown(e));
+  }
 
   render(data) {
     this.data = data;
@@ -900,6 +1134,9 @@ class DocumentView {
     this.counters = {};
     this.renderChildren(data, '', 0, page, numStyle);
     this.el.appendChild(page);
+    if (this.focusPath) {
+      requestAnimationFrame(() => this.restoreFocus());
+    }
   }
 
   renderChildren(parentObj, parentPath, parentLevel, container, numStyle) {
@@ -909,47 +1146,83 @@ class DocumentView {
       const level = getLevel(key);
       const path = parentPath ? parentPath + '.' + key : key;
 
-      // Count for numbering
-      const counterKey = parentPath + '|' + level;
-      this.counters[counterKey] = (this.counters[counterKey] || 0) + 1;
+      // Count for numbering (skip t0)
+      if (level !== 0) {
+        const counterKey = parentPath + '|' + level;
+        this.counters[counterKey] = (this.counters[counterKey] || 0) + 1;
+      }
 
       const num = this.getNumber(path, numStyle);
-      const style = this.getStyle(level);
+      const style = this.getStyle(level, path);
+
+      // Node wrapper
+      const nodeDiv = document.createElement('div');
+      nodeDiv.className = 'doc-node';
+      nodeDiv.dataset.path = path;
 
       // Heading
-      const hClass = level <= 3 ? `doc-h${level}` : 'doc-h4';
+      const hClass = level === 0 ? 'doc-h1' : (level <= 3 ? `doc-h${level}` : 'doc-h4');
       const heading = document.createElement('div');
       heading.className = hClass;
+      if (style.text_align) heading.style.textAlign = style.text_align;
 
-      if (numStyle !== 'none' && numStyle !== 'bullet') {
-        const numSpan = document.createElement('span');
-        numSpan.className = 'doc-num';
-        numSpan.textContent = num;
-        heading.appendChild(numSpan);
-      }
-      if (numStyle === 'bullet') {
-        const bullet = document.createElement('span');
-        bullet.className = 'doc-num';
-        const bullets = ['●','○','■','▪'];
-        bullet.textContent = bullets[Math.min(level - 1, bullets.length - 1)] + ' ';
-        heading.appendChild(bullet);
+      // Numbering (skip for t0 and 'none')
+      if (level !== 0 && numStyle !== 'none') {
+        if (numStyle === 'bullet') {
+          const bullet = document.createElement('span');
+          bullet.className = 'doc-num';
+          const bullets = ['●','○','■','▪'];
+          bullet.textContent = bullets[Math.min(level - 1, bullets.length - 1)] + ' ';
+          heading.appendChild(bullet);
+        } else if (numStyle === 'bullet-uniform') {
+          const bullet = document.createElement('span');
+          bullet.className = 'doc-num';
+          bullet.textContent = '● ';
+          heading.appendChild(bullet);
+        } else {
+          const numSpan = document.createElement('span');
+          numSpan.className = 'doc-num';
+          numSpan.textContent = num;
+          heading.appendChild(numSpan);
+        }
       }
 
+      // Editable content span
       const contentSpan = document.createElement('span');
+      contentSpan.className = 'doc-editable';
+      contentSpan.contentEditable = 'plaintext-only';
+      if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
       contentSpan.textContent = node.content || '';
+      contentSpan.dataset.path = path;
+      contentSpan.dataset.field = 'content';
+      contentSpan.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
+      contentSpan.spellcheck = false;
       this.applyInlineStyle(contentSpan, style);
       heading.appendChild(contentSpan);
-      container.appendChild(heading);
+
+      // Body button (shared)
+      const bodyBtn = createBodyBtn(node, path, this);
+      heading.appendChild(bodyBtn);
+
+      nodeDiv.appendChild(heading);
 
       // Body
-      if (node.body && !node.hide_body) {
+      const hasBody = node.body !== undefined && node.body !== '';
+      if (!node.hide_body && (hasBody || (this.focusPath === path && this.focusField === 'body'))) {
         const bodyDiv = document.createElement('div');
-        bodyDiv.className = 'doc-body';
-        bodyDiv.textContent = node.body;
+        bodyDiv.className = 'doc-body doc-editable';
+        bodyDiv.contentEditable = 'plaintext-only';
+        if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
+        bodyDiv.textContent = node.body || '';
+        bodyDiv.dataset.path = path;
+        bodyDiv.dataset.field = 'body';
+        bodyDiv.spellcheck = false;
         const bodyStyle = this.getBodyStyle();
         this.applyInlineStyle(bodyDiv, bodyStyle);
-        container.appendChild(bodyDiv);
+        nodeDiv.appendChild(bodyDiv);
       }
+
+      container.appendChild(nodeDiv);
 
       // Recurse
       this.renderChildren(node, path, level, container, numStyle);
@@ -962,11 +1235,13 @@ class DocumentView {
     let obj = this.data;
     for (const part of parts) {
       const level = getLevel(part);
+      if (level === 0) { obj = obj[part]; continue; }
       const siblings = getChildTKeys(obj, level);
       const idx = siblings.indexOf(part);
       nums.push(idx + 1);
       obj = obj[part];
     }
+    if (nums.length === 0) return '';
     if (numStyle === '1.1.1') return nums.join('.');
     if (numStyle === '一.1.1') {
       const cn = ['零','一','二','三','四','五','六','七','八','九','十',
@@ -987,12 +1262,18 @@ class DocumentView {
     return nums.join('.');
   }
 
-  getStyle(level) {
+  getStyle(level, path) {
     const tg = this.data.type_global || {};
+    const node = path ? getNodeByPath(this.data, path) : null;
     const style = {};
     const prefix = `t${level}-*.`;
     for (const [k,v] of Object.entries(tg)) {
       if (k.startsWith(prefix)) style[k.substring(prefix.length)] = v;
+    }
+    if (node) {
+      for (const field of ['font','font_size','color','bold','italic','underline','strikethrough','background_color','text_align']) {
+        if (node[field] !== undefined) style[field] = node[field];
+      }
     }
     return style;
   }
@@ -1012,8 +1293,86 @@ class DocumentView {
     if (style.color) el.style.color = rgbToHex(String(style.color));
     if (style.bold) el.style.fontWeight = '700';
     if (style.italic) el.style.fontStyle = 'italic';
+    if (style.underline) el.style.textDecoration = 'underline';
+    if (style.strikethrough) {
+      el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
+    }
+    if (style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
     if (style.paragraph_line) el.style.lineHeight = style.paragraph_line;
     if (style.paragraph_first_indent) el.style.textIndent = style.paragraph_first_indent + 'em';
+  }
+
+  // Sync all editable elements to data
+  syncAll() {
+    this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
+      const node = getNodeByPath(this.data, el.dataset.path);
+      if (node) node[el.dataset.field] = el.textContent;
+    });
+  }
+
+  onInput(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    const node = getNodeByPath(this.data, el.dataset.path);
+    if (node) {
+      node[el.dataset.field] = el.textContent;
+      app.markDirty();
+    }
+  }
+
+  onFocusIn(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path) return;
+    this.focusPath = el.dataset.path;
+    this.focusField = el.dataset.field || 'content';
+    app.updateToolbar(this.focusPath);
+    app.updateSidebar(this.focusPath);
+  }
+
+  onKeyDown(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path) return;
+    const path = el.dataset.path;
+    const field = el.dataset.field || 'content';
+
+    if (field === 'body') return;
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      this.syncAll();
+      app.pushUndo();
+      // Add sibling after current node
+      const parts = path.split('.');
+      const currentKey = parts[parts.length - 1];
+      const level = getLevel(currentKey);
+      let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+      const newSeqNum = nextSeq(parent, level);
+      const newKey = `t${level}-${newSeqNum}`;
+      const newNode = { content: '', hide: 0, hide_body: 0 };
+      insertAfter(parent, currentKey, newKey, newNode);
+      const newPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
+      this.focusPath = newPath;
+      this.focusField = 'content';
+      this.render(this.data);
+      app.markDirty();
+    }
+  }
+
+  restoreFocus() {
+    if (!this.focusPath) return;
+    const sel = `[data-path="${this.focusPath}"][data-field="${this.focusField}"]`;
+    const el = this.el.querySelector(sel);
+    if (el) {
+      el.focus();
+      const range = document.createRange();
+      const selObj = window.getSelection();
+      if (el.childNodes.length > 0) {
+        range.selectNodeContents(el);
+        range.collapse(false);
+        selObj.removeAllRanges();
+        selObj.addRange(range);
+      }
+    }
   }
 }
 
@@ -1056,12 +1415,25 @@ class App {
     this.undoMgr = new UndoManager();
     this.outlineView = new OutlineView(document.getElementById('outline-view'));
     this.documentView = new DocumentView(document.getElementById('document-view'));
+    this.outlineRenderMode = localStorage.getItem('udd-outline-mode') || 'partial';
+    this.lastFgColor = '#1e293b';
+    this.lastBgColor = '#ffffff';
+
+    // Format switches for outline rendering
+    this.outlineFmt = { font: true, font_size: true, color: true, bold: true,
+      italic: false, underline: false, strikethrough: false, background_color: false, text_align: false };
+    this.initFmtSwitches();
 
     // Auto-save
     this.autoSaveTimer = setInterval(() => this.autoSave(), 30000);
 
     // Keyboard shortcuts
     document.addEventListener('keydown', e => this.onGlobalKey(e));
+
+    // Close palettes on outside click
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.tool-color-wrap')) this.closeAllPalettes();
+    });
 
     // Doc title
     document.getElementById('doc-title').addEventListener('input', e => {
@@ -1072,9 +1444,14 @@ class App {
     });
 
     this.undoMgr.push(this.data);
+    this.initColorPalettes();
   }
 
   async init() {
+    // Restore outline mode
+    const modeEl = document.getElementById('outline-mode');
+    if (modeEl) modeEl.value = this.outlineRenderMode;
+
     // Try restore from IndexedDB
     try {
       const saved = await dbLoad('current');
@@ -1092,7 +1469,7 @@ class App {
 
   renderCurrentView() {
     if (this.currentView === 'outline') {
-      this.outlineView.render(this.data);
+      this.outlineView.render(this.data, this.outlineRenderMode);
     } else {
       this.documentView.render(this.data);
     }
@@ -1100,10 +1477,22 @@ class App {
 
   switchView(view) {
     if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
     this.currentView = view;
     document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
     document.getElementById('outline-view').classList.toggle('active', view === 'outline');
     document.getElementById('document-view').classList.toggle('active', view === 'document');
+    // Show/hide outline-specific controls
+    const modeEl = document.getElementById('outline-mode');
+    const fmtEl = document.getElementById('fmt-switches');
+    if (modeEl) modeEl.style.display = view === 'outline' ? '' : 'none';
+    if (fmtEl) fmtEl.style.display = view === 'outline' ? 'flex' : 'none';
+    this.renderCurrentView();
+  }
+
+  setOutlineRenderMode(mode) {
+    this.outlineRenderMode = mode;
+    localStorage.setItem('udd-outline-mode', mode);
     this.renderCurrentView();
   }
 
@@ -1122,7 +1511,12 @@ class App {
     const json = document.getElementById('sidebar-json');
     if (path) {
       const node = getNodeByPath(this.data, path);
-      json.value = JSON.stringify(node, null, 2);
+      // Wrap with path key for context
+      const parts = path.split('.');
+      const key = parts[parts.length - 1];
+      const wrapped = {};
+      wrapped[key] = node;
+      json.value = JSON.stringify(wrapped, null, 2);
       json.dataset.path = path;
     } else {
       json.value = JSON.stringify(this.data, null, 2);
@@ -1138,7 +1532,12 @@ class App {
       this.pushUndo();
       if (path) {
         const { parent, key } = getParentAndKey(this.data, path);
-        parent[key] = parsed;
+        // Handle wrapped format: { "t1-1": {...} }
+        if (parsed[key] !== undefined) {
+          parent[key] = parsed[key];
+        } else {
+          parent[key] = parsed;
+        }
       } else {
         this.data = parsed;
       }
@@ -1172,6 +1571,7 @@ class App {
     const strike = get('strikethrough');
     const color = get('color');
     const bgc = get('background_color');
+    const align = get('text_align');
 
     if (font) document.getElementById('tool-font').value = font;
     if (size) document.getElementById('tool-size').value = size;
@@ -1179,12 +1579,24 @@ class App {
     document.getElementById('tool-italic').classList.toggle('active', !!italic);
     document.getElementById('tool-underline').classList.toggle('active', !!underline);
     document.getElementById('tool-strike').classList.toggle('active', !!strike);
-    if (color) document.getElementById('tool-color').value = rgbToHex(String(color));
-    if (bgc) document.getElementById('tool-bg').value = rgbToHex(String(bgc));
+    if (color) {
+      const hex = rgbToHex(String(color));
+      this.lastFgColor = hex;
+      document.getElementById('tool-color-preview').style.background = hex;
+    }
+    if (bgc) {
+      const hex = rgbToHex(String(bgc));
+      this.lastBgColor = hex;
+      document.getElementById('tool-bg-preview').style.background = hex;
+    }
+    // Alignment buttons
+    document.getElementById('tool-align-left').classList.toggle('active', align === 'left' || !align);
+    document.getElementById('tool-align-center').classList.toggle('active', align === 'center');
+    document.getElementById('tool-align-right').classList.toggle('active', align === 'right');
   }
 
   setNodeStyle(field, value) {
-    const path = this.outlineView.focusPath;
+    const path = this.currentView === 'outline' ? this.outlineView.focusPath : this.documentView.focusPath;
     if (!path) return;
     this.pushUndo();
     const node = getNodeByPath(this.data, path);
@@ -1192,7 +1604,7 @@ class App {
   }
 
   toggleStyle(field) {
-    const path = this.outlineView.focusPath;
+    const path = this.currentView === 'outline' ? this.outlineView.focusPath : this.documentView.focusPath;
     if (!path) return;
     this.pushUndo();
     const node = getNodeByPath(this.data, path);
@@ -1203,17 +1615,120 @@ class App {
   }
 
   setColor(hex) {
+    this.lastFgColor = hex;
+    document.getElementById('tool-color-preview').style.background = hex;
     this.setNodeStyle('color', hexToRgb(hex));
   }
 
   setBgColor(hex) {
+    this.lastBgColor = hex;
+    document.getElementById('tool-bg-preview').style.background = hex;
     this.setNodeStyle('background_color', hexToRgb(hex));
+  }
+
+  applyLastColor(type) {
+    if (type === 'fg') this.setColor(this.lastFgColor);
+    else this.setBgColor(this.lastBgColor);
+  }
+
+  // Color palette
+  initColorPalettes() {
+    this.buildPalette('palette-fg', 'fg');
+    this.buildPalette('palette-bg', 'bg');
+  }
+
+  buildPalette(containerId, type) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const grid = document.createElement('div');
+    grid.className = 'color-palette-grid';
+    for (const color of PALETTE_COLORS) {
+      const span = document.createElement('span');
+      span.style.background = color;
+      span.onclick = (e) => {
+        e.stopPropagation();
+        if (type === 'fg') this.setColor(color);
+        else this.setBgColor(color);
+        this.closeAllPalettes();
+      };
+      grid.appendChild(span);
+    }
+    container.appendChild(grid);
+    const custom = document.createElement('div');
+    custom.className = 'color-palette-custom';
+    custom.innerHTML = '自定义: ';
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.value = type === 'fg' ? this.lastFgColor : this.lastBgColor;
+    input.onchange = (e) => {
+      if (type === 'fg') this.setColor(e.target.value);
+      else this.setBgColor(e.target.value);
+      this.closeAllPalettes();
+    };
+    custom.appendChild(input);
+    container.appendChild(custom);
+  }
+
+  toggleColorPalette(type) {
+    const id = type === 'fg' ? 'palette-fg' : 'palette-bg';
+    const el = document.getElementById(id);
+    const otherId = type === 'fg' ? 'palette-bg' : 'palette-fg';
+    document.getElementById(otherId)?.classList.remove('show');
+    el?.classList.toggle('show');
+  }
+
+  closeAllPalettes() {
+    document.querySelectorAll('.color-palette').forEach(p => p.classList.remove('show'));
+  }
+
+  // Format switches
+  initFmtSwitches() {
+    const container = document.getElementById('fmt-switches');
+    if (!container) return;
+    container.querySelectorAll('input[data-fmt]').forEach(cb => {
+      const field = cb.dataset.fmt;
+      cb.checked = !!this.outlineFmt[field];
+      cb.onchange = () => {
+        this.outlineFmt[field] = cb.checked;
+        this.renderCurrentView();
+      };
+    });
+  }
+
+  // Media insert
+  async insertMedia() {
+    const path = this.currentView === 'outline' ? this.outlineView.focusPath : this.documentView.focusPath;
+    if (!path) { toast('请先选择一个节点'); return; }
+    const file = await new Promise(resolve => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,video/*,audio/*';
+      input.onchange = () => resolve(input.files[0]);
+      input.click();
+    });
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'img';
+      const tag = `{{${type}:${dataUrl}}}`;
+      const node = getNodeByPath(this.data, path);
+      if (node) {
+        this.pushUndo();
+        node.body = (node.body || '') + tag;
+        node.hide_body = 0;
+        this.renderCurrentView();
+        this.markDirty();
+        toast('已插入媒体');
+      }
+    };
+    reader.readAsDataURL(file);
   }
 
   setNumbering(style) {
     this.pushUndo();
     this.data.type_global.numbering_style = style;
-    if (this.currentView === 'document') this.documentView.render(this.data);
+    this.renderCurrentView();
     this.markDirty();
   }
 
@@ -1221,6 +1736,7 @@ class App {
   pushUndo() { this.undoMgr.push(this.data); }
   undo() {
     if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
     const d = this.undoMgr.undo();
     if (d) { this.data = d; this.renderCurrentView(); this.markDirty(); toast('撤销'); }
   }
@@ -1247,6 +1763,7 @@ class App {
   async autoSave() {
     if (!this.dirty) return;
     if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
     this.data.meta.modified = new Date().toISOString();
     try {
       await dbSave('current', this.data);
@@ -1317,6 +1834,7 @@ class App {
 
   async saveFile() {
     if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
     this.data.meta.modified = new Date().toISOString();
     this.data.meta.title = this.fileName;
 
@@ -1338,6 +1856,7 @@ class App {
 
   async saveFileAs() {
     if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
     this.data.meta.modified = new Date().toISOString();
     this.data.meta.title = this.fileName;
 
@@ -1368,6 +1887,7 @@ class App {
 
   async exportJSON() {
     if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
     const json = JSON.stringify(this.data, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1416,9 +1936,9 @@ class App {
     if (ctrl && e.key === '\\') { e.preventDefault(); this.toggleSidebar(); }
     if (ctrl && e.key === '1') { e.preventDefault(); this.switchView('outline'); }
     if (ctrl && e.key === '2') { e.preventDefault(); this.switchView('document'); }
-    if (ctrl && e.key === 'b' && this.currentView === 'outline') { e.preventDefault(); this.toggleStyle('bold'); }
-    if (ctrl && e.key === 'i' && this.currentView === 'outline') { e.preventDefault(); this.toggleStyle('italic'); }
-    if (ctrl && e.key === 'u' && this.currentView === 'outline') { e.preventDefault(); this.toggleStyle('underline'); }
+    if (ctrl && e.key === 'b') { e.preventDefault(); this.toggleStyle('bold'); }
+    if (ctrl && e.key === 'i') { e.preventDefault(); this.toggleStyle('italic'); }
+    if (ctrl && e.key === 'u') { e.preventDefault(); this.toggleStyle('underline'); }
   }
 }
 
