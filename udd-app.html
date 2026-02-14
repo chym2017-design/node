@@ -313,6 +313,235 @@ const ESCAPE_TABLE = {
 const REVERSE_ESCAPE = {};
 for (const [k,v] of Object.entries(ESCAPE_TABLE)) REVERSE_ESCAPE[v] = k;
 
+const STYLE_FIELDS = ['font','font_size','color','bold','italic','underline','strikethrough','background_color','text_align'];
+const RANGEABLE_STYLE_FIELDS = new Set(['font','font_size','color','bold','italic','underline','strikethrough','background_color']);
+
+function isRangeStyleValue(value) {
+  return typeof value === 'string' && value.indexOf(';') !== -1;
+}
+
+function parseSimpleStyleValue(val) {
+  if (typeof val !== 'string') return val;
+  const num = Number(val);
+  if (!Number.isNaN(num) && val.trim() !== '') return num;
+  return val;
+}
+
+function resolveStyleBaseValue(value) {
+  if (isRangeStyleValue(value)) {
+    const descriptor = parseRangeStyleValue(value);
+    return descriptor.base;
+  }
+  return value;
+}
+
+function parseRangeStyleValue(value) {
+  if (!isRangeStyleValue(value)) {
+    return { base: parseSimpleStyleValue(value), overrides: [] };
+  }
+  const parts = value.split(';');
+  const base = parseSimpleStyleValue(parts.shift());
+  const overrides = [];
+  for (const part of parts) {
+    if (!part) continue;
+    const ranges = [];
+    part.replace(/\((\d+),(\d+)\)/g, (_, s, e) => {
+      const start = Math.max(0, Number(s) - 1);
+      const end = Math.max(start, Number(e));
+      ranges.push({ start, end });
+      return '';
+    });
+    const val = parseSimpleStyleValue(part.replace(/\((\d+),(\d+)\)/g, '').trim());
+    if (ranges.length === 0) continue;
+    overrides.push({ value: val, ranges });
+  }
+  return { base, overrides };
+}
+
+function formatRangeStyleValue(descriptor) {
+  if (!descriptor || descriptor.overrides.length === 0) return descriptor ? descriptor.base : undefined;
+  const parts = [String(descriptor.base ?? '')];
+  for (const entry of descriptor.overrides) {
+    if (!entry.ranges || entry.ranges.length === 0) continue;
+    let segment = String(entry.value ?? '');
+    for (const range of entry.ranges) {
+      const start = range.start + 1;
+      const end = range.end;
+      segment += `(${start},${end})`;
+    }
+    parts.push(segment);
+  }
+  return parts.join(';');
+}
+
+function createRangeStyleDescriptor(currentValue, baseFallback) {
+  if (currentValue !== undefined && currentValue !== null) {
+    return parseRangeStyleValue(currentValue);
+  }
+  return { base: baseFallback, overrides: [] };
+}
+
+function valuesEqual(a, b) {
+  if (typeof a === 'number' && typeof b === 'number') return a === b;
+  return String(a) === String(b);
+}
+
+function clampRange(start, end, length) {
+  const s = Math.max(0, Math.min(start, length));
+  const e = Math.max(s, Math.min(end, length));
+  return { start: s, end: e };
+}
+
+function subtractRange(range, start, end) {
+  if (end <= range.start || start >= range.end) return [range];
+  const result = [];
+  if (start > range.start) result.push({ start: range.start, end: start });
+  if (end < range.end) result.push({ start: end, end: range.end });
+  return result;
+}
+
+function mergeRanges(ranges) {
+  if (!ranges || ranges.length === 0) return [];
+  ranges.sort((a, b) => a.start - b.start);
+  const merged = [ranges[0]];
+  for (let i = 1; i < ranges.length; i++) {
+    const prev = merged[merged.length - 1];
+    const cur = ranges[i];
+    if (cur.start <= prev.end) {
+      prev.end = Math.max(prev.end, cur.end);
+    } else {
+      merged.push({ start: cur.start, end: cur.end });
+    }
+  }
+  return merged;
+}
+
+function applyRangeStyleValue(currentValue, newValue, selection, baseValue, textLength) {
+  if (!selection || selection.end <= selection.start) return currentValue;
+  const { start, end } = clampRange(selection.start, selection.end, textLength);
+  if (start === 0 && end === textLength) {
+    return newValue;
+  }
+  const descriptor = createRangeStyleDescriptor(currentValue, baseValue);
+  for (const entry of descriptor.overrides) {
+    const next = [];
+    for (const range of entry.ranges) {
+      const pieces = subtractRange(range, start, end);
+      next.push(...pieces);
+    }
+    entry.ranges = next;
+  }
+  descriptor.overrides = descriptor.overrides.filter(entry => entry.ranges.length > 0);
+  if (!valuesEqual(newValue, descriptor.base)) {
+    let targetEntry = descriptor.overrides.find(entry => valuesEqual(entry.value, newValue));
+    if (!targetEntry) {
+      targetEntry = { value: newValue, ranges: [] };
+      descriptor.overrides.push(targetEntry);
+    }
+    targetEntry.ranges.push({ start, end });
+    targetEntry.ranges = mergeRanges(targetEntry.ranges);
+  }
+  descriptor.overrides.sort((a, b) => {
+    const aStart = a.ranges[0]?.start ?? 0;
+    const bStart = b.ranges[0]?.start ?? 0;
+    return aStart - bStart;
+  });
+  if (descriptor.overrides.length === 0) return descriptor.base;
+  return formatRangeStyleValue(descriptor);
+}
+
+function getRangeStyleDescriptor(value, baseFallback) {
+  const descriptor = createRangeStyleDescriptor(value, baseFallback);
+  descriptor.overrides = descriptor.overrides.map(entry => ({
+    value: entry.value,
+    ranges: entry.ranges.map(r => ({ start: r.start, end: r.end }))
+  }));
+  return descriptor;
+}
+
+function getValueForRange(descriptor, start, end) {
+  if (!descriptor) return undefined;
+  let current;
+  for (let i = start; i < end; i++) {
+    const val = getValueAtIndex(descriptor, i);
+    if (typeof current === 'undefined') current = val;
+    else if (!valuesEqual(current, val)) return undefined;
+  }
+  return typeof current === 'undefined' ? descriptor.base : current;
+}
+
+function getValueAtIndex(descriptor, index) {
+  if (!descriptor) return undefined;
+  for (const entry of descriptor.overrides) {
+    for (const range of entry.ranges) {
+      if (index >= range.start && index < range.end) return entry.value;
+    }
+  }
+  return descriptor.base;
+}
+
+function buildStyledRuns(node, fieldKey, text, baseStyle) {
+  if (!node || !text || !text.length) return null;
+  const isBody = fieldKey === 'body';
+  const descriptors = {};
+  let hasOverride = false;
+  for (const field of RANGEABLE_STYLE_FIELDS) {
+    const key = isBody ? `body.${field}` : field;
+    const descriptor = getRangeStyleDescriptor(node[key], baseStyle[field]);
+    descriptors[field] = descriptor;
+    if (descriptor && descriptor.overrides && descriptor.overrides.length > 0) {
+      hasOverride = true;
+    }
+  }
+  if (!hasOverride) return null;
+  const breakpoints = new Set([0, text.length]);
+  for (const descriptor of Object.values(descriptors)) {
+    if (!descriptor) continue;
+    for (const entry of descriptor.overrides || []) {
+      for (const range of entry.ranges) {
+        breakpoints.add(range.start);
+        breakpoints.add(range.end);
+      }
+    }
+  }
+  const sorted = Array.from(breakpoints).sort((a, b) => a - b);
+  const runs = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const start = sorted[i];
+    const end = sorted[i + 1];
+    if (end <= start) continue;
+    const slice = text.substring(start, end);
+    const runStyle = {};
+    for (const field of RANGEABLE_STYLE_FIELDS) {
+      const descriptor = descriptors[field];
+      if (!descriptor) continue;
+      const val = getValueForRange(descriptor, start, end);
+      if (typeof val !== 'undefined') runStyle[field] = val;
+    }
+    runs.push({ text: slice, style: runStyle });
+  }
+  return runs;
+}
+
+function renderStyledText(targetEl, text, node, fieldKey, baseStyle, applyFn) {
+  if (!text) {
+    targetEl.textContent = '';
+    return;
+  }
+  const runs = buildStyledRuns(node, fieldKey, text, baseStyle);
+  if (!runs) {
+    targetEl.textContent = text;
+    return;
+  }
+  targetEl.innerHTML = '';
+  for (const run of runs) {
+    const span = document.createElement('span');
+    span.textContent = run.text;
+    applyFn(span, Object.assign({}, baseStyle, run.style));
+    targetEl.appendChild(span);
+  }
+}
+
 function compressKey(key) {
   if (ESCAPE_TABLE[key]) return ESCAPE_TABLE[key];
   const dot = key.indexOf('.');
@@ -423,11 +652,75 @@ function hexToRgb(hex) {
   return [parseInt(h.substring(0,2),16), parseInt(h.substring(2,4),16), parseInt(h.substring(4,6),16)].join(',');
 }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-function stripMediaTags(text) { return (text || '').replace(/\{\{[^}]*\}\}/g, ''); }
+function stripMediaTags(text) {
+  if (!text) return '';
+  return text.replace(/\{\{[^}]*\}\}/g, '');
+}
 function extractMediaTags(text) {
   const tags = []; const re = /\{\{(img|video|audio):([^}]+)\}\}/g; let m;
   while ((m = re.exec(text))) tags.push({ type: m[1], src: m[2] });
   return tags;
+}
+
+function buildNodeStyle(data, path, level, opts = {}) {
+  const { isBody = false } = opts;
+  const tg = data.type_global || {};
+  const style = {};
+  const computedLevel = (typeof level === 'number') ? level : (path ? getLevel(path.split('.').pop()) : 0);
+  const node = path ? getNodeByPath(data, path) : null;
+
+  if (isBody) {
+    for (const [k,v] of Object.entries(tg)) {
+      if (k.startsWith('body.')) style[k.substring(5)] = resolveStyleBaseValue(v);
+    }
+    const prefix = `t${computedLevel}-*.body.`;
+    for (const [k,v] of Object.entries(tg)) {
+      if (k.startsWith(prefix)) style[k.substring(prefix.length)] = resolveStyleBaseValue(v);
+    }
+  } else {
+    const wildcard = 't*-*.';
+    for (const [k,v] of Object.entries(tg)) {
+      if (k.startsWith(wildcard)) {
+        const field = k.substring(wildcard.length);
+        if (field.startsWith('body.')) continue;
+        style[field] = resolveStyleBaseValue(v);
+      }
+    }
+    const prefix = `t${computedLevel}-*.`;
+    for (const [k,v] of Object.entries(tg)) {
+      if (k.startsWith(prefix)) {
+        const field = k.substring(prefix.length);
+        if (field.startsWith('body.')) continue;
+        style[field] = resolveStyleBaseValue(v);
+      }
+    }
+  }
+
+  if (node) {
+    for (const field of STYLE_FIELDS) {
+      const key = isBody ? `body.${field}` : field;
+      if (node[key] !== undefined) style[field] = resolveStyleBaseValue(node[key]);
+    }
+  }
+  return style;
+}
+
+function getSelectionOffsetsWithin(el) {
+  if (!el) return null;
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+  const start = getOffsetWithin(el, range.startContainer, range.startOffset);
+  const end = getOffsetWithin(el, range.endContainer, range.endOffset);
+  return { start: Math.min(start, end), end: Math.max(start, end) };
+}
+
+function getOffsetWithin(root, node, offset) {
+  const pre = document.createRange();
+  pre.selectNodeContents(root);
+  pre.setEnd(node, offset);
+  return pre.toString().length;
 }
 
 // ================================================================
@@ -696,7 +989,8 @@ class OutlineView {
     content.className = 'outline-content';
     content.contentEditable = 'plaintext-only';
     if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
-    content.textContent = node.content || '';
+    const contentText = stripMediaTags(node.content || '');
+    renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
     content.dataset.path = path;
     content.dataset.field = 'content';
     content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
@@ -718,11 +1012,14 @@ class OutlineView {
       bodyEl.className = 'outline-body';
       bodyEl.contentEditable = 'plaintext-only';
       if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
-      bodyEl.textContent = node.body || '';
+      const bodyStyle = this.getBodyStyle(path);
+      const bodyText = stripMediaTags(node.body || '');
+      renderStyledText(bodyEl, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
       bodyEl.dataset.path = path;
       bodyEl.dataset.field = 'body';
       bodyEl.spellcheck = false;
       bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
+      this.applyStyle(bodyEl, bodyStyle);
       div.appendChild(bodyEl);
     }
 
@@ -781,22 +1078,11 @@ class OutlineView {
   }
 
   getStyle(path, level) {
-    const tg = this.data.type_global || {};
-    const node = getNodeByPath(this.data, path);
-    const style = {};
-    const prefix = `t${level}-*.`;
-    for (const [k,v] of Object.entries(tg)) {
-      if (k.startsWith(prefix)) {
-        const field = k.substring(prefix.length);
-        style[field] = v;
-      }
-    }
-    if (node) {
-      for (const field of ['font','font_size','color','bold','italic','underline','strikethrough','background_color','text_align']) {
-        if (node[field] !== undefined) style[field] = node[field];
-      }
-    }
-    return style;
+    return buildNodeStyle(this.data, path, level, { isBody: false });
+  }
+
+  getBodyStyle(path) {
+    return buildNodeStyle(this.data, path, undefined, { isBody: true });
   }
 
   applyStyle(el, style) {
@@ -1192,7 +1478,8 @@ class DocumentView {
       contentSpan.className = 'doc-editable';
       contentSpan.contentEditable = 'plaintext-only';
       if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
-      contentSpan.textContent = node.content || '';
+      const contentText = stripMediaTags(node.content || '');
+      renderStyledText(contentSpan, contentText, node, 'content', style, (el, runStyle) => this.applyInlineStyle(el, runStyle));
       contentSpan.dataset.path = path;
       contentSpan.dataset.field = 'content';
       contentSpan.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
@@ -1213,11 +1500,12 @@ class DocumentView {
         bodyDiv.className = 'doc-body doc-editable';
         bodyDiv.contentEditable = 'plaintext-only';
         if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
-        bodyDiv.textContent = node.body || '';
+        const bodyStyle = this.getBodyStyle(path);
+        const bodyText = stripMediaTags(node.body || '');
+        renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
         bodyDiv.dataset.path = path;
         bodyDiv.dataset.field = 'body';
         bodyDiv.spellcheck = false;
-        const bodyStyle = this.getBodyStyle();
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
       }
@@ -1263,28 +1551,11 @@ class DocumentView {
   }
 
   getStyle(level, path) {
-    const tg = this.data.type_global || {};
-    const node = path ? getNodeByPath(this.data, path) : null;
-    const style = {};
-    const prefix = `t${level}-*.`;
-    for (const [k,v] of Object.entries(tg)) {
-      if (k.startsWith(prefix)) style[k.substring(prefix.length)] = v;
-    }
-    if (node) {
-      for (const field of ['font','font_size','color','bold','italic','underline','strikethrough','background_color','text_align']) {
-        if (node[field] !== undefined) style[field] = node[field];
-      }
-    }
-    return style;
+    return buildNodeStyle(this.data, path, level, { isBody: false });
   }
 
-  getBodyStyle() {
-    const tg = this.data.type_global || {};
-    const style = {};
-    for (const [k,v] of Object.entries(tg)) {
-      if (k.startsWith('body.')) style[k.substring(5)] = v;
-    }
-    return style;
+  getBodyStyle(path) {
+    return buildNodeStyle(this.data, path, undefined, { isBody: true });
   }
 
   applyInlineStyle(el, style) {
@@ -1490,6 +1761,29 @@ class App {
     this.renderCurrentView();
   }
 
+  getCurrentFocusPath() {
+    const view = this.currentView === 'outline' ? this.outlineView : this.documentView;
+    return view.focusPath;
+  }
+
+  getCurrentFocusField() {
+    const view = this.currentView === 'outline' ? this.outlineView : this.documentView;
+    return view.focusField || 'content';
+  }
+
+  getActiveEditableEl() {
+    const path = this.getCurrentFocusPath();
+    const field = this.getCurrentFocusField();
+    if (!path || !field) return null;
+    return document.querySelector(`[data-path="${path}"][data-field="${field}"]`);
+  }
+
+  getCurrentTextSelection() {
+    const el = this.getActiveEditableEl();
+    if (!el) return null;
+    return getSelectionOffsetsWithin(el);
+  }
+
   setOutlineRenderMode(mode) {
     this.outlineRenderMode = mode;
     localStorage.setItem('udd-outline-mode', mode);
@@ -1551,65 +1845,74 @@ class App {
 
   updateToolbar(path) {
     if (!path) return;
-    const node = getNodeByPath(this.data, path);
-    if (!node) return;
     const level = getLevel(path.split('.').pop());
-    const tg = this.data.type_global || {};
-    const prefix = `t${level}-*.`;
+    const isBody = this.getCurrentFocusField() === 'body';
+    const style = buildNodeStyle(this.data, path, level, { isBody });
 
-    const get = (field) => {
-      if (node[field] !== undefined) return node[field];
-      if (tg[prefix + field] !== undefined) return tg[prefix + field];
-      return undefined;
-    };
-
-    const font = get('font');
-    const size = get('font_size');
-    const bold = get('bold');
-    const italic = get('italic');
-    const underline = get('underline');
-    const strike = get('strikethrough');
-    const color = get('color');
-    const bgc = get('background_color');
-    const align = get('text_align');
-
-    if (font) document.getElementById('tool-font').value = font;
-    if (size) document.getElementById('tool-size').value = size;
-    document.getElementById('tool-bold').classList.toggle('active', !!bold);
-    document.getElementById('tool-italic').classList.toggle('active', !!italic);
-    document.getElementById('tool-underline').classList.toggle('active', !!underline);
-    document.getElementById('tool-strike').classList.toggle('active', !!strike);
-    if (color) {
-      const hex = rgbToHex(String(color));
+    if (style.font) document.getElementById('tool-font').value = style.font;
+    if (style.font_size) document.getElementById('tool-size').value = style.font_size;
+    document.getElementById('tool-bold').classList.toggle('active', !!style.bold);
+    document.getElementById('tool-italic').classList.toggle('active', !!style.italic);
+    document.getElementById('tool-underline').classList.toggle('active', !!style.underline);
+    document.getElementById('tool-strike').classList.toggle('active', !!style.strikethrough);
+    if (style.color) {
+      const hex = rgbToHex(String(style.color));
       this.lastFgColor = hex;
       document.getElementById('tool-color-preview').style.background = hex;
     }
-    if (bgc) {
-      const hex = rgbToHex(String(bgc));
+    if (style.background_color) {
+      const hex = rgbToHex(String(style.background_color));
       this.lastBgColor = hex;
       document.getElementById('tool-bg-preview').style.background = hex;
     }
-    // Alignment buttons
+    const align = style.text_align;
     document.getElementById('tool-align-left').classList.toggle('active', align === 'left' || !align);
     document.getElementById('tool-align-center').classList.toggle('active', align === 'center');
     document.getElementById('tool-align-right').classList.toggle('active', align === 'right');
   }
 
   setNodeStyle(field, value) {
-    const path = this.currentView === 'outline' ? this.outlineView.focusPath : this.documentView.focusPath;
-    if (!path) return;
-    this.pushUndo();
-    const node = getNodeByPath(this.data, path);
-    if (node) { node[field] = value; this.renderCurrentView(); this.markDirty(); }
+    this.applyStyleChange(field, value, { mode: 'set' });
   }
 
   toggleStyle(field) {
-    const path = this.currentView === 'outline' ? this.outlineView.focusPath : this.documentView.focusPath;
+    this.applyStyleChange(field, null, { mode: 'toggle' });
+  }
+
+  applyStyleChange(field, value, opts = {}) {
+    const path = this.getCurrentFocusPath();
     if (!path) return;
     this.pushUndo();
     const node = getNodeByPath(this.data, path);
     if (!node) return;
-    node[field] = node[field] ? 0 : 1;
+    const focusField = this.getCurrentFocusField();
+    const key = focusField === 'body' ? `body.${field}` : field;
+    const level = getLevel(path.split('.').pop());
+    const isBody = focusField === 'body';
+    const style = buildNodeStyle(this.data, path, level, { isBody });
+    const baseValue = style[field];
+    const selection = this.getCurrentTextSelection();
+    const canRange = RANGEABLE_STYLE_FIELDS.has(field);
+    const isTextField = focusField === 'content' || focusField === 'body';
+    if (selection && selection.end > selection.start && canRange && isTextField) {
+      const rawText = node[focusField] || '';
+      const text = stripMediaTags(rawText);
+      const textLength = text.length;
+      let targetValue = value;
+      if (opts.mode === 'toggle') {
+        const descriptor = getRangeStyleDescriptor(node[key], baseValue);
+        const uniform = getValueForRange(descriptor, selection.start, selection.end);
+        const enabled = !!uniform;
+        targetValue = enabled ? 0 : 1;
+      }
+      node[key] = applyRangeStyleValue(node[key], targetValue, selection, baseValue, textLength);
+    } else if (opts.mode === 'toggle') {
+      const current = node[key];
+      const resolved = current !== undefined ? resolveStyleBaseValue(current) : baseValue;
+      node[key] = resolved ? 0 : 1;
+    } else {
+      node[key] = value;
+    }
     this.renderCurrentView();
     this.markDirty();
   }
