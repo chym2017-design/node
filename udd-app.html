@@ -971,6 +971,9 @@ class OutlineView {
     const contentWrap = document.createElement('div');
     contentWrap.className = 'outline-content-wrap';
 
+    // content
+    const style = this.getStyle(path, level);
+
     // numbering (skip for t0)
     if (level !== 0) {
       const tg = this.data.type_global || {};
@@ -979,12 +982,10 @@ class OutlineView {
         const numSpan = document.createElement('span');
         numSpan.className = 'outline-num';
         numSpan.textContent = this.getNumber(path, numStyle);
+        this.applyStyle(numSpan, style);
         contentWrap.appendChild(numSpan);
       }
     }
-
-    // content
-    const style = this.getStyle(path, level);
     const content = document.createElement('div');
     content.className = 'outline-content';
     content.contentEditable = 'plaintext-only';
@@ -1459,16 +1460,19 @@ class DocumentView {
           bullet.className = 'doc-num';
           const bullets = ['●','○','■','▪'];
           bullet.textContent = bullets[Math.min(level - 1, bullets.length - 1)] + ' ';
+          this.applyInlineStyle(bullet, style);
           heading.appendChild(bullet);
         } else if (numStyle === 'bullet-uniform') {
           const bullet = document.createElement('span');
           bullet.className = 'doc-num';
           bullet.textContent = '● ';
+          this.applyInlineStyle(bullet, style);
           heading.appendChild(bullet);
         } else {
           const numSpan = document.createElement('span');
           numSpan.className = 'doc-num';
           numSpan.textContent = num;
+          this.applyInlineStyle(numSpan, style);
           heading.appendChild(numSpan);
         }
       }
@@ -1803,7 +1807,7 @@ class App {
   updateSidebar(path) {
     if (!document.getElementById('sidebar').classList.contains('active')) return;
     const json = document.getElementById('sidebar-json');
-    if (path) {
+    if (path && path.indexOf('.') !== -1) {
       const node = getNodeByPath(this.data, path);
       // Wrap with path key for context
       const parts = path.split('.');
@@ -1813,6 +1817,7 @@ class App {
       json.value = JSON.stringify(wrapped, null, 2);
       json.dataset.path = path;
     } else {
+      // Top-level key or no path: show complete raw data
       json.value = JSON.stringify(this.data, null, 2);
       json.dataset.path = '';
     }
