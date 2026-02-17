@@ -101,11 +101,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ===== COLOR PALETTE ===== */
 .tool-color-wrap{position:relative;display:inline-flex;align-items:center}
-.tool-color-btn{width:28px;height:28px;border:1px solid var(--gray-200);border-radius:var(--radius) 0 0 var(--radius);cursor:pointer;padding:2px;background:var(--bg);display:flex;align-items:center;justify-content:center}
+.tool-color-btn{width:28px;height:28px;border:1px solid var(--gray-200);border-radius:var(--radius) 0 0 var(--radius);cursor:pointer;padding:4px;background:var(--bg);display:flex;align-items:center;justify-content:center}
 .tool-color-btn:hover{border-color:var(--gray-300)}
-.tool-color-arrow{width:16px;height:28px;border:1px solid var(--gray-200);border-left:none;border-radius:0 var(--radius) var(--radius) 0;cursor:pointer;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--gray-400)}
+.tool-color-preview{display:block;width:18px;height:18px;border-radius:3px}
+.tool-color-arrow{width:16px;height:28px;border:1px solid var(--gray-200);border-left:none;border-radius:0 var(--radius) var(--radius) 0;cursor:pointer;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--gray-400);padding:0}
 .tool-color-arrow:hover{background:var(--gray-100)}
-.color-palette{position:absolute;top:32px;left:0;background:var(--bg);border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:100;display:none}
+.color-palette{position:fixed;background:var(--bg);border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:1000;display:none}
 .color-palette.show{display:block}
 .color-palette-grid{display:grid;grid-template-columns:repeat(8,22px);gap:3px}
 .color-palette-grid span{width:22px;height:22px;border-radius:3px;cursor:pointer;border:1px solid var(--gray-200)}
@@ -198,17 +199,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
       <button id="tool-strike" class="tool-btn" onclick="app.toggleStyle('strikethrough')" title="删除线"><s>S</s></button>
       <div class="tool-sep"></div>
       <div class="tool-color-wrap" id="color-wrap-fg">
-        <span class="tool-color-btn" id="tool-color-btn" onclick="app.applyLastColor('fg')" title="字体颜色">
-          <span style="display:block;width:18px;height:18px;border-radius:3px;background:#1e293b" id="tool-color-preview"></span>
-        </span>
-        <span class="tool-color-arrow" onclick="app.toggleColorPalette('fg')">▾</span>
+        <button type="button" class="tool-color-btn" id="tool-color-btn" onclick="app.applyLastColor('fg')" title="字体颜色">
+          <span class="tool-color-preview" id="tool-color-preview" style="background:#1e293b"></span>
+        </button>
+        <button type="button" class="tool-color-arrow" onclick="app.toggleColorPalette('fg')">▾</button>
         <div class="color-palette" id="palette-fg"></div>
       </div>
       <div class="tool-color-wrap" id="color-wrap-bg">
-        <span class="tool-color-btn" id="tool-bg-btn" onclick="app.applyLastColor('bg')" title="背景色">
-          <span style="display:block;width:18px;height:18px;border-radius:3px;background:#ffffff;border:1px solid var(--gray-200)" id="tool-bg-preview"></span>
-        </span>
-        <span class="tool-color-arrow" onclick="app.toggleColorPalette('bg')">▾</span>
+        <button type="button" class="tool-color-btn" id="tool-bg-btn" onclick="app.applyLastColor('bg')" title="背景色">
+          <span class="tool-color-preview" id="tool-bg-preview" style="background:#ffffff;border:1px solid var(--gray-200)"></span>
+        </button>
+        <button type="button" class="tool-color-arrow" onclick="app.toggleColorPalette('bg')">▾</button>
         <div class="color-palette" id="palette-bg"></div>
       </div>
       <div class="tool-sep"></div>
@@ -1220,21 +1221,33 @@ class OutlineView {
     const currentKey = parts[parts.length - 1];
     const level = getLevel(currentKey);
     let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
-    const siblings = getChildTKeys(parent, level);
-    const idx = siblings.indexOf(currentKey);
-    if (idx <= 0) return; // can't indent first sibling
 
-    const prevKey = siblings[idx - 1];
+    // For root-level nodes, find previous root sibling regardless of level
+    let prevKey;
+    if (parts.length === 1) {
+      const allRootKeys = getAllTKeys(parent);
+      const idx = allRootKeys.indexOf(currentKey);
+      if (idx <= 0) return;
+      prevKey = allRootKeys[idx - 1];
+    } else {
+      const siblings = getChildTKeys(parent, level);
+      const idx = siblings.indexOf(currentKey);
+      if (idx <= 0) return;
+      prevKey = siblings[idx - 1];
+    }
+
     const prevNode = parent[prevKey];
     const node = parent[currentKey];
     delete parent[currentKey];
 
-    // Re-level and add as child of previous sibling
-    const newLevel = level + 1;
+    // Re-level: become a child of prevNode at prevNode's level + 1
+    const prevLevel = getLevel(prevKey);
+    const newLevel = prevLevel + 1;
+    const levelDiff = newLevel - level;
     const newSeqNum = nextSeq(prevNode, newLevel);
     const newKey = `t${newLevel}-${newSeqNum}`;
-    prevNode[newKey] = relevelNode(node, 1);
-    // Fix: relevelNode adds diff, but the node itself needs content/body/hide preserved
+    prevNode[newKey] = levelDiff !== 0 ? relevelNode(node, levelDiff) : Object.assign({}, node);
+    // Preserve content/body/hide
     prevNode[newKey].content = node.content;
     prevNode[newKey].body = node.body;
     prevNode[newKey].hide = node.hide || 0;
@@ -1255,10 +1268,38 @@ class OutlineView {
 
   outdentNode(path) {
     const parts = path.split('.');
-    if (parts.length <= 1) return; // already root
-
     const currentKey = parts[parts.length - 1];
     const level = getLevel(currentKey);
+
+    // Root-level t1 → t0 conversion (re-key in place)
+    if (parts.length === 1) {
+      if (level === 0) return; // t0 can't outdent further
+      const node = this.data[currentKey];
+      const newSeqNum = nextSeq(this.data, level - 1);
+      const newKey = `t${level - 1}-${newSeqNum}`;
+      const newNode = relevelNode(node, -1);
+      newNode.content = node.content;
+      newNode.body = node.body;
+      newNode.hide = node.hide || 0;
+      newNode.hide_body = node.hide_body || 0;
+      for (const k of Object.keys(node)) {
+        if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
+      }
+      // Replace old key with new key in-place
+      const entries = Object.entries(this.data);
+      const temp = {};
+      for (const [k, v] of entries) {
+        if (k === currentKey) temp[newKey] = newNode;
+        else temp[k] = v;
+      }
+      for (const k of Object.keys(this.data)) delete this.data[k];
+      Object.assign(this.data, temp);
+      this.focusPath = newKey;
+      this.focusField = 'content';
+      this.render(this.data);
+      app.markDirty();
+      return;
+    }
     const parentPath = parts.slice(0, -1).join('.');
     const parentParts = parentPath.split('.');
     const parentKey = parentParts[parentParts.length - 1];
@@ -1982,7 +2023,16 @@ class App {
     const el = document.getElementById(id);
     const otherId = type === 'fg' ? 'palette-bg' : 'palette-fg';
     document.getElementById(otherId)?.classList.remove('show');
-    el?.classList.toggle('show');
+    if (el) {
+      const isShowing = el.classList.toggle('show');
+      if (isShowing) {
+        const wrapId = type === 'fg' ? 'color-wrap-fg' : 'color-wrap-bg';
+        const wrap = document.getElementById(wrapId);
+        const rect = wrap.getBoundingClientRect();
+        el.style.top = rect.bottom + 2 + 'px';
+        el.style.left = rect.left + 'px';
+      }
+    }
   }
 
   closeAllPalettes() {
