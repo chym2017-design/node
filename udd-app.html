@@ -77,12 +77,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .outline-row{display:flex;align-items:flex-start;padding:2px 0;min-height:28px;border-radius:var(--radius)}
 .outline-row:hover{background:var(--gray-50)}
 .outline-row .indent{flex-shrink:0}
-.outline-arrow{width:22px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-400);font-size:11px;flex-shrink:0;border-radius:var(--radius);user-select:none;margin-top:1px}
-.outline-arrow:hover{background:var(--gray-200);color:var(--text)}
-.outline-arrow.leaf{cursor:default;font-size:6px;color:var(--gray-300)}
-.outline-arrow.leaf:hover{background:transparent;color:var(--gray-300)}
+.outline-arrow{width:22px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:transparent;font-size:11px;flex-shrink:0;border-radius:var(--radius);user-select:none;margin-top:1px}
+.outline-row:hover .outline-arrow{color:var(--gray-400)}
+.outline-row:hover .outline-arrow:hover{background:var(--gray-200);color:var(--text)}
+.outline-arrow.leaf{cursor:default;font-size:6px}
+.outline-arrow.leaf:hover{background:transparent}
 .outline-content-wrap{display:flex;align-items:baseline;flex:1;min-width:0}
-.outline-num{color:var(--gray-400);font-weight:400;font-size:90%;margin-right:6px;flex-shrink:0;white-space:nowrap}
+.outline-num{font-weight:400;font-size:90%;margin-right:6px;flex-shrink:0;white-space:nowrap}
 .outline-content{flex:0 1 auto;padding:2px 6px;line-height:1.6;outline:none;border-radius:3px;min-height:24px;word-break:break-word;max-width:calc(100% - 60px)}
 .outline-content:focus{background:var(--blue-50)}
 .outline-content:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
@@ -123,7 +124,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .doc-h4,.doc-h5,.doc-h6{font-size:14px;font-weight:600;color:var(--gray-600);margin:10px 0 4px;line-height:1.4}
 .doc-body{font-size:14px;line-height:1.8;color:var(--gray-700);margin:4px 0 10px;text-indent:2em}
 .doc-page .doc-h1:first-child{margin-top:0}
-.doc-num{color:var(--gray-400);margin-right:6px;font-weight:400;font-size:90%}
+.doc-num{margin-right:6px;font-weight:400;font-size:90%}
+.doc-fold{position:absolute;left:-28px;top:0;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:transparent;font-size:11px;border-radius:var(--radius);user-select:none}
+.doc-node:hover>.doc-fold{color:var(--gray-400)}
+.doc-node:hover>.doc-fold:hover{background:var(--gray-200);color:var(--text)}
+.doc-fold.leaf{cursor:default;font-size:6px}
+.doc-fold.leaf:hover{background:transparent}
 .doc-editable{outline:none;border-radius:3px;min-height:1em}
 .doc-editable:focus{background:var(--blue-50)}
 .doc-editable:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
@@ -242,11 +248,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
     <div id="view-tabs">
       <button class="view-tab active" data-view="outline" onclick="app.switchView('outline')">大纲</button>
       <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
-      <select id="outline-mode" class="tool-select" onchange="app.setOutlineRenderMode(this.value)" style="width:90px;margin-left:8px;font-size:12px">
-        <option value="plain">纯文本</option>
-        <option value="partial" selected>部分渲染</option>
-        <option value="full">完全渲染</option>
-      </select>
       <div class="spacer"></div>
       <button id="sidebar-toggle" onclick="app.toggleSidebar()">侧边栏</button>
     </div>
@@ -757,6 +758,108 @@ function createBodyBtn(node, path, view) {
   return btn;
 }
 
+function createFoldToggle(node, path, level, view, className) {
+  const childKeys = getChildTKeys(node, level + 1);
+  const el = document.createElement('span');
+  el.className = className + (childKeys.length === 0 ? ' leaf' : '');
+  el.textContent = childKeys.length === 0 ? '•' : (node.hide ? '▶' : '▼');
+  el.onclick = () => {
+    if (childKeys.length === 0) return;
+    node.hide = node.hide ? 0 : 1;
+    view.focusPath = path;
+    view.render(view.data);
+    app.markDirty();
+  };
+  return el;
+}
+
+function indentNodeData(data, path) {
+  const parts = path.split('.');
+  const currentKey = parts[parts.length - 1];
+  const level = getLevel(currentKey);
+  let parent = parts.length === 1 ? data : getNodeByPath(data, parts.slice(0,-1).join('.'));
+  let prevKey;
+  if (parts.length === 1) {
+    const allRootKeys = getAllTKeys(parent);
+    const idx = allRootKeys.indexOf(currentKey);
+    if (idx <= 0) return null;
+    prevKey = allRootKeys[idx - 1];
+  } else {
+    const siblings = getChildTKeys(parent, level);
+    const idx = siblings.indexOf(currentKey);
+    if (idx <= 0) return null;
+    prevKey = siblings[idx - 1];
+  }
+  const prevNode = parent[prevKey];
+  const node = parent[currentKey];
+  delete parent[currentKey];
+  const prevLevel = getLevel(prevKey);
+  const newLevel = prevLevel + 1;
+  const levelDiff = newLevel - level;
+  const newSeqNum = nextSeq(prevNode, newLevel);
+  const newKey = `t${newLevel}-${newSeqNum}`;
+  prevNode[newKey] = levelDiff !== 0 ? relevelNode(node, levelDiff) : Object.assign({}, node);
+  prevNode[newKey].content = node.content;
+  prevNode[newKey].body = node.body;
+  prevNode[newKey].hide = node.hide || 0;
+  prevNode[newKey].hide_body = node.hide_body || 0;
+  for (const k of Object.keys(node)) {
+    if (!isTNode(k) && prevNode[newKey][k] === undefined) prevNode[newKey][k] = node[k];
+  }
+  prevNode.hide = 0;
+  const prevPath = parts.length === 1 ? prevKey : parts.slice(0,-1).join('.') + '.' + prevKey;
+  return prevPath + '.' + newKey;
+}
+
+function outdentNodeData(data, path) {
+  const parts = path.split('.');
+  const currentKey = parts[parts.length - 1];
+  const level = getLevel(currentKey);
+  if (parts.length === 1) {
+    if (level === 0) return null;
+    const node = data[currentKey];
+    const newSeqNum = nextSeq(data, level - 1);
+    const newKey = `t${level - 1}-${newSeqNum}`;
+    const newNode = relevelNode(node, -1);
+    newNode.content = node.content;
+    newNode.body = node.body;
+    newNode.hide = node.hide || 0;
+    newNode.hide_body = node.hide_body || 0;
+    for (const k of Object.keys(node)) {
+      if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
+    }
+    const entries = Object.entries(data);
+    const temp = {};
+    for (const [k, v] of entries) {
+      if (k === currentKey) temp[newKey] = newNode;
+      else temp[k] = v;
+    }
+    for (const k of Object.keys(data)) delete data[k];
+    Object.assign(data, temp);
+    return newKey;
+  }
+  const parentPath = parts.slice(0, -1).join('.');
+  const parentParts = parentPath.split('.');
+  const parentKey = parentParts[parentParts.length - 1];
+  let grandParent = parentParts.length === 1 ? data : getNodeByPath(data, parentParts.slice(0,-1).join('.'));
+  let parentNode = grandParent[parentKey];
+  const node = parentNode[currentKey];
+  delete parentNode[currentKey];
+  const newLevel = level - 1;
+  const newSeqNum = nextSeq(grandParent, newLevel);
+  const newKey = `t${newLevel}-${newSeqNum}`;
+  const newNode = relevelNode(node, -1);
+  newNode.content = node.content;
+  newNode.body = node.body;
+  newNode.hide = node.hide || 0;
+  newNode.hide_body = node.hide_body || 0;
+  for (const k of Object.keys(node)) {
+    if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
+  }
+  insertAfter(grandParent, parentKey, newKey, newNode);
+  return parentParts.length === 1 ? newKey : parentParts.slice(0,-1).join('.') + '.' + newKey;
+}
+
 // ================================================================
 //  COLOR PALETTE DATA
 // ================================================================
@@ -820,19 +923,19 @@ function createDefaultData() {
       modified: new Date().toISOString(), version: "1.0"
     },
     type_global: {
-      "t0-*.font": "微软雅黑", "t0-*.font_size": 22, "t0-*.color": "30,41,59",
+      "t0-*.font": "微软雅黑", "t0-*.font_size": 20, 
       "t0-*.bold": 1,
-      "t1-*.font": "微软雅黑", "t1-*.font_size": 22, "t1-*.color": "30,41,59",
+      "t1-*.font": "微软雅黑", "t1-*.font_size": 20, 
       "t1-*.bold": 1, "t1-*.paragraph_before": 1, "t1-*.paragraph_after": 0.5,
-      "t2-*.font": "微软雅黑", "t2-*.font_size": 17, "t2-*.color": "51,65,85",
+      "t2-*.font": "微软雅黑", "t2-*.font_size": 18,
       "t2-*.bold": 1, "t2-*.paragraph_before": 0.5, "t2-*.paragraph_after": 0.3,
-      "t3-*.font": "微软雅黑", "t3-*.font_size": 14, "t3-*.color": "71,85,105",
+      "t3-*.font": "微软雅黑", "t3-*.font_size": 16,
       "t3-*.paragraph_line": 1.3,
       "body.font": "微软雅黑", "body.font_size": 12, "body.color": "51,65,85",
       "body.paragraph_line": 1.8, "body.paragraph_first_indent": 2,
       hide_t: "t>3", numbering_style: "1.1.1"
     },
-    "t1-1": { content: "", hide: 0, hide_body: 0 }
+    "t0-1": { content: "标题", hide: 0, hide_body: 0 }
   };
 }
 
@@ -918,15 +1021,13 @@ class OutlineView {
     this.focusPath = null;
     this.focusField = 'content';
     this.focusCursorEnd = true;
-    this.renderMode = localStorage.getItem('udd-outline-mode') || 'partial';
     this.el.addEventListener('keydown', e => this.onKeyDown(e));
     this.el.addEventListener('input', e => this.onInput(e));
     this.el.addEventListener('focusin', e => this.onFocusIn(e));
   }
 
-  render(data, renderMode) {
+  render(data) {
     this.data = data;
-    if (renderMode !== undefined) this.renderMode = renderMode;
     this.el.innerHTML = '';
     const rootKeys = getAllTKeys(data);
     for (const key of rootKeys) {
@@ -956,16 +1057,7 @@ class OutlineView {
     // fold arrow
     const childLevel = level + 1;
     const childKeys = getChildTKeys(node, childLevel);
-    const arrow = document.createElement('span');
-    arrow.className = 'outline-arrow' + (childKeys.length === 0 ? ' leaf' : '');
-    arrow.textContent = childKeys.length === 0 ? '•' : (node.hide ? '▶' : '▼');
-    arrow.onclick = () => {
-      if (childKeys.length === 0) return;
-      node.hide = node.hide ? 0 : 1;
-      this.focusPath = path;
-      this.render(this.data);
-      app.markDirty();
-    };
+    const arrow = createFoldToggle(node, path, level, this, 'outline-arrow');
     row.appendChild(arrow);
 
     // contentWrap: numbering + content + body-btn in one baseline-aligned container
@@ -998,6 +1090,8 @@ class OutlineView {
     content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
     content.spellcheck = false;
     this.applyStyle(content, style);
+    const fmt = app && app.outlineFmt ? app.outlineFmt : {};
+    if (fmt.text_align && style.text_align) contentWrap.style.justifyContent = style.text_align === 'center' ? 'center' : style.text_align === 'right' ? 'flex-end' : 'flex-start';
     contentWrap.appendChild(content);
 
     // body button (shared function, inline after content)
@@ -1088,35 +1182,18 @@ class OutlineView {
   }
 
   applyStyle(el, style) {
-    const mode = this.renderMode || 'partial';
     const fmt = app && app.outlineFmt ? app.outlineFmt : {};
-    if (mode === 'plain') return;
-    if (mode === 'partial') {
-      if (fmt.font_size !== false && style.font_size) el.style.fontSize = style.font_size + 'pt';
-      if (fmt.color !== false && style.color) el.style.color = rgbToHex(String(style.color));
-      if (fmt.bold !== false && style.bold) el.style.fontWeight = '700';
-      if (fmt.font !== false && style.font) el.style.fontFamily = style.font;
-      if (fmt.italic && style.italic) el.style.fontStyle = 'italic';
-      if (fmt.underline && style.underline) el.style.textDecoration = 'underline';
-      if (fmt.strikethrough && style.strikethrough) {
-        el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
-      }
-      if (fmt.background_color && style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
-      if (fmt.text_align && style.text_align) el.style.textAlign = style.text_align;
-      return;
-    }
-    // full mode
-    if (style.font) el.style.fontFamily = style.font;
-    if (style.font_size) el.style.fontSize = style.font_size + 'pt';
-    if (style.color) el.style.color = rgbToHex(String(style.color));
-    if (style.bold) el.style.fontWeight = '700';
-    if (style.italic) el.style.fontStyle = 'italic';
-    if (style.underline) el.style.textDecoration = 'underline';
-    if (style.strikethrough) {
+    if (fmt.font !== false && style.font) el.style.fontFamily = style.font;
+    if (fmt.font_size !== false && style.font_size) el.style.fontSize = style.font_size + 'pt';
+    if (fmt.color !== false && style.color) el.style.color = rgbToHex(String(style.color));
+    if (fmt.bold !== false && style.bold) el.style.fontWeight = '700';
+    if (fmt.italic && style.italic) el.style.fontStyle = 'italic';
+    if (fmt.underline && style.underline) el.style.textDecoration = 'underline';
+    if (fmt.strikethrough && style.strikethrough) {
       el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
     }
-    if (style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
-    if (style.text_align) el.style.textAlign = style.text_align;
+    if (fmt.background_color && style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
+    if (fmt.text_align && style.text_align) el.style.textAlign = style.text_align;
   }
 
   // Sync all editable elements to data
@@ -1270,115 +1347,17 @@ class OutlineView {
   }
 
   indentNode(path) {
-    const parts = path.split('.');
-    const currentKey = parts[parts.length - 1];
-    const level = getLevel(currentKey);
-    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
-
-    // For root-level nodes, find previous root sibling regardless of level
-    let prevKey;
-    if (parts.length === 1) {
-      const allRootKeys = getAllTKeys(parent);
-      const idx = allRootKeys.indexOf(currentKey);
-      if (idx <= 0) return;
-      prevKey = allRootKeys[idx - 1];
-    } else {
-      const siblings = getChildTKeys(parent, level);
-      const idx = siblings.indexOf(currentKey);
-      if (idx <= 0) return;
-      prevKey = siblings[idx - 1];
-    }
-
-    const prevNode = parent[prevKey];
-    const node = parent[currentKey];
-    delete parent[currentKey];
-
-    // Re-level: become a child of prevNode at prevNode's level + 1
-    const prevLevel = getLevel(prevKey);
-    const newLevel = prevLevel + 1;
-    const levelDiff = newLevel - level;
-    const newSeqNum = nextSeq(prevNode, newLevel);
-    const newKey = `t${newLevel}-${newSeqNum}`;
-    prevNode[newKey] = levelDiff !== 0 ? relevelNode(node, levelDiff) : Object.assign({}, node);
-    // Preserve content/body/hide
-    prevNode[newKey].content = node.content;
-    prevNode[newKey].body = node.body;
-    prevNode[newKey].hide = node.hide || 0;
-    prevNode[newKey].hide_body = node.hide_body || 0;
-    // Copy style fields
-    for (const k of Object.keys(node)) {
-      if (!isTNode(k) && prevNode[newKey][k] === undefined) prevNode[newKey][k] = node[k];
-    }
-
-    const prevPath = parts.length === 1 ? prevKey : parts.slice(0,-1).join('.') + '.' + prevKey;
-    this.focusPath = prevPath + '.' + newKey;
+    const newPath = indentNodeData(this.data, path);
+    if (!newPath) return;
+    this.focusPath = newPath;
     this.focusField = 'content';
-    // Make sure parent is expanded
-    prevNode.hide = 0;
     this.render(this.data);
     app.markDirty();
   }
 
   outdentNode(path) {
-    const parts = path.split('.');
-    const currentKey = parts[parts.length - 1];
-    const level = getLevel(currentKey);
-
-    // Root-level t1 → t0 conversion (re-key in place)
-    if (parts.length === 1) {
-      if (level === 0) return; // t0 can't outdent further
-      const node = this.data[currentKey];
-      const newSeqNum = nextSeq(this.data, level - 1);
-      const newKey = `t${level - 1}-${newSeqNum}`;
-      const newNode = relevelNode(node, -1);
-      newNode.content = node.content;
-      newNode.body = node.body;
-      newNode.hide = node.hide || 0;
-      newNode.hide_body = node.hide_body || 0;
-      for (const k of Object.keys(node)) {
-        if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
-      }
-      // Replace old key with new key in-place
-      const entries = Object.entries(this.data);
-      const temp = {};
-      for (const [k, v] of entries) {
-        if (k === currentKey) temp[newKey] = newNode;
-        else temp[k] = v;
-      }
-      for (const k of Object.keys(this.data)) delete this.data[k];
-      Object.assign(this.data, temp);
-      this.focusPath = newKey;
-      this.focusField = 'content';
-      this.render(this.data);
-      app.markDirty();
-      return;
-    }
-    const parentPath = parts.slice(0, -1).join('.');
-    const parentParts = parentPath.split('.');
-    const parentKey = parentParts[parentParts.length - 1];
-
-    let grandParent = parentParts.length === 1 ? this.data : getNodeByPath(this.data, parentParts.slice(0,-1).join('.'));
-    let parentNode = grandParent[parentKey];
-
-    const node = parentNode[currentKey];
-    delete parentNode[currentKey];
-
-    const newLevel = level - 1;
-    const newSeqNum = nextSeq(grandParent, newLevel);
-    const newKey = `t${newLevel}-${newSeqNum}`;
-
-    const newNode = relevelNode(node, -1);
-    newNode.content = node.content;
-    newNode.body = node.body;
-    newNode.hide = node.hide || 0;
-    newNode.hide_body = node.hide_body || 0;
-    for (const k of Object.keys(node)) {
-      if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
-    }
-
-    insertAfter(grandParent, parentKey, newKey, newNode);
-
-    const newPath = parentParts.length === 1 ? newKey : parentParts.slice(0,-1).join('.') + '.' + newKey;
+    const newPath = outdentNodeData(this.data, path);
+    if (!newPath) return;
     this.focusPath = newPath;
     this.focusField = 'content';
     this.render(this.data);
@@ -1553,6 +1532,10 @@ class DocumentView {
       nodeDiv.className = 'doc-node';
       nodeDiv.dataset.path = path;
 
+      // Fold toggle
+      const fold = createFoldToggle(node, path, level, this, 'doc-fold');
+      nodeDiv.appendChild(fold);
+
       // Heading
       const hClass = level === 0 ? 'doc-h1' : (level <= 3 ? `doc-h${level}` : 'doc-h4');
       const heading = document.createElement('div');
@@ -1622,8 +1605,10 @@ class DocumentView {
 
       container.appendChild(nodeDiv);
 
-      // Recurse
-      this.renderChildren(node, path, level, container, numStyle);
+      // Recurse (skip if folded)
+      if (!node.hide) {
+        this.renderChildren(node, path, level, container, numStyle);
+      }
     }
   }
 
@@ -1679,6 +1664,7 @@ class DocumentView {
       el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
     }
     if (style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
+    if (style.text_align) el.style.textAlign = style.text_align;
     if (style.paragraph_line) el.style.lineHeight = style.paragraph_line;
     if (style.paragraph_first_indent) el.style.textIndent = style.paragraph_first_indent + 'em';
   }
@@ -1731,6 +1717,12 @@ class DocumentView {
       this.syncAll();
       app.pushUndo();
       this.smartEnter(path, el);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      this.syncAll();
+      app.pushUndo();
+      if (e.shiftKey) this.outdentNode(path);
+      else this.indentNode(path);
     } else if (e.key === 'Backspace' && el.textContent === '') {
       e.preventDefault();
       this.syncAll();
@@ -1827,6 +1819,24 @@ class DocumentView {
     app.markDirty();
   }
 
+  indentNode(path) {
+    const newPath = indentNodeData(this.data, path);
+    if (!newPath) return;
+    this.focusPath = newPath;
+    this.focusField = 'content';
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  outdentNode(path) {
+    const newPath = outdentNodeData(this.data, path);
+    if (!newPath) return;
+    this.focusPath = newPath;
+    this.focusField = 'content';
+    this.render(this.data);
+    app.markDirty();
+  }
+
   restoreFocus() {
     if (!this.focusPath) return;
     const sel = `[data-path="${this.focusPath}"][data-field="${this.focusField}"]`;
@@ -1884,7 +1894,6 @@ class App {
     this.undoMgr = new UndoManager();
     this.outlineView = new OutlineView(document.getElementById('outline-view'));
     this.documentView = new DocumentView(document.getElementById('document-view'));
-    this.outlineRenderMode = localStorage.getItem('udd-outline-mode') || 'partial';
     this.lastFgColor = '#1e293b';
     this.lastBgColor = '#ffffff';
     this.savedSelection = null;
@@ -1926,9 +1935,6 @@ class App {
   }
 
   async init() {
-    // Restore outline mode
-    const modeEl = document.getElementById('outline-mode');
-    if (modeEl) modeEl.value = this.outlineRenderMode;
 
     // Try restore from IndexedDB
     try {
@@ -1947,7 +1953,7 @@ class App {
 
   renderCurrentView() {
     if (this.currentView === 'outline') {
-      this.outlineView.render(this.data, this.outlineRenderMode);
+      this.outlineView.render(this.data);
     } else {
       this.documentView.render(this.data);
     }
@@ -1961,9 +1967,7 @@ class App {
     document.getElementById('outline-view').classList.toggle('active', view === 'outline');
     document.getElementById('document-view').classList.toggle('active', view === 'document');
     // Show/hide outline-specific controls
-    const modeEl = document.getElementById('outline-mode');
     const fmtEl = document.getElementById('fmt-switches');
-    if (modeEl) modeEl.style.display = view === 'outline' ? '' : 'none';
     if (fmtEl) fmtEl.style.display = view === 'outline' ? 'flex' : 'none';
     this.renderCurrentView();
   }
@@ -1982,19 +1986,14 @@ class App {
     const path = this.getCurrentFocusPath();
     const field = this.getCurrentFocusField();
     if (!path || !field) return null;
-    return document.querySelector(`[data-path="${path}"][data-field="${field}"]`);
+    const view = this.currentView === 'outline' ? this.outlineView : this.documentView;
+    return view.el.querySelector(`[data-path="${path}"][data-field="${field}"]`);
   }
 
   getCurrentTextSelection() {
     const el = this.getActiveEditableEl();
     if (!el) return this.savedSelection;
     return getSelectionOffsetsWithin(el) || this.savedSelection;
-  }
-
-  setOutlineRenderMode(mode) {
-    this.outlineRenderMode = mode;
-    localStorage.setItem('udd-outline-mode', mode);
-    this.renderCurrentView();
   }
 
   toggleSidebar() {
