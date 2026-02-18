@@ -1155,7 +1155,12 @@ class OutlineView {
     const field = el.dataset.field || 'content';
 
     if (field === 'body') {
-      // In body, Enter just adds newlines normally, Tab does nothing special
+      if (e.key === 'Backspace' && el.textContent === '') {
+        e.preventDefault();
+        this.syncAll();
+        app.pushUndo();
+        this.deleteBody(path);
+      }
       return;
     }
 
@@ -1164,7 +1169,7 @@ class OutlineView {
         e.preventDefault();
         this.syncAll();
         app.pushUndo();
-        this.addSiblingAfter(path);
+        this.smartEnter(path, el);
         break;
       case 'Tab':
         e.preventDefault();
@@ -1214,6 +1219,54 @@ class OutlineView {
     this.focusCursorEnd = false;
     this.render(this.data);
     app.markDirty();
+  }
+
+  addSiblingBefore(path) {
+    const parts = path.split('.');
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+    const newSeqNum = nextSeq(parent, level);
+    const newKey = `t${level}-${newSeqNum}`;
+    const newNode = { content: '', hide: 0, hide_body: 0 };
+    insertBefore(parent, currentKey, newKey, newNode);
+    const newPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
+    this.focusPath = newPath;
+    this.focusField = 'content';
+    this.focusCursorEnd = false;
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  smartEnter(path, el) {
+    const text = el.textContent || '';
+    const offsets = getSelectionOffsetsWithin(el);
+    const cursor = offsets ? offsets.start : text.length;
+    if (cursor === 0 && text.length > 0) {
+      this.addSiblingBefore(path);
+    } else if (cursor >= text.length) {
+      this.addSiblingAfter(path);
+    } else {
+      // Split: keep text before cursor, move rest to new sibling
+      const parts = path.split('.');
+      const currentKey = parts[parts.length - 1];
+      const node = getNodeByPath(this.data, path);
+      const before = text.substring(0, cursor);
+      const after = text.substring(cursor);
+      node.content = before;
+      const level = getLevel(currentKey);
+      let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+      const newSeqNum = nextSeq(parent, level);
+      const newKey = `t${level}-${newSeqNum}`;
+      const newNode = { content: after, hide: 0, hide_body: 0 };
+      insertAfter(parent, currentKey, newKey, newNode);
+      const newPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
+      this.focusPath = newPath;
+      this.focusField = 'content';
+      this.focusCursorEnd = false;
+      this.render(this.data);
+      app.markDirty();
+    }
   }
 
   indentNode(path) {
@@ -1362,6 +1415,18 @@ class OutlineView {
       const remaining = getAllTKeys(this.data);
       this.focusPath = remaining.length > 0 ? remaining[0] : null;
     }
+    this.focusField = 'content';
+    this.focusCursorEnd = true;
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  deleteBody(path) {
+    const node = getNodeByPath(this.data, path);
+    if (!node) return;
+    delete node.body;
+    node.hide_body = 0;
+    this.focusPath = path;
     this.focusField = 'content';
     this.focusCursorEnd = true;
     this.render(this.data);
@@ -1651,27 +1716,115 @@ class DocumentView {
     const path = el.dataset.path;
     const field = el.dataset.field || 'content';
 
-    if (field === 'body') return;
+    if (field === 'body') {
+      if (e.key === 'Backspace' && el.textContent === '') {
+        e.preventDefault();
+        this.syncAll();
+        app.pushUndo();
+        this.deleteBody(path);
+      }
+      return;
+    }
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       this.syncAll();
       app.pushUndo();
-      // Add sibling after current node
+      this.smartEnter(path, el);
+    } else if (e.key === 'Backspace' && el.textContent === '') {
+      e.preventDefault();
+      this.syncAll();
+      app.pushUndo();
+      this.deleteNode(path);
+    }
+  }
+
+  addSiblingAfter(path) {
+    const parts = path.split('.');
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+    const newSeqNum = nextSeq(parent, level);
+    const newKey = `t${level}-${newSeqNum}`;
+    insertAfter(parent, currentKey, newKey, { content: '', hide: 0, hide_body: 0 });
+    this.focusPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
+    this.focusField = 'content';
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  addSiblingBefore(path) {
+    const parts = path.split('.');
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+    const newSeqNum = nextSeq(parent, level);
+    const newKey = `t${level}-${newSeqNum}`;
+    insertBefore(parent, currentKey, newKey, { content: '', hide: 0, hide_body: 0 });
+    this.focusPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
+    this.focusField = 'content';
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  smartEnter(path, el) {
+    const text = el.textContent || '';
+    const offsets = getSelectionOffsetsWithin(el);
+    const cursor = offsets ? offsets.start : text.length;
+    if (cursor === 0 && text.length > 0) {
+      this.addSiblingBefore(path);
+    } else if (cursor >= text.length) {
+      this.addSiblingAfter(path);
+    } else {
       const parts = path.split('.');
       const currentKey = parts[parts.length - 1];
+      const node = getNodeByPath(this.data, path);
+      node.content = text.substring(0, cursor);
       const level = getLevel(currentKey);
       let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
       const newSeqNum = nextSeq(parent, level);
       const newKey = `t${level}-${newSeqNum}`;
-      const newNode = { content: '', hide: 0, hide_body: 0 };
-      insertAfter(parent, currentKey, newKey, newNode);
-      const newPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
-      this.focusPath = newPath;
+      insertAfter(parent, currentKey, newKey, { content: text.substring(cursor), hide: 0, hide_body: 0 });
+      this.focusPath = parts.length === 1 ? newKey : parts.slice(0,-1).join('.') + '.' + newKey;
       this.focusField = 'content';
       this.render(this.data);
       app.markDirty();
     }
+  }
+
+  deleteNode(path) {
+    const parts = path.split('.');
+    const currentKey = parts[parts.length - 1];
+    const level = getLevel(currentKey);
+    let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
+    if (parts.length === 1 && getAllTKeys(this.data).length <= 1) return;
+    const siblings = getChildTKeys(parent, level);
+    const idx = siblings.indexOf(currentKey);
+    const node = parent[currentKey];
+    if (getAllTKeys(node).length > 0 && !confirm('该节点下有子节点，确定删除？')) return;
+    delete parent[currentKey];
+    if (idx > 0) {
+      this.focusPath = parts.length === 1 ? siblings[idx - 1] : parts.slice(0,-1).join('.') + '.' + siblings[idx - 1];
+    } else if (parts.length > 1) {
+      this.focusPath = parts.slice(0,-1).join('.');
+    } else {
+      const remaining = getAllTKeys(this.data);
+      this.focusPath = remaining.length > 0 ? remaining[0] : null;
+    }
+    this.focusField = 'content';
+    this.render(this.data);
+    app.markDirty();
+  }
+
+  deleteBody(path) {
+    const node = getNodeByPath(this.data, path);
+    if (!node) return;
+    delete node.body;
+    node.hide_body = 0;
+    this.focusPath = path;
+    this.focusField = 'content';
+    this.render(this.data);
+    app.markDirty();
   }
 
   restoreFocus() {
