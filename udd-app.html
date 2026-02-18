@@ -135,11 +135,32 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .doc-editable:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
 
 /* ===== MEDIA ===== */
-.media-inline{display:inline-block;max-width:100%;margin:4px 0;border-radius:var(--radius);cursor:pointer;position:relative}
-.media-inline img{max-width:100%;border-radius:var(--radius);display:block}
-.media-inline video,.media-inline audio{max-width:100%;border-radius:var(--radius)}
-.lightbox-mask{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:3000;display:flex;align-items:center;justify-content:center;cursor:zoom-out}
-.lightbox-mask img{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.4)}
+.media-wrap{display:inline-block;position:relative;margin:8px 0;line-height:0;max-width:100%}
+.media-wrap:hover .media-resize-handle{opacity:1}
+.media-img{max-width:100%;border-radius:4px;cursor:pointer;display:block}
+.media-img.media-selected,.media-video.media-selected,.media-wrap.media-selected{outline:2px solid var(--primary);outline-offset:2px}
+.media-video{max-width:100%;border-radius:4px;display:block}
+.media-audio{width:100%;margin:4px 0}
+.media-caption{font-size:12px;color:var(--gray-400);text-align:center;margin-top:4px;line-height:1.4}
+.media-resize-handle{position:absolute;right:-4px;bottom:-4px;width:14px;height:14px;background:var(--primary);border-radius:50%;cursor:nwse-resize;opacity:0;transition:opacity .15s;z-index:10;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.media-wrap.resizing .media-resize-handle{opacity:1}
+.outline-media{margin:4px 0}
+.outline-media .media-wrap{display:inline-block}
+.outline-media img{max-width:100%;border-radius:3px}
+.outline-media video{max-width:100%;border-radius:3px}
+.lightbox-mask{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2000;display:flex;align-items:center;justify-content:center;cursor:zoom-out}
+.lightbox-img{max-width:90vw;max-height:90vh;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,.4);transition:transform .1s ease-out}
+.media-editor{position:absolute;z-index:1500;background:var(--bg);border:1px solid var(--gray-200);border-radius:8px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:220px;font-size:13px}
+.media-editor-title{font-weight:600;margin-bottom:8px;color:var(--gray-800)}
+.media-editor-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.media-editor-row label{width:50px;color:var(--gray-500);font-size:12px;flex-shrink:0}
+.media-editor-row input[type="text"],.media-editor-row select{flex:1;padding:3px 6px;border:1px solid var(--gray-200);border-radius:4px;font-size:12px;outline:none}
+.media-editor-row input[type="text"]:focus,.media-editor-row select:focus{border-color:var(--primary)}
+.media-editor-row input[type="checkbox"]{accent-color:var(--primary)}
+.media-editor-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--gray-100)}
+.media-editor-actions button{padding:4px 12px;border-radius:4px;font-size:12px;cursor:pointer;border:1px solid var(--gray-200);background:var(--bg)}
+.media-editor-ok{background:var(--primary)!important;color:#fff!important;border-color:var(--primary)!important}
+.media-editor-del{color:var(--red,#ef4444)!important;border-color:var(--red,#ef4444)!important}
 
 /* ===== MODAL ===== */
 .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:1000;display:flex;align-items:center;justify-content:center}
@@ -656,12 +677,16 @@ function hexToRgb(hex) {
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 function stripMediaTags(text) {
   if (!text) return '';
-  return text.replace(/\{\{[^}]*\}\}/g, '');
+  return text.replace(/\{\{.*?\}\}/g, '');
 }
 function extractMediaTags(text) {
-  const tags = []; const re = /\{\{(img|video|audio):([^}]+)\}\}/g; let m;
-  while ((m = re.exec(text))) tags.push({ type: m[1], src: m[2] });
-  return tags;
+  if (!text) return '';
+  const tags = [];
+  text.replace(/\{\{.*?\}\}/g, m => { tags.push(m); return ''; });
+  return tags.join('');
+}
+function hasMediaTag(text) {
+  return text && text.indexOf('{{') !== -1 && text.indexOf('}}') !== -1;
 }
 
 function buildNodeStyle(data, path, level, opts = {}) {
@@ -873,44 +898,268 @@ const PALETTE_COLORS = [
 ];
 
 // ================================================================
-//  MEDIA RENDERING
+//  MEDIA RENDERING HELPER
 // ================================================================
-function renderTextWithMedia(text, container) {
+const MEDIA_RE = /\{\{(.*?)\}\}/g;
+
+function parseMediaTag(tagContent) {
+  try { return JSON.parse('{' + tagContent + '}'); }
+  catch (e) { return null; }
+}
+
+function resolveMediaSrc(src) {
+  if (typeof app !== 'undefined' && app.resolveMediaSrc) return app.resolveMediaSrc(src);
+  return src;
+}
+function renderTextWithMedia(text, container, mediaInfo, opts) {
   if (!text) return;
-  const parts = text.split(/(\{\{(?:img|video|audio):[^}]+\}\})/);
-  for (const part of parts) {
-    const m = part.match(/^\{\{(img|video|audio):(.+)\}\}$/);
-    if (m) {
-      const wrap = document.createElement('span');
-      wrap.className = 'media-inline';
-      if (m[1] === 'img') {
-        const img = document.createElement('img');
-        img.src = m[2]; img.alt = ''; img.loading = 'lazy';
-        img.onclick = () => showLightbox(m[2]);
-        wrap.appendChild(img);
-      } else if (m[1] === 'video') {
-        const vid = document.createElement('video');
-        vid.src = m[2]; vid.controls = true; vid.preload = 'metadata';
-        wrap.appendChild(vid);
-      } else {
-        const aud = document.createElement('audio');
-        aud.src = m[2]; aud.controls = true;
-        wrap.appendChild(aud);
+  const noAlign = opts && opts.suppressAlign;
+  const parts = text.split(MEDIA_RE);
+  for (let i = 1; i < parts.length; i += 2) {
+    const media = parseMediaTag(parts[i]);
+    if (!media) continue;
+    if (media.image) {
+      const alignBox = document.createElement('div');
+      if (!noAlign && media['image.align']) alignBox.style.textAlign = media['image.align'];
+      const wrapper = document.createElement('div');
+      wrapper.className = 'media-wrap';
+      const imgW = media['image.width'] || '';
+      if (imgW) wrapper.style.width = imgW;
+      const img = document.createElement('img');
+      img.src = resolveMediaSrc(media.image);
+      img.className = 'media-img';
+      img.style.width = '100%';
+      const imgH = media['image.height'] || '';
+      if (imgH && !imgW.endsWith('%')) img.style.height = imgH;
+      if (media['image.angle']) img.style.transform = `rotate(${media['image.angle']}deg)`;
+      if (media['image.border']) img.style.border = '1px solid var(--gray-300)';
+      img.draggable = false;
+      img.ondblclick = (e) => { e.stopPropagation(); showLightbox(img.src); };
+      img.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+      wrapper.appendChild(img);
+      const handle = document.createElement('div');
+      handle.className = 'media-resize-handle';
+      handle.onmousedown = (e) => startMediaResize(e, img, wrapper, mediaInfo);
+      wrapper.appendChild(handle);
+      if (media['image.caption']) {
+        const cap = document.createElement('div');
+        cap.className = 'media-caption';
+        cap.textContent = media['image.caption'];
+        wrapper.appendChild(cap);
       }
-      container.appendChild(wrap);
-    } else if (part) {
-      container.appendChild(document.createTextNode(part));
+      alignBox.appendChild(wrapper);
+      container.appendChild(alignBox);
+    } else if (media.video) {
+      const alignBox = document.createElement('div');
+      if (!noAlign && media['video.align']) alignBox.style.textAlign = media['video.align'];
+      const wrapper = document.createElement('div');
+      wrapper.className = 'media-wrap';
+      const vidW = media['video.width'] || '';
+      const vidH = media['video.height'] || '';
+      if (vidW) wrapper.style.width = vidW;
+      const vid = document.createElement('video');
+      vid.src = resolveMediaSrc(media.video);
+      vid.className = 'media-video';
+      vid.controls = true;
+      vid.style.width = '100%';
+      if (vidH && !vidW.endsWith('%')) vid.style.height = vidH;
+      if (media['video.autoplay']) vid.autoplay = true;
+      if (media['video.loop']) vid.loop = true;
+      if (media['video.poster']) vid.poster = resolveMediaSrc(media['video.poster']);
+      vid.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+      wrapper.appendChild(vid);
+      const handle = document.createElement('div');
+      handle.className = 'media-resize-handle';
+      handle.onmousedown = (e) => startMediaResize(e, vid, wrapper, mediaInfo);
+      wrapper.appendChild(handle);
+      alignBox.appendChild(wrapper);
+      container.appendChild(alignBox);
+    } else if (media.audio) {
+      const aud = document.createElement('audio');
+      aud.src = resolveMediaSrc(media.audio);
+      aud.controls = true;
+      aud.className = 'media-audio';
+      aud.onclick = (e) => { e.stopPropagation(); showMediaEditor(aud, mediaInfo); };
+      container.appendChild(aud);
     }
   }
 }
+// Drag-to-resize
+function startMediaResize(e, el, wrapper, mediaInfo) {
+  e.preventDefault();
+  e.stopPropagation();
+  const startX = e.clientX;
+  const startW = wrapper.offsetWidth;
+  const alignBox = wrapper.parentElement;
+  const parentW = alignBox && alignBox.parentElement ? alignBox.parentElement.offsetWidth : startW;
+  wrapper.classList.add('resizing');
+  const onMove = (ev) => {
+    const dx = ev.clientX - startX;
+    const newW = Math.max(50, startW + dx);
+    wrapper.style.width = newW + 'px';
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    wrapper.classList.remove('resizing');
+    if (mediaInfo && mediaInfo.path && mediaInfo.field) {
+      const node = getNodeByPath(app.data, mediaInfo.path);
+      if (node) {
+        const text = node[mediaInfo.field] || '';
+        const finalW = wrapper.offsetWidth;
+        const pct = Math.round(finalW / parentW * 100);
+        const widthStr = pct + '%';
+        const mediaType = el.tagName === 'VIDEO' ? 'video' : 'image';
+        const updated = text.replace(MEDIA_RE, (match, content) => {
+          try {
+            const obj = JSON.parse('{' + content + '}');
+            if (obj[mediaType]) {
+              obj[mediaType + '.width'] = widthStr;
+              delete obj[mediaType + '.height'];
+              const inner = JSON.stringify(obj).slice(1, -1);
+              return '{{' + inner + '}}';
+            }
+          } catch(ex) {}
+          return match;
+        });
+        node[mediaInfo.field] = updated;
+        app.markDirty();
+      }
+    }
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// Lightbox preview
 function showLightbox(src) {
   const mask = document.createElement('div');
   mask.className = 'lightbox-mask';
   const img = document.createElement('img');
   img.src = src;
+  img.className = 'lightbox-img';
   mask.appendChild(img);
   mask.onclick = () => mask.remove();
+  mask.onwheel = (e) => {
+    e.preventDefault();
+    const scale = e.deltaY < 0 ? 1.1 : 0.9;
+    const cur = parseFloat(img.style.transform.replace(/scale\(([^)]+)\)/, '$1')) || 1;
+    img.style.transform = `scale(${cur * scale})`;
+  };
   document.body.appendChild(mask);
+}
+
+// Media property editor popup
+function showMediaEditor(mediaEl, mediaInfo) {
+  closeMediaEditor();
+  const text = (() => {
+    const node = getNodeByPath(app.data, mediaInfo.path);
+    return node ? (node[mediaInfo.field] || '') : '';
+  })();
+  const match = text.match(/\{\{(.*?)\}\}/);
+  if (!match) return;
+  const media = parseMediaTag(match[1]);
+  if (!media) return;
+  const mediaType = media.image ? 'image' : media.video ? 'video' : 'audio';
+
+  mediaEl.classList.add('media-selected');
+
+  const popup = document.createElement('div');
+  popup.className = 'media-editor';
+  popup.id = 'media-editor-popup';
+
+  const fields = [];
+  if (mediaType === 'image') {
+    fields.push(
+      {key: 'image.width', label: '宽度', val: media['image.width'] || ''},
+      {key: 'image.height', label: '高度', val: media['image.height'] || ''},
+      {key: 'image.align', label: '对齐', val: media['image.align'] || '', type: 'select', opts: ['','left','center','right']},
+      {key: 'image.angle', label: '旋转', val: media['image.angle'] || ''},
+      {key: 'image.caption', label: '说明', val: media['image.caption'] || ''},
+      {key: 'image.border', label: '边框', val: media['image.border'] || '', type: 'check'},
+    );
+  } else if (mediaType === 'video') {
+    fields.push(
+      {key: 'video.width', label: '宽度', val: media['video.width'] || ''},
+      {key: 'video.height', label: '高度', val: media['video.height'] || ''},
+      {key: 'video.align', label: '对齐', val: media['video.align'] || '', type: 'select', opts: ['','left','center','right']},
+      {key: 'video.autoplay', label: '自动播放', val: media['video.autoplay'] || '', type: 'check'},
+      {key: 'video.loop', label: '循环', val: media['video.loop'] || '', type: 'check'},
+    );
+  }
+
+  let html = `<div class="media-editor-title">${mediaType === 'image' ? '图片' : '视频'}属性</div>`;
+  for (const f of fields) {
+    if (f.type === 'select') {
+      const optHtml = f.opts.map(o => `<option value="${o}"${o===f.val?' selected':''}>${o||'默认'}</option>`).join('');
+      html += `<div class="media-editor-row"><label>${f.label}</label><select data-key="${f.key}">${optHtml}</select></div>`;
+    } else if (f.type === 'check') {
+      html += `<div class="media-editor-row"><label>${f.label}</label><input type="checkbox" data-key="${f.key}" ${f.val?'checked':''}></div>`;
+    } else {
+      html += `<div class="media-editor-row"><label>${f.label}</label><input type="text" data-key="${f.key}" value="${f.val}" placeholder="${f.label}"></div>`;
+    }
+  }
+  html += `<div class="media-editor-actions"><button class="media-editor-del">删除</button><button class="media-editor-ok">确定</button></div>`;
+  popup.innerHTML = html;
+
+  const rect = mediaEl.getBoundingClientRect();
+  popup.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  popup.style.left = (rect.left + window.scrollX) + 'px';
+  document.body.appendChild(popup);
+
+  popup.onclick = (e) => e.stopPropagation();
+
+  popup.querySelector('.media-editor-ok').onclick = () => {
+    app.pushUndo();
+    const node = getNodeByPath(app.data, mediaInfo.path);
+    if (!node) return;
+    const curText = node[mediaInfo.field] || '';
+    const updated = curText.replace(/\{\{(.*?)\}\}/, (m, content) => {
+      try {
+        const obj = JSON.parse('{' + content + '}');
+        popup.querySelectorAll('[data-key]').forEach(el => {
+          const k = el.dataset.key;
+          if (el.type === 'checkbox') {
+            if (el.checked) obj[k] = 1; else delete obj[k];
+          } else {
+            if (el.value) obj[k] = el.value; else delete obj[k];
+          }
+        });
+        return '{{' + JSON.stringify(obj).slice(1,-1) + '}}';
+      } catch(ex) { return m; }
+    });
+    node[mediaInfo.field] = updated;
+    closeMediaEditor();
+    app.renderCurrentView();
+    app.markDirty();
+  };
+
+  popup.querySelector('.media-editor-del').onclick = () => {
+    app.pushUndo();
+    const node = getNodeByPath(app.data, mediaInfo.path);
+    if (!node) return;
+    node[mediaInfo.field] = (node[mediaInfo.field] || '').replace(/\{\{.*?\}\}/, '');
+    closeMediaEditor();
+    app.renderCurrentView();
+    app.markDirty();
+    toast('已删除媒体');
+  };
+
+  setTimeout(() => {
+    document.addEventListener('click', closeMediaEditorOnOutside);
+  }, 0);
+}
+
+function closeMediaEditorOnOutside(e) {
+  const popup = document.getElementById('media-editor-popup');
+  if (popup && !popup.contains(e.target)) closeMediaEditor();
+}
+
+function closeMediaEditor() {
+  const popup = document.getElementById('media-editor-popup');
+  if (popup) popup.remove();
+  document.querySelectorAll('.media-selected').forEach(el => el.classList.remove('media-selected'));
+  document.removeEventListener('click', closeMediaEditorOnOutside);
 }
 
 // ================================================================
@@ -949,7 +1198,7 @@ function openDB() {
     req.onupgradeneeded = e => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
-      if (!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE, { keyPath: 'name' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -971,20 +1220,20 @@ async function dbLoad(id) {
     req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
   });
 }
-async function dbSaveMedia(id, blob) {
+async function dbSaveMedia(name, blob) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
-    tx.objectStore(MEDIA_STORE).put({ id, blob, ts: Date.now() });
+    tx.objectStore(MEDIA_STORE).put({ name, blob });
     tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
   });
 }
-async function dbLoadMedia(id) {
+async function dbLoadAllMedia() {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readonly');
-    const req = tx.objectStore(MEDIA_STORE).get(id);
-    req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+    const req = tx.objectStore(MEDIA_STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []); req.onerror = () => reject(req.error);
   });
 }
 
@@ -1101,6 +1350,15 @@ class OutlineView {
     row.appendChild(contentWrap);
     div.appendChild(row);
 
+    // Media preview from content
+    if (hasMediaTag(node.content || '')) {
+      const mediaDiv = document.createElement('div');
+      mediaDiv.className = 'outline-media';
+      mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
+      renderTextWithMedia(node.content, mediaDiv, {path, field:'content'}, {suppressAlign: !fmt.text_align});
+      div.appendChild(mediaDiv);
+    }
+
     // body content
     const hasBody = node.body !== undefined && node.body !== '';
     if (!node.hide_body && (hasBody || this.isBodyEditing(path))) {
@@ -1117,6 +1375,15 @@ class OutlineView {
       bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
       this.applyStyle(bodyEl, bodyStyle);
       div.appendChild(bodyEl);
+
+      // Media preview from body
+      if (hasMediaTag(node.body || '')) {
+        const bodyMediaDiv = document.createElement('div');
+        bodyMediaDiv.className = 'outline-media';
+        bodyMediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
+        renderTextWithMedia(node.body, bodyMediaDiv, {path, field:'body'}, {suppressAlign: !fmt.text_align});
+        div.appendChild(bodyMediaDiv);
+      }
     }
 
     // children
@@ -1200,7 +1467,10 @@ class OutlineView {
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
       const node = getNodeByPath(this.data, el.dataset.path);
-      if (node) node[el.dataset.field] = el.textContent;
+      if (!node) return;
+      const field = el.dataset.field;
+      const media = extractMediaTags(node[field]);
+      node[field] = el.textContent + media;
     });
   }
 
@@ -1209,7 +1479,8 @@ class OutlineView {
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
     const node = getNodeByPath(this.data, el.dataset.path);
     if (node) {
-      node[el.dataset.field] = el.textContent;
+      const media = extractMediaTags(node[el.dataset.field]);
+      node[el.dataset.field] = el.textContent + media;
       app.markDirty();
     }
     this.updateStatus();
@@ -1586,6 +1857,14 @@ class DocumentView {
 
       nodeDiv.appendChild(heading);
 
+      // Media preview from content
+      if (hasMediaTag(node.content || '')) {
+        const mediaDiv = document.createElement('div');
+        mediaDiv.className = 'media-inline';
+        renderTextWithMedia(node.content, mediaDiv, {path, field:'content'});
+        nodeDiv.appendChild(mediaDiv);
+      }
+
       // Body
       const hasBody = node.body !== undefined && node.body !== '';
       if (!node.hide_body && (hasBody || (this.focusPath === path && this.focusField === 'body'))) {
@@ -1601,6 +1880,14 @@ class DocumentView {
         bodyDiv.spellcheck = false;
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
+
+        // Media preview from body
+        if (hasMediaTag(node.body || '')) {
+          const bodyMediaDiv = document.createElement('div');
+          bodyMediaDiv.className = 'media-inline';
+          renderTextWithMedia(node.body, bodyMediaDiv, {path, field:'body'});
+          nodeDiv.appendChild(bodyMediaDiv);
+        }
       }
 
       container.appendChild(nodeDiv);
@@ -1673,7 +1960,10 @@ class DocumentView {
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
       const node = getNodeByPath(this.data, el.dataset.path);
-      if (node) node[el.dataset.field] = el.textContent;
+      if (!node) return;
+      const field = el.dataset.field;
+      const media = extractMediaTags(node[field]);
+      node[field] = el.textContent + media;
     });
   }
 
@@ -1682,7 +1972,8 @@ class DocumentView {
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
     const node = getNodeByPath(this.data, el.dataset.path);
     if (node) {
-      node[el.dataset.field] = el.textContent;
+      const media = extractMediaTags(node[el.dataset.field]);
+      node[el.dataset.field] = el.textContent + media;
       app.markDirty();
     }
   }
@@ -1946,6 +2237,16 @@ class App {
         document.title = 'UDD - ' + this.fileName;
         this.undoMgr.push(this.data);
         toast('已恢复上次编辑');
+      }
+    } catch (e) { /* ignore */ }
+    // Restore media blobs from IndexedDB
+    try {
+      const mediaItems = await dbLoadAllMedia();
+      if (mediaItems.length > 0) {
+        if (!this._mediaBlobUrls) this._mediaBlobUrls = {};
+        for (const item of mediaItems) {
+          this._mediaBlobUrls[item.name] = URL.createObjectURL(item.blob);
+        }
       }
     } catch (e) { /* ignore */ }
     this.renderCurrentView();
@@ -2216,33 +2517,45 @@ class App {
   }
 
   // Media insert
-  async insertMedia() {
-    const path = this.currentView === 'outline' ? this.outlineView.focusPath : this.documentView.focusPath;
-    if (!path) { toast('请先选择一个节点'); return; }
-    const file = await new Promise(resolve => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*,video/*,audio/*';
-      input.onchange = () => resolve(input.files[0]);
-      input.click();
-    });
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'img';
-      const tag = `{{${type}:${dataUrl}}}`;
+  insertMedia() {
+    const path = this.getCurrentFocusPath();
+    if (!path) { toast('请先选中一个节点'); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,video/*';
+    input.onchange = () => {
+      const file = input.files[0];
+      if (!file) return;
+      const isVideo = file.type.startsWith('video/');
+      const mediaType = isVideo ? 'video' : 'image';
+      const objectUrl = URL.createObjectURL(file);
+      if (!this._mediaBlobUrls) this._mediaBlobUrls = {};
+      this._mediaBlobUrls[file.name] = objectUrl;
+      dbSaveMedia(file.name, file).catch(e => console.error('Media save failed:', e));
+      const tag = `{{"${mediaType}":"${file.name}","${mediaType}.width":"100%"}}`;
+      this.pushUndo();
       const node = getNodeByPath(this.data, path);
-      if (node) {
-        this.pushUndo();
+      if (!node) return;
+      const field = this.currentView === 'outline'
+        ? (this.outlineView.focusField || 'body')
+        : (this.documentView.focusField || 'body');
+      if (field === 'body') {
         node.body = (node.body || '') + tag;
         node.hide_body = 0;
-        this.renderCurrentView();
-        this.markDirty();
-        toast('已插入媒体');
+      } else {
+        node.content = (node.content || '') + tag;
       }
+      this.renderCurrentView();
+      this.markDirty();
+      toast('已插入' + (isVideo ? '视频' : '图片'));
     };
-    reader.readAsDataURL(file);
+    input.click();
+  }
+
+  resolveMediaSrc(src) {
+    if (this._mediaBlobUrls && this._mediaBlobUrls[src]) return this._mediaBlobUrls[src];
+    if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:')) return src;
+    return src;
   }
 
   setNumbering(style) {
