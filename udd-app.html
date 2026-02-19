@@ -83,7 +83,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .outline-arrow.leaf{cursor:default;font-size:6px}
 .outline-arrow.leaf:hover{background:transparent}
 .outline-content-wrap{display:flex;align-items:baseline;flex:1;min-width:0}
-.outline-num{font-weight:400;font-size:90%;margin-right:6px;flex-shrink:0;white-space:nowrap}
+.outline-num{font-weight:400;font-size:90%;margin-right:6px;flex-shrink:0;white-space:nowrap;cursor:grab}
+.outline-num:active{cursor:grabbing}
+.outline-row.drag-above{box-shadow:0 -2px 0 0 var(--blue-500)}
+.outline-row.drag-below{box-shadow:0 2px 0 0 var(--blue-500)}
+.outline-row.drag-child{background:var(--blue-50);outline:1px dashed var(--blue-400)}
+.outline-node.dragging{opacity:0.4}
 .outline-content{flex:0 1 auto;padding:2px 6px;line-height:1.6;outline:none;border-radius:3px;min-height:24px;word-break:break-word;max-width:calc(100% - 60px)}
 .outline-content:focus{background:var(--blue-50)}
 .outline-content:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
@@ -901,6 +906,51 @@ function outdentNodeData(data, path) {
   return parentParts.length === 1 ? newKey : parentParts.slice(0,-1).join('.') + '.' + newKey;
 }
 
+// Move node (with children) to a new position: 'before'/'after' target, or 'child' of target
+function moveNodeData(data, srcPath, dstPath, mode) {
+  if (srcPath === dstPath) return null;
+  // Prevent moving into own descendant
+  if (dstPath.startsWith(srcPath + '.')) return null;
+  const srcParts = srcPath.split('.');
+  const srcKey = srcParts[srcParts.length - 1];
+  const srcParent = srcParts.length === 1 ? data : getNodeByPath(data, srcParts.slice(0,-1).join('.'));
+  const node = srcParent[srcKey];
+  if (!node) return null;
+  // Clone and remove from source
+  const clone = deepClone(node);
+  delete srcParent[srcKey];
+  const dstParts = dstPath.split('.');
+  const dstKey = dstParts[dstParts.length - 1];
+  const dstParent = dstParts.length === 1 ? data : getNodeByPath(data, dstParts.slice(0,-1).join('.'));
+  if (mode === 'child') {
+    const target = dstParent[dstKey];
+    const srcLevel = getLevel(srcKey);
+    const dstLevel = getLevel(dstKey);
+    const newLevel = dstLevel + 1;
+    const leveled = relevelNode(clone, newLevel - srcLevel);
+    leveled.content = clone.content; leveled.body = clone.body;
+    leveled.hide = clone.hide || 0; leveled.hide_body = clone.hide_body || 0;
+    for (const k of Object.keys(clone)) { if (!isTNode(k) && leveled[k] === undefined) leveled[k] = clone[k]; }
+    const seq = nextSeq(target, newLevel);
+    const newKey = `t${newLevel}-${seq}`;
+    target[newKey] = leveled;
+    target.hide = 0;
+    return dstPath + '.' + newKey;
+  }
+  // before / after: same level as target
+  const srcLevel = getLevel(srcKey);
+  const targetLevel = getLevel(dstKey);
+  const leveled = relevelNode(clone, targetLevel - srcLevel);
+  leveled.content = clone.content; leveled.body = clone.body;
+  leveled.hide = clone.hide || 0; leveled.hide_body = clone.hide_body || 0;
+  for (const k of Object.keys(clone)) { if (!isTNode(k) && leveled[k] === undefined) leveled[k] = clone[k]; }
+  const seq = nextSeq(dstParent, targetLevel);
+  const newKey = `t${targetLevel}-${seq}`;
+  if (mode === 'before') insertBefore(dstParent, dstKey, newKey, leveled);
+  else insertAfter(dstParent, dstKey, newKey, leveled);
+  return dstParts.length === 1 ? newKey : dstParts.slice(0,-1).join('.') + '.' + newKey;
+}
+
 // ================================================================
 //  COLOR PALETTE DATA
 // ================================================================
@@ -1289,6 +1339,12 @@ class OutlineView {
     this.el.addEventListener('keydown', e => this.onKeyDown(e));
     this.el.addEventListener('input', e => this.onInput(e));
     this.el.addEventListener('focusin', e => this.onFocusIn(e));
+    this._dragSrcPath = null;
+    this.el.addEventListener('dragstart', e => this.onDragStart(e));
+    this.el.addEventListener('dragover', e => this.onDragOver(e));
+    this.el.addEventListener('dragleave', e => this.onDragLeave(e));
+    this.el.addEventListener('drop', e => this.onDrop(e));
+    this.el.addEventListener('dragend', e => this.onDragEnd(e));
   }
 
   render(data) {
@@ -1339,6 +1395,8 @@ class OutlineView {
       if (numStyle !== 'none') {
         const numSpan = document.createElement('span');
         numSpan.className = 'outline-num';
+        numSpan.draggable = true;
+        numSpan.dataset.dragPath = path;
         numSpan.textContent = this.getNumber(path, numStyle);
         this.applyStyle(numSpan, style);
         contentWrap.appendChild(numSpan);
@@ -1499,6 +1557,70 @@ class OutlineView {
     app.updateToolbar(this.focusPath);
     this.updateStatus();
     app.updateSidebar(this.focusPath);
+  }
+
+  _clearDragIndicators() {
+    this.el.querySelectorAll('.drag-above,.drag-below,.drag-child').forEach(el => el.classList.remove('drag-above','drag-below','drag-child'));
+  }
+
+  onDragStart(e) {
+    const num = e.target.closest('[data-drag-path]');
+    if (!num) { e.preventDefault(); return; }
+    this._dragSrcPath = num.dataset.dragPath;
+    const nodeEl = this.el.querySelector(`.outline-node[data-path="${this._dragSrcPath}"]`);
+    if (nodeEl) nodeEl.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', this._dragSrcPath);
+  }
+
+  onDragOver(e) {
+    if (!this._dragSrcPath) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    this._clearDragIndicators();
+    const row = e.target.closest('.outline-row');
+    if (!row) return;
+    const nodeEl = row.closest('.outline-node');
+    const dstPath = nodeEl && nodeEl.dataset.path;
+    if (!dstPath || dstPath === this._dragSrcPath || dstPath.startsWith(this._dragSrcPath + '.')) return;
+    const rect = row.getBoundingClientRect();
+    const y = (e.clientY - rect.top) / rect.height;
+    if (y < 0.25) row.classList.add('drag-above');
+    else if (y > 0.75) row.classList.add('drag-below');
+    else row.classList.add('drag-child');
+  }
+
+  onDragLeave(e) {
+    const row = e.target.closest('.outline-row');
+    if (row) row.classList.remove('drag-above','drag-below','drag-child');
+  }
+
+  onDrop(e) {
+    e.preventDefault();
+    const row = e.target.closest('.outline-row');
+    if (!row || !this._dragSrcPath) return;
+    const nodeEl = row.closest('.outline-node');
+    const dstPath = nodeEl && nodeEl.dataset.path;
+    if (!dstPath) return;
+    const mode = row.classList.contains('drag-above') ? 'before'
+      : row.classList.contains('drag-child') ? 'child' : 'after';
+    this._clearDragIndicators();
+    this.syncAll();
+    app.pushUndo();
+    const newPath = moveNodeData(this.data, this._dragSrcPath, dstPath, mode);
+    if (newPath) {
+      this.focusPath = newPath;
+      this.focusField = 'content';
+      this.render(this.data);
+      app.markDirty();
+    }
+    this._dragSrcPath = null;
+  }
+
+  onDragEnd() {
+    this._clearDragIndicators();
+    this.el.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+    this._dragSrcPath = null;
   }
 
   onKeyDown(e) {
