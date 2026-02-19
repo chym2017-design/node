@@ -255,7 +255,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
       <div class="tool-sep"></div>
       <button class="tool-btn" onclick="app.insertMedia()" title="插入媒体">🖼</button>
     </div>
-    <div class="fmt-sw" id="fmt-switches" style="display:none">
+    <div class="fmt-sw" id="fmt-switches">
       <label><input type="checkbox" data-fmt="font" checked>字体</label>
       <label><input type="checkbox" data-fmt="font_size" checked>字号</label>
       <label><input type="checkbox" data-fmt="color" checked>颜色</label>
@@ -687,6 +687,22 @@ function extractMediaTags(text) {
 }
 function hasMediaTag(text) {
   return text && text.indexOf('{{') !== -1 && text.indexOf('}}') !== -1;
+}
+
+function applyFmtStyle(el, style, fmt) {
+  if (fmt.font && style.font) el.style.fontFamily = style.font;
+  if (fmt.font_size && style.font_size) el.style.fontSize = style.font_size + 'pt';
+  if (fmt.color && style.color) el.style.color = rgbToHex(String(style.color));
+  el.style.fontWeight = (fmt.bold && style.bold) ? '700' : 'normal';
+  if (fmt.italic && style.italic) el.style.fontStyle = 'italic';
+  if (fmt.underline && style.underline) el.style.textDecoration = 'underline';
+  if (fmt.strikethrough && style.strikethrough) {
+    el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
+  }
+  if (fmt.background_color && style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
+  if (fmt.text_align && style.text_align) el.style.textAlign = style.text_align;
+  if (style.paragraph_line) el.style.lineHeight = style.paragraph_line;
+  if (style.paragraph_first_indent) el.style.textIndent = style.paragraph_first_indent + 'em';
 }
 
 function buildNodeStyle(data, path, level, opts = {}) {
@@ -1449,18 +1465,7 @@ class OutlineView {
   }
 
   applyStyle(el, style) {
-    const fmt = app && app.outlineFmt ? app.outlineFmt : {};
-    if (fmt.font !== false && style.font) el.style.fontFamily = style.font;
-    if (fmt.font_size !== false && style.font_size) el.style.fontSize = style.font_size + 'pt';
-    if (fmt.color !== false && style.color) el.style.color = rgbToHex(String(style.color));
-    if (fmt.bold !== false && style.bold) el.style.fontWeight = '700';
-    if (fmt.italic && style.italic) el.style.fontStyle = 'italic';
-    if (fmt.underline && style.underline) el.style.textDecoration = 'underline';
-    if (fmt.strikethrough && style.strikethrough) {
-      el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
-    }
-    if (fmt.background_color && style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
-    if (fmt.text_align && style.text_align) el.style.textAlign = style.text_align;
+    applyFmtStyle(el, style, app && app.outlineFmt ? app.outlineFmt : {});
   }
 
   // Sync all editable elements to data
@@ -1595,13 +1600,13 @@ class OutlineView {
     } else if (cursor >= text.length) {
       this.addSiblingAfter(path);
     } else {
-      // Split: keep text before cursor, move rest to new sibling
       const parts = path.split('.');
       const currentKey = parts[parts.length - 1];
       const node = getNodeByPath(this.data, path);
+      const media = extractMediaTags(node.content);
       const before = text.substring(0, cursor);
       const after = text.substring(cursor);
-      node.content = before;
+      node.content = before + media;
       const level = getLevel(currentKey);
       let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
       const newSeqNum = nextSeq(parent, level);
@@ -1811,7 +1816,7 @@ class DocumentView {
       const hClass = level === 0 ? 'doc-h1' : (level <= 3 ? `doc-h${level}` : 'doc-h4');
       const heading = document.createElement('div');
       heading.className = hClass;
-      if (style.text_align) heading.style.textAlign = style.text_align;
+      this.applyInlineStyle(heading, style);
 
       // Numbering (skip for t0 and 'none')
       if (level !== 0 && numStyle !== 'none') {
@@ -1941,19 +1946,7 @@ class DocumentView {
   }
 
   applyInlineStyle(el, style) {
-    if (style.font) el.style.fontFamily = style.font;
-    if (style.font_size) el.style.fontSize = style.font_size + 'pt';
-    if (style.color) el.style.color = rgbToHex(String(style.color));
-    if (style.bold) el.style.fontWeight = '700';
-    if (style.italic) el.style.fontStyle = 'italic';
-    if (style.underline) el.style.textDecoration = 'underline';
-    if (style.strikethrough) {
-      el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
-    }
-    if (style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
-    if (style.text_align) el.style.textAlign = style.text_align;
-    if (style.paragraph_line) el.style.lineHeight = style.paragraph_line;
-    if (style.paragraph_first_indent) el.style.textIndent = style.paragraph_first_indent + 'em';
+    applyFmtStyle(el, style, app && app.documentFmt ? app.documentFmt : {});
   }
 
   // Sync all editable elements to data
@@ -2062,7 +2055,8 @@ class DocumentView {
       const parts = path.split('.');
       const currentKey = parts[parts.length - 1];
       const node = getNodeByPath(this.data, path);
-      node.content = text.substring(0, cursor);
+      const media = extractMediaTags(node.content);
+      node.content = text.substring(0, cursor) + media;
       const level = getLevel(currentKey);
       let parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0,-1).join('.'));
       const newSeqNum = nextSeq(parent, level);
@@ -2189,9 +2183,11 @@ class App {
     this.lastBgColor = '#ffffff';
     this.savedSelection = null;
 
-    // Format switches for outline rendering
+    // Format switches
     this.outlineFmt = { font: true, font_size: true, color: true, bold: true,
       italic: false, underline: false, strikethrough: false, background_color: false, text_align: false };
+    this.documentFmt = { font: true, font_size: true, color: true, bold: true,
+      italic: true, underline: true, strikethrough: true, background_color: true, text_align: true };
     this.initFmtSwitches();
 
     // Auto-save
@@ -2239,16 +2235,6 @@ class App {
         toast('已恢复上次编辑');
       }
     } catch (e) { /* ignore */ }
-    // Restore media blobs from IndexedDB
-    try {
-      const mediaItems = await dbLoadAllMedia();
-      if (mediaItems.length > 0) {
-        if (!this._mediaBlobUrls) this._mediaBlobUrls = {};
-        for (const item of mediaItems) {
-          this._mediaBlobUrls[item.name] = URL.createObjectURL(item.blob);
-        }
-      }
-    } catch (e) { /* ignore */ }
     this.renderCurrentView();
   }
 
@@ -2267,9 +2253,7 @@ class App {
     document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
     document.getElementById('outline-view').classList.toggle('active', view === 'outline');
     document.getElementById('document-view').classList.toggle('active', view === 'document');
-    // Show/hide outline-specific controls
-    const fmtEl = document.getElementById('fmt-switches');
-    if (fmtEl) fmtEl.style.display = view === 'outline' ? 'flex' : 'none';
+    this.syncFmtCheckboxes();
     this.renderCurrentView();
   }
 
@@ -2506,35 +2490,56 @@ class App {
   initFmtSwitches() {
     const container = document.getElementById('fmt-switches');
     if (!container) return;
+    this.syncFmtCheckboxes();
     container.querySelectorAll('input[data-fmt]').forEach(cb => {
-      const field = cb.dataset.fmt;
-      cb.checked = !!this.outlineFmt[field];
       cb.onchange = () => {
-        this.outlineFmt[field] = cb.checked;
+        const fmt = this.currentView === 'outline' ? this.outlineFmt : this.documentFmt;
+        fmt[cb.dataset.fmt] = cb.checked;
         this.renderCurrentView();
       };
     });
   }
 
+  syncFmtCheckboxes() {
+    const fmt = this.currentView === 'outline' ? this.outlineFmt : this.documentFmt;
+    document.querySelectorAll('#fmt-switches input[data-fmt]').forEach(cb => {
+      cb.checked = !!fmt[cb.dataset.fmt];
+    });
+  }
+
   // Media insert
-  insertMedia() {
-    const path = this.getCurrentFocusPath();
-    if (!path) { toast('请先选中一个节点'); return; }
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*,video/*';
-    input.onchange = () => {
-      const file = input.files[0];
-      if (!file) return;
+  async insertMedia() {
+    const nodePath = this.getCurrentFocusPath();
+    if (!nodePath) { toast('请先选中一个节点'); return; }
+    try {
+      // Step 1: pick directory
+      const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+      // Step 2: pick file from that directory
+      const [fileHandle] = await window.showOpenFilePicker({
+        types: [{ description: '媒体文件', accept: { 'image/*': [], 'video/*': [] } }]
+      });
+      // Step 3: resolve relative path from dir to file
+      const relParts = await dirHandle.resolve(fileHandle);
+      if (!relParts) { toast('所选文件不在该目录下'); return; }
+      // Step 4: get dir absolute path (cached per dirHandle.name in localStorage)
+      const cacheKey = 'media_dir_' + dirHandle.name;
+      let dirPath = localStorage.getItem(cacheKey);
+      if (!dirPath) {
+        dirPath = prompt('首次使用该目录，请输入其绝对路径：', 'E:\\' + dirHandle.name);
+        if (!dirPath) return;
+        localStorage.setItem(cacheKey, dirPath);
+      }
+      // Step 5: build absolute path
+      const absPath = dirPath.replace(/[\\/]$/, '') + '\\' + relParts.join('\\');
+      const file = await fileHandle.getFile();
       const isVideo = file.type.startsWith('video/');
       const mediaType = isVideo ? 'video' : 'image';
-      const objectUrl = URL.createObjectURL(file);
+      // Cache blob URL for current session preview
       if (!this._mediaBlobUrls) this._mediaBlobUrls = {};
-      this._mediaBlobUrls[file.name] = objectUrl;
-      dbSaveMedia(file.name, file).catch(e => console.error('Media save failed:', e));
-      const tag = `{{"${mediaType}":"${file.name}","${mediaType}.width":"100%"}}`;
+      this._mediaBlobUrls[absPath] = URL.createObjectURL(file);
+      const tag = `{{"${mediaType}":"${absPath.replace(/\\/g, '\\\\')}","${mediaType}.width":"100%"}}`;
       this.pushUndo();
-      const node = getNodeByPath(this.data, path);
+      const node = getNodeByPath(this.data, nodePath);
       if (!node) return;
       const field = this.currentView === 'outline'
         ? (this.outlineView.focusField || 'body')
@@ -2548,13 +2553,16 @@ class App {
       this.renderCurrentView();
       this.markDirty();
       toast('已插入' + (isVideo ? '视频' : '图片'));
-    };
-    input.click();
+    } catch (e) {
+      if (e.name !== 'AbortError') toast('插入失败：' + e.message);
+    }
   }
 
   resolveMediaSrc(src) {
     if (this._mediaBlobUrls && this._mediaBlobUrls[src]) return this._mediaBlobUrls[src];
-    if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:')) return src;
+    if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('file:')) return src;
+    // Convert absolute path (e.g. E:\xxx\yyy.jpg) to file:/// URL
+    if (/^[A-Za-z]:[\\/]/.test(src)) return 'file:///' + src.replace(/\\/g, '/');
     return src;
   }
 
