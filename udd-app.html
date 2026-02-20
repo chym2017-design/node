@@ -2680,7 +2680,7 @@ class MindmapView {
       div.style.color = c;
     }
 
-    div.textContent = item.label || '(空)';
+    div.textContent = item.label || '\u00A0';
     div.style.left = (item.x + offX) + 'px';
     div.style.top = (item.y + offY) + 'px';
     div.dataset.path = item.path;
