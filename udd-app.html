@@ -14,11 +14,11 @@
   --gray-50:#f8fafc;--gray-100:#f1f5f9;--gray-200:#e2e8f0;--gray-300:#cbd5e1;
   --gray-400:#94a3b8;--gray-500:#64748b;--gray-600:#475569;--gray-700:#334155;
   --gray-800:#1e293b;--gray-900:#0f172a;
-  --bg:#ffffff;--border:var(--gray-200);--text:var(--gray-800);
+  --bg:#ffffff;--border:var(--gray-200);--text:#000000;
   --text-sec:var(--gray-500);--primary:var(--blue-600);--primary-h:var(--blue-700);
   --primary-l:var(--blue-50);--radius:6px;--shadow:0 1px 3px rgba(0,0,0,.08);
 }
-html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif;font-size:14px;color:var(--text);background:var(--gray-100)}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif;font-size:12pt;color:var(--text);background:var(--gray-100)}
 
 /* ===== LAYOUT ===== */
 #app{display:flex;flex-direction:column;height:100%;background:var(--bg)}
@@ -94,7 +94,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .outline-content:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
 .body-btn{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-300);font-size:15px;border-radius:3px;flex-shrink:0;margin-left:3px;padding:2px 4px;line-height:1;user-select:none}
 .body-btn:hover{background:var(--gray-200);color:var(--gray-500)}
-.outline-body{padding:3px 6px;margin-left:22px;color:var(--gray-500);font-size:13px;line-height:1.5;outline:none;border-left:2px solid var(--gray-200);border-radius:0 3px 3px 0;min-height:20px;word-break:break-word}
+.outline-body{padding:3px 6px;margin-left:22px;color:var(--text);font-size:12pt;line-height:1.5;outline:none;border-left:2px solid var(--gray-200);border-radius:0 3px 3px 0;min-height:20px;word-break:break-word}
 .outline-body:focus{background:var(--blue-50);border-left-color:var(--primary)}
 .outline-body:empty::before{content:'输入正文...';color:var(--gray-300);pointer-events:none}
 .outline-children{margin-left:0}
@@ -123,11 +123,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* ===== DOCUMENT VIEW ===== */
 .doc-page{max-width:780px;margin:0 auto 40px;padding:60px 72px;background:var(--bg);box-shadow:var(--shadow);border:1px solid var(--gray-200);border-radius:var(--radius);min-height:600px}
 .doc-node{position:relative}
-.doc-h1{font-size:22px;font-weight:700;color:var(--gray-900);margin:28px 0 10px;line-height:1.4}
-.doc-h2{font-size:18px;font-weight:600;color:var(--gray-800);margin:20px 0 8px;line-height:1.4}
-.doc-h3{font-size:15px;font-weight:600;color:var(--gray-700);margin:14px 0 6px;line-height:1.4}
-.doc-h4,.doc-h5,.doc-h6{font-size:14px;font-weight:600;color:var(--gray-600);margin:10px 0 4px;line-height:1.4}
-.doc-body{font-size:14px;line-height:1.8;color:var(--gray-700);margin:4px 0 10px;text-indent:2em}
+.doc-h1{font-size:12pt;font-weight:700;color:var(--text);margin:28px 0 10px;line-height:1.4}
+.doc-h2{font-size:12pt;font-weight:600;color:var(--text);margin:20px 0 8px;line-height:1.4}
+.doc-h3{font-size:12pt;font-weight:600;color:var(--text);margin:14px 0 6px;line-height:1.4}
+.doc-h4,.doc-h5,.doc-h6{font-size:12pt;font-weight:600;color:var(--text);margin:10px 0 4px;line-height:1.4}
+.doc-body{font-size:12pt;line-height:1.8;color:var(--text);margin:4px 0 10px;text-indent:2em}
 .doc-page .doc-h1:first-child{margin-top:0}
 .doc-num{margin-right:6px;font-weight:400;font-size:90%}
 .doc-fold{position:absolute;left:-28px;top:0;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:transparent;font-size:11px;border-radius:var(--radius);user-select:none}
