@@ -193,17 +193,20 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #mindmap-canvas{width:100%;height:100%;overflow:hidden;position:relative;cursor:grab}
 #mindmap-canvas.grabbing{cursor:grabbing}
 #mindmap-svg{position:absolute;top:0;left:0;pointer-events:none}
-.mm-node{position:absolute;padding:6px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;user-select:none;transition:box-shadow .15s;max-width:260px;overflow:hidden;text-overflow:ellipsis;line-height:1.5}
+.mm-node{position:absolute;padding:6px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;user-select:none;transition:box-shadow .15s;max-width:260px;text-overflow:ellipsis;line-height:1.5}
 .mm-node:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .mm-node.selected{outline:2px solid var(--primary);outline-offset:2px}
 .mm-node.mm-root{font-weight:700;font-size:15px;background:var(--primary);color:#fff;border-radius:8px;padding:10px 20px}
 .mm-node.mm-l1{font-weight:600;font-size:13px;background:var(--blue-100);color:var(--blue-800);border:1px solid var(--blue-200)}
 .mm-node.mm-l2{font-size:12px;background:var(--gray-50);color:var(--gray-700);border:1px solid var(--gray-200)}
 .mm-node.mm-l3{font-size:11px;background:#fff;color:var(--gray-600);border:1px solid var(--gray-200)}
-.mm-fold{position:absolute;right:-8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;background:var(--bg);border:1px solid var(--gray-300);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--gray-500);cursor:pointer;z-index:2;line-height:1}
-.mm-fold:hover{background:var(--gray-100);border-color:var(--gray-400)}
+.mm-fold{position:absolute;right:-18px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;background:var(--bg);border:1px solid var(--gray-300);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--gray-500);cursor:pointer;z-index:2;line-height:1;opacity:0.7;transition:opacity .15s}
+.mm-fold:hover{background:var(--gray-100);border-color:var(--gray-400);opacity:1}
 .mm-body-indicator{position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--gray-500);cursor:pointer;background:var(--bg);border:1px solid var(--gray-300);z-index:2;line-height:1}
 .mm-body-indicator:hover{background:var(--gray-100);border-color:var(--gray-400)}
+.mm-node-media{margin-top:4px}
+.mm-media-thumb{display:inline-block;width:1.2em;height:1.2em;vertical-align:middle;margin-left:3px;border-radius:2px;background-size:cover;background-position:center;background-color:var(--gray-200);cursor:pointer;font-size:0.75em;line-height:1.2em;text-align:center;color:var(--gray-500);flex-shrink:0}
+.mm-media-thumb:hover{outline:2px solid var(--primary);outline-offset:1px}
 .mm-body-popup{position:absolute;z-index:100;background:var(--bg);border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:28px 14px 14px;font-size:12px;color:var(--gray-700);line-height:1.6;width:280px;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;resize:both;min-width:160px;min-height:120px}
 .mm-body-popup .mm-popup-close{position:absolute;top:4px;right:6px;cursor:pointer;font-size:16px;color:var(--gray-400);background:none;border:none;line-height:1;padding:2px 4px;border-radius:4px}
 .mm-body-popup .mm-popup-close:hover{color:var(--gray-700);background:var(--gray-100)}
@@ -2371,6 +2374,7 @@ class MindmapView {
     this.lineStyle = 'curve'; // curve | straight | polyline
     this.colorScheme = 'default'; // default | rainbow | mono
     this.nodeShape = 'rounded'; // rounded | rect | ellipse
+    this.gapV = 8; // vertical gap between sibling nodes
     this._clipboard = null;
     this._initEvents();
   }
@@ -2438,7 +2442,10 @@ class MindmapView {
 
   syncAll() { /* mindmap is read-only render, no editable fields to sync */ }
 
-  render(data) {
+  render(data, opts) {
+    const preserveView = opts && opts.preserveView;
+    const savedPan = preserveView ? { x: this.pan.x, y: this.pan.y } : null;
+    const savedZoom = preserveView ? this.zoom : null;
     this.data = data;
     this._nodes = [];
     const rootKeys = getAllTKeys(data);
@@ -2448,7 +2455,7 @@ class MindmapView {
     const tree = this._tree = this._buildTree(data, rootKeys);
 
     // Layout
-    const GAP_H = 180, GAP_V = 8;
+    const GAP_H = 180, GAP_V = this.gapV;
     this._layoutTree(tree, GAP_H, GAP_V);
 
     // Find bounds
@@ -2484,11 +2491,18 @@ class MindmapView {
     svg.style.cssText = `position:absolute;left:${minX + offsetX - 200}px;top:${minY + offsetY - 200}px;pointer-events:none`;
     const svgOffX = -(minX - 200), svgOffY = -(minY - 200);
 
-    // Draw lines and nodes
-    this._renderTree(tree, inner, svg, svgOffX, svgOffY, offsetX, offsetY);
+    // Pass 1: Render nodes only (no lines yet)
+    this._renderNodes(tree, inner, offsetX, offsetY);
 
     inner.appendChild(svg);
     canvas.appendChild(inner);
+
+    // Attach to DOM so we can measure real node sizes
+    this.el.appendChild(canvas);
+
+    // Pass 2: Measure real DOM sizes and draw SVG lines
+    this._updateRealSizes(tree);
+    this._drawLines(tree, svg, svgOffX, svgOffY);
 
     // Toolbar
     const toolbar = document.createElement('div');
@@ -2503,15 +2517,20 @@ class MindmapView {
       return `<span class="mm-dropdown"><button onclick="${mv}._toggleDD(this)">${label}</button><div class="mm-dropdown-menu">${items}</div></span>`;
     };
     toolbar.innerHTML = dd('布局:'+layoutLabel,'layout',[['right','向右'],['bilateral','双向'],['orgchart','组织架构']])
+      + `<span style="display:inline-flex;align-items:center;border:1px solid var(--gray-200);border-radius:var(--radius)"><span style="padding:4px 8px;font-size:11px;color:var(--gray-600);white-space:nowrap">间距</span><input type="number" value="${this.gapV}" min="0" max="200" step="1" oninput="${mv}._setGapV(+this.value)" style="width:36px;padding:2px 4px;font-size:11px;border:none;text-align:center;background:transparent;color:var(--gray-600);-moz-appearance:textfield;appearance:textfield"></span>`
       + dd('连线:'+lineLabel,'lineStyle',[['curve','曲线'],['straight','直线'],['polyline','折线']])
       + dd('配色:'+colorLabel,'colorScheme',[['default','默认'],['rainbow','彩虹'],['mono','单色']])
       + dd('形状:'+shapeLabel,'nodeShape',[['rounded','圆角'],['rect','矩形'],['ellipse','椭圆']])
       + `<button onclick="${mv}.exportImage('png')">导出PNG</button><button onclick="${mv}.exportImage('svg')">导出SVG</button><button onclick="${mv}.zoomIn()">+</button><button onclick="${mv}.zoomOut()">−</button><button onclick="${mv}.resetView()">⟲</button>`;
-    this.el.appendChild(canvas);
     this.el.appendChild(toolbar);
 
-    this.pan = { x: 0, y: 0 };
-    this.zoom = 1;
+    if (preserveView && savedPan) {
+      this.pan = savedPan;
+      this.zoom = savedZoom;
+    } else {
+      this.pan = { x: 0, y: 0 };
+      this.zoom = 1;
+    }
     this._applyTransform();
   }
 
@@ -2661,8 +2680,7 @@ class MindmapView {
     for (const c of item.children) this._collectAll(c, arr);
   }
 
-  _renderTree(item, container, svg, svgOffX, svgOffY, offX, offY) {
-    // Create node element
+  _renderNodes(item, container, offX, offY) {
     const div = document.createElement('div');
     div.className = 'mm-node';
     if (item.level === 0) div.classList.add('mm-root');
@@ -2670,22 +2688,43 @@ class MindmapView {
     else if (item.level === 2) div.classList.add('mm-l2');
     else div.classList.add('mm-l3');
     if (item.path === this.selectedPath) div.classList.add('selected');
-    // Node shape
     if (this.nodeShape === 'rect') div.style.borderRadius = '0';
     else if (this.nodeShape === 'ellipse') div.style.borderRadius = '50%';
-    // Rainbow color scheme
     if (this.colorScheme === 'rainbow' && item.level > 0) {
       const c = this._RAINBOW[(item.level - 1) % this._RAINBOW.length];
       div.style.borderColor = c;
       div.style.color = c;
     }
-
-    div.textContent = item.label || '\u00A0';
+    const labelText = stripMediaTags(item.label) || '\u00A0';
+    div.textContent = labelText;
+    if (hasMediaTag(item.label || '')) {
+      const parts = (item.label || '').split(MEDIA_RE);
+      for (let i = 1; i < parts.length; i += 2) {
+        const media = parseMediaTag(parts[i]);
+        if (!media) continue;
+        const thumb = document.createElement('span');
+        thumb.className = 'mm-media-thumb';
+        const mediaTag = '{{' + parts[i] + '}}';
+        if (media.image) {
+          thumb.style.backgroundImage = 'url(' + resolveMediaSrc(media.image) + ')';
+        } else if (media.video) {
+          thumb.textContent = '▶';
+        } else if (media.audio) {
+          thumb.textContent = '♪';
+        }
+        thumb.title = '点击预览';
+        thumb.addEventListener('click', e => {
+          e.stopPropagation();
+          this._showMediaPopup(div, item, mediaTag, 'content', container);
+        });
+        div.appendChild(thumb);
+      }
+    }
     div.style.left = (item.x + offX) + 'px';
     div.style.top = (item.y + offY) + 'px';
     div.dataset.path = item.path;
+    item._el = div;
 
-    // Apply styles from data
     if (item.node && item.level > 0) {
       const style = buildNodeStyle(this.data, item.path, item.level);
       if (style.font) div.style.fontFamily = style.font;
@@ -2699,7 +2738,6 @@ class MindmapView {
       if (item.node.border_radius) div.style.borderRadius = item.node.border_radius;
     }
 
-    // Click to select
     div.addEventListener('click', e => {
       e.stopPropagation();
       this.selectedPath = item.path;
@@ -2709,7 +2747,6 @@ class MindmapView {
       app.updateSidebar(item.path);
     });
 
-    // Double click to edit
     div.addEventListener('dblclick', e => {
       e.stopPropagation();
       if (item.path === '__root__') return;
@@ -2734,24 +2771,27 @@ class MindmapView {
       });
     });
 
-    // Fold button
     if (item.hasChildren) {
       const fold = document.createElement('span');
       fold.className = 'mm-fold';
       fold.textContent = item.folded ? '+' : '−';
+      if (this.layout === 'orgchart') {
+        fold.style.cssText = 'right:auto;left:50%;top:auto;bottom:-18px;transform:translateX(-50%)';
+      } else if (this.layout === 'bilateral' && item._dir === -1) {
+        fold.style.cssText = 'right:auto;left:-18px;transform:translateY(-50%)';
+      }
       fold.addEventListener('click', e => {
         e.stopPropagation();
         if (item.node) {
           app.pushUndo();
           item.node.hide = item.folded ? 0 : 1;
           app.markDirty();
-          this.render(this.data);
+          this.render(this.data, { preserveView: true });
         }
       });
       div.appendChild(fold);
     }
 
-    // Body indicator & popup
     if (item.hasBody) {
       const dot = document.createElement('span');
       dot.className = 'mm-body-indicator';
@@ -2759,14 +2799,14 @@ class MindmapView {
       dot.title = '查看正文';
       dot.addEventListener('click', e => {
         e.stopPropagation();
-        const old = this.el.querySelector('.mm-body-popup');
+        const old = this.el.querySelector('.mm-body-popup:not([data-media])');
         if (old && old.dataset.path === item.path) { old.remove(); return; }
         if (old) old.remove();
         const popup = document.createElement('div');
         popup.className = 'mm-body-popup';
         popup.dataset.path = item.path;
-        popup.style.left = (item.x + offX) + 'px';
-        popup.style.top = (item.y + offY + item.h + 8) + 'px';
+        popup.style.left = div.style.left;
+        popup.style.top = (parseFloat(div.style.top) + (item._realH || item.h) + 8) + 'px';
         const closeBtn = document.createElement('button');
         closeBtn.className = 'mm-popup-close';
         closeBtn.textContent = '×';
@@ -2785,19 +2825,33 @@ class MindmapView {
     }
 
     container.appendChild(div);
-
-    // Draw lines to children
     for (const child of item.children) {
+      this._renderNodes(child, container, offX, offY);
+    }
+  }
+
+  _updateRealSizes(item) {
+    if (item._el) {
+      item._realW = item._el.offsetWidth;
+      item._realH = item._el.offsetHeight;
+    }
+    for (const child of item.children) this._updateRealSizes(child);
+  }
+
+  _drawLines(item, svg, svgOffX, svgOffY) {
+    for (const child of item.children) {
+      const pw = item._realW || item.w, ph = item._realH || item.h;
+      const cw = child._realW || child.w, ch = child._realH || child.h;
       let x1, y1, x2, y2;
       if (this.layout === 'orgchart') {
-        x1 = item.x + item.w / 2 + svgOffX; y1 = item.y + item.h + svgOffY;
-        x2 = child.x + child.w / 2 + svgOffX; y2 = child.y + svgOffY;
+        x1 = item.x + pw / 2 + svgOffX; y1 = item.y + ph + svgOffY;
+        x2 = child.x + cw / 2 + svgOffX; y2 = child.y + svgOffY;
       } else if (this.layout === 'bilateral' && child._dir === -1) {
-        x1 = item.x + svgOffX; y1 = item.y + item.h / 2 + svgOffY;
-        x2 = child.x + child.w + svgOffX; y2 = child.y + child.h / 2 + svgOffY;
+        x1 = item.x + svgOffX; y1 = item.y + ph / 2 + svgOffY;
+        x2 = child.x + cw + svgOffX; y2 = child.y + ch / 2 + svgOffY;
       } else {
-        x1 = item.x + item.w + svgOffX; y1 = item.y + item.h / 2 + svgOffY;
-        x2 = child.x + svgOffX; y2 = child.y + child.h / 2 + svgOffY;
+        x1 = item.x + pw + svgOffX; y1 = item.y + ph / 2 + svgOffY;
+        x2 = child.x + svgOffX; y2 = child.y + ch / 2 + svgOffY;
       }
       const ln = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       const lineColor = this._getLineColor(item.level);
@@ -2806,17 +2860,21 @@ class MindmapView {
       } else if (this.lineStyle === 'polyline') {
         const isOrg = this.layout === 'orgchart';
         const mid = isOrg ? (y1 + y2) / 2 : (x1 + x2) / 2;
-        ln.setAttribute('d', isOrg ? `M${x1},${y1} L${x1},${mid} L${x2},${mid} L${x2},${y2}` : `M${x1},${y1} L${mid},${y1} L${mid},${y2} L${x2},${y2}`);
+        ln.setAttribute('d', isOrg
+          ? `M${x1},${y1} L${x1},${mid} L${x2},${mid} L${x2},${y2}`
+          : `M${x1},${y1} L${mid},${y1} L${mid},${y2} L${x2},${y2}`);
       } else {
-        const mx = (x1 + x2) / 2;
         const isOrg = this.layout === 'orgchart';
-        ln.setAttribute('d', isOrg ? `M${x1},${y1} C${x1},${(y1+y2)/2} ${x2},${(y1+y2)/2} ${x2},${y2}` : `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+        const mx = (x1 + x2) / 2;
+        ln.setAttribute('d', isOrg
+          ? `M${x1},${y1} C${x1},${(y1+y2)/2} ${x2},${(y1+y2)/2} ${x2},${y2}`
+          : `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
       }
       ln.setAttribute('fill', 'none');
       ln.setAttribute('stroke', lineColor);
       ln.setAttribute('stroke-width', '1.5');
       svg.appendChild(ln);
-      this._renderTree(child, container, svg, svgOffX, svgOffY, offX, offY);
+      this._drawLines(child, svg, svgOffX, svgOffY);
     }
   }
 
@@ -2916,7 +2974,7 @@ class MindmapView {
     app.pushUndo();
     node.hide = node.hide ? 0 : 1;
     app.markDirty();
-    this.render(this.data);
+    this.render(this.data, { preserveView: true });
   }
 
   _showContextMenu(x, y, path) {
@@ -2936,7 +2994,7 @@ class MindmapView {
       ['粘贴', () => { if (!this._clipboard) return; const lv = getLevel(path.split('.').pop()) + 1; const nk = `t${lv}-${nextSeq(node, lv)}`; app.pushUndo(); node[nk] = deepClone(this._clipboard); if (node.hide === 1) node.hide = 0; app.markDirty(); this.render(this.data); }],
       ['---'],
       [node.hide ? '展开子树' : '折叠子树', () => this._toggleFold(path)],
-      [node.hide_body ? '展开正文' : '折叠正文', () => { app.pushUndo(); node.hide_body = node.hide_body ? 0 : 1; app.markDirty(); this.render(this.data); }],
+      [node.hide_body ? '展开正文' : '折叠正文', () => { app.pushUndo(); node.hide_body = node.hide_body ? 0 : 1; app.markDirty(); this.render(this.data, { preserveView: true }); }],
       ['---'],
       ['删除', () => this._deleteNode(path)]
     ];
@@ -2975,6 +3033,36 @@ class MindmapView {
     document.querySelectorAll('.mm-dropdown-menu.open').forEach(m => m.classList.remove('open'));
     this[prop] = val;
     this.render(this.data);
+  }
+
+  _setGapV(val) {
+    val = Math.max(0, Math.round(val));
+    if (this.gapV === val) return;
+    this.gapV = val;
+    this.render(this.data, { preserveView: true });
+  }
+
+  _showMediaPopup(anchorDiv, item, mediaTag, field, container) {
+    const key = item.path + ':' + field + ':' + mediaTag;
+    const old = this.el.querySelector('.mm-body-popup[data-media]');
+    if (old && old.dataset.mediaKey === key) { old.remove(); return; }
+    if (old) old.remove();
+    const popup = document.createElement('div');
+    popup.className = 'mm-body-popup';
+    popup.dataset.path = item.path;
+    popup.dataset.media = '1';
+    popup.dataset.mediaKey = key;
+    popup.style.left = anchorDiv.style.left;
+    popup.style.top = (parseFloat(anchorDiv.style.top) + (item._realH || item.h) + 8) + 'px';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'mm-popup-close';
+    closeBtn.textContent = '×';
+    closeBtn.onclick = ev => { ev.stopPropagation(); popup.remove(); };
+    popup.appendChild(closeBtn);
+    const md = document.createElement('div');
+    renderTextWithMedia(mediaTag, md, {path: item.path, field: field});
+    popup.appendChild(md);
+    container.appendChild(popup);
   }
 
   exportImage(fmt) {
