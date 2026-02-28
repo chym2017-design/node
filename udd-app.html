@@ -104,6 +104,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .outline-children.tree-lines{position:relative}
 .outline-children.tree-lines::before{content:'';position:absolute;left:var(--tree-x);top:0;bottom:14px;border-left:1px solid var(--gray-300)}
 
+/* ===== REFERENCE STYLES ===== */
+.ref-display{background:var(--blue-50);border-radius:3px;position:relative}
+.ref-display::before{content:'⟐';font-size:10px;color:var(--blue-500);margin-right:3px;opacity:.6}
+.ref-display:focus{background:var(--bg)}
+.ref-error{color:#ef4444;font-style:italic;font-size:90%}
+
 /* ===== FORMAT SWITCHES ===== */
 .fmt-sw{display:flex;align-items:center;gap:6px;padding:0 12px 4px;flex-wrap:wrap}
 .fmt-sw label{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--gray-400);cursor:pointer;user-select:none}
@@ -717,6 +723,198 @@ function nextSeq(node, level) {
   return keys.reduce((mx, k) => Math.max(mx, getSeq(k)), 0) + 1;
 }
 function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+// ================================================================
+//  CONTENT REFERENCE SYSTEM
+// ================================================================
+function isRef(value) {
+  return typeof value === 'string' && value.startsWith('=') && value.length > 1;
+}
+
+function parseRef(refStr) {
+  const raw = refStr.slice(1); // remove leading '='
+  const result = { docName: null, nodePath: null, field: null, slice: null, matchExpr: null };
+
+  // Extract .match(/pattern/).[index] if present
+  let work = raw;
+  const matchRe = /\.match\(\/(.+?)\/([gimsuy]*)\)\.\[(\d+)\]$/;
+  const mm = work.match(matchRe);
+  if (mm) {
+    result.matchExpr = { pattern: new RegExp(mm[1], mm[2]), index: parseInt(mm[3]) };
+    work = work.slice(0, mm.index);
+  }
+
+  // Extract (start,end) slice if present
+  const sliceRe = /\((\d+),(\d+)\)$/;
+  const sm = work.match(sliceRe);
+  if (sm) {
+    result.slice = [parseInt(sm[1]), parseInt(sm[2])];
+    work = work.slice(0, sm.index);
+  }
+
+  // Split remaining by '.'
+  const parts = work.split('.');
+  const tNodeRe = /^t\d+-\d+$/;
+
+  // Determine docName: if first part is NOT a tNode key, it's a doc name
+  let idx = 0;
+  if (parts.length >= 2 && !tNodeRe.test(parts[0])) {
+    result.docName = parts[0];
+    idx = 1;
+  }
+
+  // Collect consecutive tNode segments as the node path
+  const pathParts = [];
+  while (idx < parts.length && tNodeRe.test(parts[idx])) {
+    pathParts.push(parts[idx]);
+    idx++;
+  }
+  if (pathParts.length > 0) {
+    result.nodePath = pathParts.join('.');
+  }
+
+  // Remaining part (if any) is the field name
+  if (idx < parts.length) {
+    result.field = parts[idx];
+  }
+
+  return result;
+}
+
+function nodeToText(node) {
+  if (!node || typeof node !== 'object') return String(node ?? '');
+  let text = node.content || '';
+  if (node.body) text += '\n' + node.body;
+  return text;
+}
+
+function resolveRef(data, refStr) {
+  if (!isRef(refStr)) return refStr;
+  const ref = parseRef(refStr);
+  if (!ref.nodePath) return '#REF!';
+
+  // Cross-file refs need async — return placeholder
+  if (ref.docName) return '#LOADING...';
+
+  // Find the node — could be a root key or nested path
+  const node = findRefNode(data, ref.nodePath);
+  if (!node) return '#REF!';
+
+  // Get value
+  let value;
+  if (ref.field) {
+    value = typeof node === 'object' ? (node[ref.field] ?? '') : '';
+  } else {
+    value = nodeToText(node);
+  }
+  value = String(value);
+
+  // Apply match expression
+  if (ref.matchExpr) {
+    const m = value.match(ref.matchExpr.pattern);
+    if (m && m[ref.matchExpr.index] !== undefined) {
+      value = m[ref.matchExpr.index];
+    } else {
+      return '#MATCH!';
+    }
+  }
+
+  // Apply slice
+  if (ref.slice) {
+    value = value.slice(ref.slice[0], ref.slice[1]);
+  }
+
+  return value;
+}
+
+function findRefNode(data, nodePath) {
+  // Handle multi-segment paths like "t0-1.t1-1" — walk step by step
+  if (nodePath.includes('.')) {
+    const segments = nodePath.split('.');
+    let current = data;
+    for (const seg of segments) {
+      if (!current || typeof current !== 'object' || !current[seg]) return null;
+      current = current[seg];
+    }
+    return current;
+  }
+  // Single segment: try direct key first, then recursive search
+  if (data[nodePath]) return data[nodePath];
+  return findNodeRecursive(data, nodePath);
+}
+
+function findNodeRecursive(obj, targetKey) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (obj[targetKey]) return obj[targetKey];
+  for (const k of Object.keys(obj)) {
+    if (isTNode(k) && typeof obj[k] === 'object') {
+      const found = findNodeRecursive(obj[k], targetKey);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+const _refDocCache = {};
+
+async function resolveRefAsync(data, refStr) {
+  if (!isRef(refStr)) return refStr;
+  const ref = parseRef(refStr);
+  if (!ref.nodePath) return '#REF!';
+
+  if (!ref.docName) return resolveRef(data, refStr);
+
+  // Cross-file: load from IndexedDB
+  let docData = _refDocCache[ref.docName];
+  if (!docData) {
+    try {
+      const saved = await dbLoad(ref.docName);
+      if (saved && saved.data) {
+        docData = saved.data;
+        _refDocCache[ref.docName] = docData;
+      } else {
+        return '#DOC!';
+      }
+    } catch (e) {
+      return '#DOC!';
+    }
+  }
+
+  // Rebuild refStr without docName for local resolution
+  let localRef = '=' + ref.nodePath;
+  if (ref.field) localRef += '.' + ref.field;
+  if (ref.matchExpr) {
+    localRef += '.match(/' + ref.matchExpr.pattern.source + '/' +
+      ref.matchExpr.pattern.flags + ').[' + ref.matchExpr.index + ']';
+  }
+  if (ref.slice) localRef += '(' + ref.slice[0] + ',' + ref.slice[1] + ')';
+
+  return resolveRef(docData, localRef);
+}
+
+function getDisplayValue(data, node, field) {
+  const raw = node[field];
+  if (!isRef(raw)) return raw || '';
+  return resolveRef(data, raw);
+}
+
+function refreshRefs(viewEl, data) {
+  if (!viewEl) return;
+  viewEl.querySelectorAll('[data-ref]').forEach(el => {
+    const refStr = el.dataset.ref;
+    const resolved = resolveRef(data, refStr);
+    el.textContent = resolved;
+    el.classList.toggle('ref-error', resolved.startsWith('#'));
+  });
+  // Handle async refs
+  viewEl.querySelectorAll('[data-ref-async]').forEach(async el => {
+    const refStr = el.dataset.refAsync;
+    const resolved = await resolveRefAsync(data, refStr);
+    el.textContent = resolved;
+    el.classList.toggle('ref-error', resolved.startsWith('#'));
+  });
+}
+
 function setFoldByLevel(data, maxLevel) {
   const walk = (node) => {
     for (const k of Object.keys(node)) {
@@ -1312,7 +1510,15 @@ function createDefaultData() {
       "body.paragraph_line": 1.8, "body.paragraph_first_indent": 2,
       hide_t: "t>3", numbering_style: "1.1.1"
     },
-    "t0-1": { content: "标题", hide: 0, hide_body: 0 }
+    "t0-1": {
+      content: "内容引用示例", hide: 0, hide_body: 0,
+      "t1-1": { content: "源数据：Hello World 2026", hide: 0, hide_body: 0 },
+      "t1-2": { content: "=t1-1", hide: 0, hide_body: 0 },
+      "t1-3": { content: "=t1-1.content", hide: 0, hide_body: 0 },
+      "t1-4": { content: "=示例文档.t1-1.content", hide: 0, hide_body: 0 },
+      "t1-5": { content: "=t1-1.content(0,3)", hide: 0, hide_body: 0 },
+      "t1-6": { content: "=t1-1.content.match(/\\d+/).[0]", hide: 0, hide_body: 0 }
+    }
   };
 }
 
@@ -1365,6 +1571,25 @@ async function dbLoadAllMedia() {
   });
 }
 
+async function dbSaveNamedDoc(name, data) {
+  if (!name || name === 'current') return;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put({ id: name, data: deepClone(data), ts: Date.now() });
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+async function dbListDocs() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAllKeys();
+    req.onsuccess = () => resolve((req.result || []).filter(k => k !== 'current'));
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // ================================================================
 //  UNDO MANAGER
 // ================================================================
@@ -1407,6 +1632,9 @@ class OutlineView {
     this.el.addEventListener('dragleave', e => this.onDragLeave(e));
     this.el.addEventListener('drop', e => this.onDrop(e));
     this.el.addEventListener('dragend', e => this.onDragEnd(e));
+    // Reference cell: click to edit, blur to resolve
+    this.el.addEventListener('dblclick', e => this.onRefDblClick(e));
+    this.el.addEventListener('focusout', e => this.onFocusOut(e));
   }
 
   render(data) {
@@ -1468,12 +1696,21 @@ class OutlineView {
     content.className = 'outline-content';
     content.contentEditable = 'plaintext-only';
     if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
-    const contentText = stripMediaTags(node.content || '');
+    const rawContent = node.content || '';
+    const isContentRef = isRef(rawContent);
+    const displayContent = isContentRef ? getDisplayValue(this.data, node, 'content') : rawContent;
+    const contentText = stripMediaTags(displayContent);
     renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
     content.dataset.path = path;
     content.dataset.field = 'content';
     content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
     content.spellcheck = false;
+    if (isContentRef) {
+      content.classList.add('ref-display');
+      content.dataset.ref = rawContent;
+      if (parseRef(rawContent).docName) content.dataset.refAsync = rawContent;
+      content.contentEditable = 'false';
+    }
     this.applyStyle(content, style);
     const fmt = app && app.outlineFmt ? app.outlineFmt : {};
     if (fmt.text_align && style.text_align) contentWrap.style.justifyContent = style.text_align === 'center' ? 'center' : style.text_align === 'right' ? 'flex-end' : 'flex-start';
@@ -1487,7 +1724,7 @@ class OutlineView {
     div.appendChild(row);
 
     // Media preview from content
-    if (hasMediaTag(node.content || '')) {
+    if (hasMediaTag(displayContent)) {
       const mediaDiv = document.createElement('div');
       mediaDiv.className = 'outline-media';
       mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
@@ -1503,10 +1740,20 @@ class OutlineView {
       bodyEl.contentEditable = 'plaintext-only';
       if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
       const bodyStyle = this.getBodyStyle(path);
-      const bodyText = stripMediaTags(node.body || '');
+      const rawBody = node.body || '';
+      const isBodyRef = isRef(rawBody);
+      const displayBody = isBodyRef ? getDisplayValue(this.data, node, 'body') : rawBody;
+      const bodyText = stripMediaTags(displayBody);
       renderStyledText(bodyEl, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
       bodyEl.dataset.path = path;
       bodyEl.dataset.field = 'body';
+      bodyEl.spellcheck = false;
+      if (isBodyRef) {
+        bodyEl.classList.add('ref-display');
+        bodyEl.dataset.ref = rawBody;
+        if (parseRef(rawBody).docName) bodyEl.dataset.refAsync = rawBody;
+        bodyEl.contentEditable = 'false';
+      }
       bodyEl.spellcheck = false;
       bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
       this.applyStyle(bodyEl, bodyStyle);
@@ -1596,6 +1843,7 @@ class OutlineView {
   // Sync all editable elements to data
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
+      if (el.dataset.ref) return; // skip reference cells
       const node = getNodeByPath(this.data, el.dataset.path);
       if (!node) return;
       const field = el.dataset.field;
@@ -1607,6 +1855,7 @@ class OutlineView {
   onInput(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    if (el.dataset.ref) return; // skip reference cells
     const node = getNodeByPath(this.data, el.dataset.path);
     if (node) {
       const media = extractMediaTags(node[el.dataset.field]);
@@ -1614,6 +1863,53 @@ class OutlineView {
       app.markDirty();
     }
     this.updateStatus();
+  }
+
+  onFocusOut(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    if (el.dataset.ref) return;
+    const node = getNodeByPath(this.data, el.dataset.path);
+    if (!node) return;
+    const val = node[el.dataset.field];
+    if (isRef(val)) {
+      // Value became a reference — re-render to show resolved value
+      this.focusPath = null;
+      this.render(this.data);
+      app._resolveAsyncRefs(this.el);
+    }
+  }
+
+  onRefDblClick(e) {
+    const el = e.target.closest('.ref-display');
+    if (!el || !el.dataset.ref) return;
+    const refStr = el.dataset.ref;
+    el.contentEditable = 'plaintext-only';
+    if (!el.contentEditable || el.contentEditable === 'inherit') el.contentEditable = 'true';
+    el.classList.remove('ref-display');
+    el.textContent = refStr;
+    el.focus();
+    // Select all text
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const onBlur = () => {
+      el.removeEventListener('blur', onBlur);
+      const newVal = el.textContent.trim();
+      const node = getNodeByPath(this.data, el.dataset.path);
+      if (!node) return;
+      node[el.dataset.field] = newVal;
+      app.markDirty();
+      if (isRef(newVal)) {
+        el.contentEditable = 'false';
+        el.classList.add('ref-display');
+        el.dataset.ref = newVal;
+        el.textContent = resolveRef(this.data, newVal);
+      }
+    };
+    el.addEventListener('blur', onBlur);
   }
 
   onFocusIn(e) {
@@ -1959,6 +2255,8 @@ class DocumentView {
     this.el.addEventListener('input', e => this.onInput(e));
     this.el.addEventListener('focusin', e => this.onFocusIn(e));
     this.el.addEventListener('keydown', e => this.onKeyDown(e));
+    this.el.addEventListener('dblclick', e => this.onRefDblClick(e));
+    this.el.addEventListener('focusout', e => this.onFocusOut(e));
   }
 
   render(data) {
@@ -2036,12 +2334,21 @@ class DocumentView {
       contentSpan.className = 'doc-editable';
       contentSpan.contentEditable = 'plaintext-only';
       if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
-      const contentText = stripMediaTags(node.content || '');
+      const rawDocContent = node.content || '';
+      const isDocContentRef = isRef(rawDocContent);
+      const displayDocContent = isDocContentRef ? getDisplayValue(this.data, node, 'content') : rawDocContent;
+      const contentText = stripMediaTags(displayDocContent);
       renderStyledText(contentSpan, contentText, node, 'content', style, (el, runStyle) => this.applyInlineStyle(el, runStyle));
       contentSpan.dataset.path = path;
       contentSpan.dataset.field = 'content';
       contentSpan.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
       contentSpan.spellcheck = false;
+      if (isDocContentRef) {
+        contentSpan.classList.add('ref-display');
+        contentSpan.dataset.ref = rawDocContent;
+        if (parseRef(rawDocContent).docName) contentSpan.dataset.refAsync = rawDocContent;
+        contentSpan.contentEditable = 'false';
+      }
       this.applyInlineStyle(contentSpan, style);
       heading.appendChild(contentSpan);
 
@@ -2052,7 +2359,7 @@ class DocumentView {
       nodeDiv.appendChild(heading);
 
       // Media preview from content
-      if (hasMediaTag(node.content || '')) {
+      if (hasMediaTag(displayDocContent)) {
         const mediaDiv = document.createElement('div');
         mediaDiv.className = 'media-inline';
         renderTextWithMedia(node.content, mediaDiv, {path, field:'content'});
@@ -2067,10 +2374,20 @@ class DocumentView {
         bodyDiv.contentEditable = 'plaintext-only';
         if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
         const bodyStyle = this.getBodyStyle(path);
-        const bodyText = stripMediaTags(node.body || '');
+        const rawDocBody = node.body || '';
+        const isDocBodyRef = isRef(rawDocBody);
+        const displayDocBody = isDocBodyRef ? getDisplayValue(this.data, node, 'body') : rawDocBody;
+        const bodyText = stripMediaTags(displayDocBody);
         renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
         bodyDiv.dataset.path = path;
         bodyDiv.dataset.field = 'body';
+        bodyDiv.spellcheck = false;
+        if (isDocBodyRef) {
+          bodyDiv.classList.add('ref-display');
+          bodyDiv.dataset.ref = rawDocBody;
+          if (parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
+          bodyDiv.contentEditable = 'false';
+        }
         bodyDiv.spellcheck = false;
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
@@ -2141,6 +2458,7 @@ class DocumentView {
   // Sync all editable elements to data
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
+      if (el.dataset.ref) return; // skip reference cells
       const node = getNodeByPath(this.data, el.dataset.path);
       if (!node) return;
       const field = el.dataset.field;
@@ -2152,11 +2470,57 @@ class DocumentView {
   onInput(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    if (el.dataset.ref) return; // skip reference cells
     const node = getNodeByPath(this.data, el.dataset.path);
     if (node) {
       const media = extractMediaTags(node[el.dataset.field]);
       node[el.dataset.field] = el.textContent + media;
       app.markDirty();
+    }
+  }
+
+  onRefDblClick(e) {
+    const el = e.target.closest('.ref-display');
+    if (!el || !el.dataset.ref) return;
+    const refStr = el.dataset.ref;
+    el.contentEditable = 'plaintext-only';
+    if (!el.contentEditable || el.contentEditable === 'inherit') el.contentEditable = 'true';
+    el.classList.remove('ref-display');
+    el.textContent = refStr;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const onBlur = () => {
+      el.removeEventListener('blur', onBlur);
+      const newVal = el.textContent.trim();
+      const node = getNodeByPath(this.data, el.dataset.path);
+      if (!node) return;
+      node[el.dataset.field] = newVal;
+      app.markDirty();
+      if (isRef(newVal)) {
+        el.contentEditable = 'false';
+        el.classList.add('ref-display');
+        el.dataset.ref = newVal;
+        el.textContent = resolveRef(this.data, newVal);
+      }
+    };
+    el.addEventListener('blur', onBlur);
+  }
+
+  onFocusOut(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    if (el.dataset.ref) return;
+    const node = getNodeByPath(this.data, el.dataset.path);
+    if (!node) return;
+    const val = node[el.dataset.field];
+    if (isRef(val)) {
+      this.focusPath = null;
+      this.render(this.data);
+      app._resolveAsyncRefs(this.el);
     }
   }
 
@@ -2544,7 +2908,8 @@ class MindmapView {
   }
 
   _buildNode(node, path, level) {
-    const label = (node && node.content) || '';
+    const rawLabel = (node && node.content) || '';
+    const label = isRef(rawLabel) ? getDisplayValue(this.data, node, 'content') : rawLabel;
     const hasChildren = getChildTKeys(node, level + 1).length > 0;
     const isHidden = node && node.hide === 1;
     const item = { path, label, level, w: 0, h: 0, x: 0, y: 0, children: [], node, hasBody: !!(node && node.body), bodyOpen: !!(node && node.body && !node.hide_body) };
@@ -2812,7 +3177,9 @@ class MindmapView {
         closeBtn.textContent = '×';
         closeBtn.onclick = ev => { ev.stopPropagation(); popup.remove(); };
         popup.appendChild(closeBtn);
-        const bodyText = stripMediaTags(item.node.body || '');
+        const rawMmBody = item.node.body || '';
+        const displayMmBody = isRef(rawMmBody) ? getDisplayValue(this.data, item.node, 'body') : rawMmBody;
+        const bodyText = stripMediaTags(displayMmBody);
         if (bodyText) { const t = document.createElement('div'); t.textContent = bodyText; popup.appendChild(t); }
         if (hasMediaTag(item.node.body || '')) {
           const md = document.createElement('div');
@@ -3275,11 +3642,22 @@ class App {
   renderCurrentView() {
     if (this.currentView === 'outline') {
       this.outlineView.render(this.data);
+      this._resolveAsyncRefs(this.outlineView.el);
     } else if (this.currentView === 'mindmap') {
       this.mindmapView.render(this.data);
     } else {
       this.documentView.render(this.data);
+      this._resolveAsyncRefs(this.documentView.el);
     }
+  }
+
+  _resolveAsyncRefs(viewEl) {
+    viewEl.querySelectorAll('[data-ref-async]').forEach(async el => {
+      const refStr = el.dataset.refAsync;
+      const resolved = await resolveRefAsync(this.data, refStr);
+      el.textContent = resolved;
+      el.classList.toggle('ref-error', resolved.startsWith('#'));
+    });
   }
 
   switchView(view) {
@@ -3642,6 +4020,7 @@ class App {
     document.getElementById('stat-save').textContent = '● 未保存';
     document.getElementById('stat-save').style.color = '#ef4444';
     this.debouncedAutoSave();
+    this.debouncedRefreshRefs();
   }
   markClean() {
     this.dirty = false;
@@ -3650,6 +4029,11 @@ class App {
   }
 
   debouncedAutoSave = debounce(() => this.autoSave(), 5000);
+  debouncedRefreshRefs = debounce(() => {
+    const viewEl = this.currentView === 'outline' ? this.outlineView.el
+      : this.currentView === 'document' ? this.documentView.el : null;
+    if (viewEl) refreshRefs(viewEl, this.data);
+  }, 300);
 
   async autoSave() {
     if (!this.dirty) return;
@@ -3659,6 +4043,11 @@ class App {
     this.data.meta.modified = new Date().toISOString();
     try {
       await dbSave('current', this.data);
+      // Also save as named doc for cross-file references
+      const docTitle = this.data.meta?.title;
+      if (docTitle && docTitle !== '未命名文档') {
+        await dbSaveNamedDoc(docTitle, this.data);
+      }
       this.markClean();
     } catch (e) { console.error('Auto-save failed:', e); }
   }
@@ -3737,6 +4126,10 @@ class App {
         const writable = await this.fileHandle.createWritable();
         await writable.write(blob);
         await writable.close();
+        // Save named doc for cross-file references
+        if (this.fileName && this.fileName !== '未命名文档') {
+          await dbSaveNamedDoc(this.fileName, this.data);
+        }
         this.markClean();
         toast('已保存');
       } else {
