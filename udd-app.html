@@ -106,9 +106,15 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ===== REFERENCE STYLES ===== */
 .ref-display{background:var(--blue-50);border-radius:3px;position:relative}
-.ref-display::before{content:'⟐';font-size:10px;color:var(--blue-500);margin-right:3px;opacity:.6}
 .ref-display:focus{background:var(--bg)}
 .ref-error{color:#ef4444;font-style:italic;font-size:90%}
+.ref-icon{display:inline-block;font-size:10px;color:var(--blue-500);margin-right:3px;opacity:.6;cursor:pointer;user-select:none;vertical-align:baseline;text-decoration:none}
+.ref-icon:hover{opacity:1;color:var(--blue-600);transform:scale(1.2)}
+.ref-icon.ref-icon-error{color:#ef4444}
+
+/* Full node reference: cloned node display */
+.ref-full-node{position:relative}
+.ref-full-node .ref-full-body{padding:3px 6px;color:var(--text);font-size:12pt;line-height:1.5;border-left:2px solid var(--gray-200);border-radius:0 3px 3px 0;min-height:20px;word-break:break-word;margin-top:2px}
 
 /* ===== FORMAT SWITCHES ===== */
 .fmt-sw{display:flex;align-items:center;gap:6px;padding:0 12px 4px;flex-wrap:wrap}
@@ -342,7 +348,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
     <div id="sidebar">
       <div class="sidebar-header">
         <span>原始数据</span>
-        <button onclick="app.applySidebarJSON()" title="应用修改">✓</button>
+        <span style="display:flex;gap:4px;align-items:center">
+          <button onclick="app.showAllSidebarData()" title="查看全部数据" style="font-size:12px;padding:2px 8px">查看全部</button>
+          <button onclick="app.applySidebarJSON()" title="应用修改">✓</button>
+        </span>
       </div>
       <div id="sidebar-content">
         <textarea id="sidebar-json" spellcheck="false"></textarea>
@@ -731,6 +740,57 @@ function isRef(value) {
   return typeof value === 'string' && value.startsWith('=') && value.length > 1;
 }
 
+// Check if a reference is a "full node" reference (e.g. =t1-1, no .field suffix)
+function isFullNodeRef(refStr) {
+  if (!isRef(refStr)) return false;
+  const ref = parseRef(refStr);
+  return ref.nodePath && !ref.field && !ref.slice && !ref.matchExpr;
+}
+
+// Get the source node for a full node reference
+function getFullRefNode(data, refStr) {
+  if (!isRef(refStr)) return null;
+  const ref = parseRef(refStr);
+  if (!ref.nodePath || ref.field || ref.slice || ref.matchExpr) return null;
+  if (ref.docName) return null; // cross-doc not supported for full clone yet
+  return findRefNode(data, ref.nodePath);
+}
+
+// Get the path string that a reference points to (for jump-to-source)
+function getRefTargetPath(data, refStr) {
+  if (!isRef(refStr)) return null;
+  const ref = parseRef(refStr);
+  if (!ref.nodePath) return null;
+  if (ref.docName) return null; // cross-doc jump not supported
+  // Verify the node exists and find its full path in the data tree
+  const node = findRefNode(data, ref.nodePath);
+  if (!node) return null;
+  return findFullPath(data, ref.nodePath);
+}
+
+// Find the full path of a node key in the data tree
+function findFullPath(data, nodeKey) {
+  // If nodeKey contains dots, it's already a path — verify it
+  if (nodeKey.includes('.')) {
+    const node = getNodeByPath(data, nodeKey);
+    if (node) return nodeKey;
+  }
+  // Single key — search recursively
+  return _findPathRecursive(data, nodeKey, '');
+}
+
+function _findPathRecursive(obj, targetKey, prefix) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const k of Object.keys(obj)) {
+    if (!isTNode(k)) continue;
+    const path = prefix ? prefix + '.' + k : k;
+    if (k === targetKey) return path;
+    const found = _findPathRecursive(obj[k], targetKey, path);
+    if (found) return found;
+  }
+  return null;
+}
+
 function parseRef(refStr) {
   const raw = refStr.slice(1); // remove leading '='
   const result = { docName: null, nodePath: null, field: null, slice: null, matchExpr: null };
@@ -898,19 +958,183 @@ function getDisplayValue(data, node, field) {
   return resolveRef(data, raw);
 }
 
+// ================================================================
+//  UNIFIED NODE RENDER DESCRIPTOR
+//  Resolves what a node should display, separating content from rendering.
+//  Content fields (from source when ref): content, body, children
+//  Render fields (always owned by node itself): hide, hide_body, styles
+// ================================================================
+function resolveNodeForRender(data, node, path, level) {
+  const raw = node.content || '';
+  const isContentRef = isRef(raw);
+  const fullRef = isFullNodeRef(raw);
+  const sourceNode = fullRef ? getFullRefNode(data, raw) : null;
+
+  const desc = {
+    // --- Content (from source when fullRef) ---
+    displayContent: '',        // resolved text for title
+    displayBody: '',           // resolved text for body
+    hasBody: false,            // whether body exists
+    sourceChildren: null,      // array of {key, node} from source (null = use own children)
+    sourceNode: sourceNode,    // the source node object (for style inheritance)
+
+    // --- Reference info ---
+    isRef: isContentRef,       // content is any kind of reference
+    isFullRef: fullRef,        // content is a full-node ref (=t1-1)
+    refStr: isContentRef ? raw : null,  // raw ref string
+
+    // --- Editability ---
+    contentEditable: !isContentRef,  // can user edit the content text?
+    bodyEditable: true,        // can user edit the body text? (refs: no)
+
+    // --- Render control (always from the node itself, never from source) ---
+    hide: node.hide || 0,
+    hide_body: node.hide_body || 0,
+  };
+
+  if (fullRef && sourceNode) {
+    // Full node ref: content & body & children come from source
+    desc.displayContent = sourceNode.content || '';
+    desc.displayBody = sourceNode.body || '';
+    desc.hasBody = !!(sourceNode.body);
+    desc.bodyEditable = false;
+    // Collect source children
+    const srcChildKeys = getAllTKeys(sourceNode);
+    if (srcChildKeys.length > 0) {
+      desc.sourceChildren = srcChildKeys.map(k => ({ key: k, node: sourceNode[k], level: getLevel(k) }));
+    }
+  } else if (isContentRef) {
+    // Field ref (=t1-1.content etc): only content comes from ref
+    desc.displayContent = resolveRef(data, raw);
+    desc.displayBody = node.body || '';
+    desc.hasBody = !!(node.body);
+    // Body is still owned by the node
+    const rawBody = node.body || '';
+    if (isRef(rawBody)) {
+      desc.bodyEditable = false;
+      desc.displayBody = resolveRef(data, rawBody);
+    }
+  } else {
+    // Normal node: everything is local
+    desc.displayContent = raw;
+    desc.displayBody = node.body || '';
+    desc.hasBody = !!(node.body);
+  }
+
+  return desc;
+}
+
+// Create a clickable reference icon (⟐) with tooltip and jump-to-source
+function createRefIcon(data, refStr, viewInstance) {
+  const icon = document.createElement('span');
+  icon.className = 'ref-icon';
+  icon.textContent = '⟐';
+
+  const ref = parseRef(refStr);
+  const targetPath = getRefTargetPath(data, refStr);
+  const resolved = resolveRef(data, refStr);
+  const isError = resolved.startsWith('#');
+
+  if (isError) {
+    icon.classList.add('ref-icon-error');
+    icon.title = '引用错误: ' + resolved;
+  } else if (ref.docName) {
+    icon.title = '跳转到: ' + ref.docName + '.' + (ref.nodePath || '');
+  } else {
+    icon.title = '跳转到: ' + (ref.nodePath || refStr.slice(1));
+  }
+
+  icon.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!targetPath) {
+      if (ref.docName) {
+        toast('跨文档跳转暂不支持');
+      } else {
+        toast('找不到引用目标');
+      }
+      return;
+    }
+    // Jump to the source node
+    jumpToNode(targetPath, viewInstance);
+  });
+
+  return icon;
+}
+
+// Jump to a node in the current view
+function jumpToNode(targetPath, viewInstance) {
+  if (!targetPath || !viewInstance) return;
+
+  // Ensure the target node is visible (unfold ancestors)
+  ensureNodeVisible(app.data, targetPath);
+
+  // Set focus to target and re-render
+  viewInstance.focusPath = targetPath;
+  viewInstance.focusField = 'content';
+  viewInstance.focusCursorEnd = false;
+  viewInstance.render(viewInstance.data);
+  app.updateSidebar(targetPath);
+
+  // Scroll into view
+  requestAnimationFrame(() => {
+    const el = viewInstance.el.querySelector(`[data-path="${targetPath}"][data-field="content"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Brief highlight effect
+      el.style.transition = 'background-color 0.3s';
+      el.style.backgroundColor = 'var(--blue-100)';
+      setTimeout(() => { el.style.backgroundColor = ''; }, 1500);
+    }
+  });
+}
+
+// Ensure all ancestors of a node are unfolded so it's visible
+function ensureNodeVisible(data, targetPath) {
+  const parts = targetPath.split('.');
+  let current = data;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (current[key] && current[key].hide) {
+      current[key].hide = 0;
+    }
+    current = current[key];
+  }
+}
+
 function refreshRefs(viewEl, data) {
   if (!viewEl) return;
   viewEl.querySelectorAll('[data-ref]').forEach(el => {
     const refStr = el.dataset.ref;
-    const resolved = resolveRef(data, refStr);
-    el.textContent = resolved;
+    const isFullRef_ = isFullNodeRef(refStr);
+    const sourceNode_ = isFullRef_ ? getFullRefNode(data, refStr) : null;
+    const resolved = isFullRef_ && sourceNode_ ? (sourceNode_.content || '') : resolveRef(data, refStr);
+    // Preserve existing ref-icon if present
+    const existingIcon = el.querySelector('.ref-icon');
+    if (existingIcon) {
+      // Remove all text nodes and non-icon children, keep icon
+      Array.from(el.childNodes).forEach(child => {
+        if (child !== existingIcon) el.removeChild(child);
+      });
+      el.appendChild(document.createTextNode(resolved));
+    } else {
+      el.textContent = resolved;
+    }
     el.classList.toggle('ref-error', resolved.startsWith('#'));
   });
   // Handle async refs
   viewEl.querySelectorAll('[data-ref-async]').forEach(async el => {
     const refStr = el.dataset.refAsync;
     const resolved = await resolveRefAsync(data, refStr);
-    el.textContent = resolved;
+    const existingIcon = el.querySelector('.ref-icon');
+    if (existingIcon) {
+      Array.from(el.childNodes).forEach(child => {
+        if (child !== existingIcon) el.removeChild(child);
+      });
+      el.appendChild(document.createTextNode(resolved));
+    } else {
+      el.textContent = resolved;
+    }
     el.classList.toggle('ref-error', resolved.startsWith('#'));
   });
 }
@@ -1512,7 +1736,9 @@ function createDefaultData() {
     },
     "t0-1": {
       content: "内容引用示例", hide: 0, hide_body: 0,
-      "t1-1": { content: "源数据：Hello World 2026", hide: 0, hide_body: 0 },
+      "t1-1": { content: "源数据：HelloWorld 2026", hide: 0, hide_body: 0,
+        "t2-1": { content: "标题1-1", hide: 0, hide_body: 0 }
+      , body: "标题1的正文" },
       "t1-2": { content: "=t1-1", hide: 0, hide_body: 0 },
       "t1-3": { content: "=t1-1.content", hide: 0, hide_body: 0 },
       "t1-4": { content: "=示例文档.t1-1.content", hide: 0, hide_body: 0 },
@@ -1652,6 +1878,8 @@ class OutlineView {
 
   renderNode(node, path, level, container) {
     if (!node || typeof node !== 'object') return;
+    const desc = resolveNodeForRender(this.data, node, path, level);
+
     const div = document.createElement('div');
     div.className = 'outline-node';
     div.dataset.path = path;
@@ -1659,26 +1887,35 @@ class OutlineView {
     const row = document.createElement('div');
     row.className = 'outline-row';
 
-    // indent (t0 gets 0 indent)
+    // indent
     const indent = document.createElement('span');
     indent.className = 'indent';
     indent.style.width = (Math.max(0, level - 1) * 24) + 'px';
     row.appendChild(indent);
 
-    // fold arrow
+    // fold arrow — uses node's own hide (render field), but checks source children
     const childLevel = level + 1;
-    const childKeys = getChildTKeys(node, childLevel);
-    const arrow = createFoldToggle(node, path, level, this, 'outline-arrow');
+    const ownChildKeys = getChildTKeys(node, childLevel);
+    const hasVisibleChildren = ownChildKeys.length > 0 || (desc.sourceChildren && desc.sourceChildren.length > 0);
+    const arrow = document.createElement('span');
+    arrow.className = 'outline-arrow' + (!hasVisibleChildren ? ' leaf' : '');
+    arrow.textContent = !hasVisibleChildren ? '•' : (desc.hide ? '▶' : '▼');
+    if (hasVisibleChildren) {
+      arrow.onclick = () => {
+        node.hide = node.hide ? 0 : 1;  // toggle node's OWN hide (render field)
+        this.focusPath = path;
+        this.render(this.data);
+        app.markDirty();
+      };
+    }
     row.appendChild(arrow);
 
-    // contentWrap: numbering + content + body-btn in one baseline-aligned container
+    // contentWrap
     const contentWrap = document.createElement('div');
     contentWrap.className = 'outline-content-wrap';
-
-    // content
     const style = this.getStyle(path, level);
 
-    // numbering (skip for t0)
+    // numbering (skip t0)
     if (level !== 0) {
       const tg = this.data.type_global || {};
       const numStyle = tg.numbering_style || '1.1.1';
@@ -1692,85 +1929,232 @@ class OutlineView {
         contentWrap.appendChild(numSpan);
       }
     }
+
+    // content
     const content = document.createElement('div');
     content.className = 'outline-content';
-    content.contentEditable = 'plaintext-only';
-    if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
-    const rawContent = node.content || '';
-    const isContentRef = isRef(rawContent);
-    const displayContent = isContentRef ? getDisplayValue(this.data, node, 'content') : rawContent;
-    const contentText = stripMediaTags(displayContent);
+    const contentText = stripMediaTags(desc.displayContent);
     renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
     content.dataset.path = path;
     content.dataset.field = 'content';
     content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
     content.spellcheck = false;
-    if (isContentRef) {
-      content.classList.add('ref-display');
-      content.dataset.ref = rawContent;
-      if (parseRef(rawContent).docName) content.dataset.refAsync = rawContent;
+    if (desc.contentEditable) {
+      content.contentEditable = 'plaintext-only';
+      if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
+    } else {
       content.contentEditable = 'false';
+      content.classList.add('ref-display');
+      content.dataset.ref = desc.refStr;
+      if (parseRef(desc.refStr).docName) content.dataset.refAsync = desc.refStr;
+      const refIcon = createRefIcon(this.data, desc.refStr, this);
+      content.insertBefore(refIcon, content.firstChild);
     }
     this.applyStyle(content, style);
     const fmt = app && app.outlineFmt ? app.outlineFmt : {};
     if (fmt.text_align && style.text_align) contentWrap.style.justifyContent = style.text_align === 'center' ? 'center' : style.text_align === 'right' ? 'flex-end' : 'flex-start';
     contentWrap.appendChild(content);
 
-    // body button (shared function, inline after content)
-    const bodyBtn = createBodyBtn(node, path, this);
+    // body button — for full-node refs, controls node's OWN hide_body
+    const bodyBtn = document.createElement('span');
+    bodyBtn.className = 'body-btn';
+    if (desc.hasBody) {
+      bodyBtn.textContent = desc.hide_body ? '▸' : '▾';
+      bodyBtn.title = desc.hide_body ? '展开正文' : '折叠正文';
+      bodyBtn.onclick = (e) => {
+        e.stopPropagation();
+        node.hide_body = node.hide_body ? 0 : 1;  // toggle node's OWN hide_body
+        this.focusPath = path;
+        this.render(this.data);
+        app.markDirty();
+      };
+    } else if (!desc.isFullRef) {
+      // Only show "+" add-body button for non-ref nodes
+      bodyBtn.textContent = '+';
+      bodyBtn.title = '添加正文';
+      bodyBtn.onclick = (e) => {
+        e.stopPropagation();
+        node.body = '';
+        node.hide_body = 0;
+        this.focusPath = path;
+        this.focusField = 'body';
+        this.render(this.data);
+        app.markDirty();
+      };
+    }
     contentWrap.appendChild(bodyBtn);
 
     row.appendChild(contentWrap);
     div.appendChild(row);
 
-    // Media preview from content
-    if (hasMediaTag(displayContent)) {
+    // Media from content
+    if (hasMediaTag(desc.displayContent)) {
       const mediaDiv = document.createElement('div');
       mediaDiv.className = 'outline-media';
       mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-      renderTextWithMedia(node.content, mediaDiv, {path, field:'content'}, {suppressAlign: !fmt.text_align});
+      renderTextWithMedia(desc.displayContent, mediaDiv, {path, field:'content'}, {suppressAlign: !fmt.text_align});
       div.appendChild(mediaDiv);
     }
 
-    // body content
-    const hasBody = node.body !== undefined && node.body !== '';
-    if (!node.hide_body && (hasBody || this.isBodyEditing(path))) {
+    // body — controlled by node's OWN hide_body
+    if (!desc.hide_body && (desc.hasBody || (!desc.isRef && this.isBodyEditing(path)))) {
       const bodyEl = document.createElement('div');
       bodyEl.className = 'outline-body';
-      bodyEl.contentEditable = 'plaintext-only';
-      if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
       const bodyStyle = this.getBodyStyle(path);
-      const rawBody = node.body || '';
-      const isBodyRef = isRef(rawBody);
-      const displayBody = isBodyRef ? getDisplayValue(this.data, node, 'body') : rawBody;
-      const bodyText = stripMediaTags(displayBody);
-      renderStyledText(bodyEl, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
-      bodyEl.dataset.path = path;
-      bodyEl.dataset.field = 'body';
-      bodyEl.spellcheck = false;
-      if (isBodyRef) {
-        bodyEl.classList.add('ref-display');
-        bodyEl.dataset.ref = rawBody;
-        if (parseRef(rawBody).docName) bodyEl.dataset.refAsync = rawBody;
+      const bodyText = stripMediaTags(desc.displayBody);
+
+      if (desc.bodyEditable) {
+        // Editable body (normal node or non-ref body)
+        bodyEl.contentEditable = 'plaintext-only';
+        if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
+        renderStyledText(bodyEl, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
+        bodyEl.dataset.path = path;
+        bodyEl.dataset.field = 'body';
+        bodyEl.spellcheck = false;
+        // Check if body itself is a field-ref
+        const rawBody = node.body || '';
+        if (isRef(rawBody)) {
+          bodyEl.classList.add('ref-display');
+          bodyEl.dataset.ref = rawBody;
+          if (parseRef(rawBody).docName) bodyEl.dataset.refAsync = rawBody;
+          bodyEl.contentEditable = 'false';
+          const bodyRefIcon = createRefIcon(this.data, rawBody, this);
+          bodyEl.insertBefore(bodyRefIcon, bodyEl.firstChild);
+        }
+      } else {
+        // Read-only body (from full-node ref source — pure visual clone)
         bodyEl.contentEditable = 'false';
+        renderStyledText(bodyEl, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
       }
-      bodyEl.spellcheck = false;
       bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
       this.applyStyle(bodyEl, bodyStyle);
       div.appendChild(bodyEl);
 
-      // Media preview from body
-      if (hasMediaTag(node.body || '')) {
+      // Media from body
+      const bodyMediaSrc = desc.isFullRef ? desc.displayBody : (node.body || '');
+      if (hasMediaTag(bodyMediaSrc)) {
         const bodyMediaDiv = document.createElement('div');
         bodyMediaDiv.className = 'outline-media';
         bodyMediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-        renderTextWithMedia(node.body, bodyMediaDiv, {path, field:'body'}, {suppressAlign: !fmt.text_align});
+        renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'}, {suppressAlign: !fmt.text_align});
         div.appendChild(bodyMediaDiv);
       }
     }
 
-    // children
-    if (!node.hide && childKeys.length > 0) {
+    // children — node's OWN hide controls visibility
+    if (!desc.hide) {
+      if (desc.sourceChildren && desc.sourceChildren.length > 0) {
+        // Full-node ref: render source children as read-only clones
+        const childContainer = document.createElement('div');
+        childContainer.className = 'outline-children';
+        if (fmt.tree_lines && level >= 1) {
+          childContainer.classList.add('tree-lines');
+          childContainer.style.setProperty('--tree-x', ((level - 1) * 24 + 30) + 'px');
+        }
+        for (const sc of desc.sourceChildren) {
+          this._renderRefCloneNode(sc.node, path, sc.key, sc.level, childContainer, desc.refStr);
+        }
+        div.appendChild(childContainer);
+      } else if (ownChildKeys.length > 0) {
+        // Normal children
+        const childContainer = document.createElement('div');
+        childContainer.className = 'outline-children';
+        if (fmt.tree_lines && level >= 1) {
+          childContainer.classList.add('tree-lines');
+          childContainer.style.setProperty('--tree-x', ((level - 1) * 24 + 30) + 'px');
+        }
+        for (const ck of ownChildKeys) {
+          this.renderNode(node[ck], path + '.' + ck, childLevel, childContainer);
+        }
+        div.appendChild(childContainer);
+      }
+    }
+
+    container.appendChild(div);
+  }
+
+  // Render a cloned child node from a full-node reference (read-only, recursively)
+  _renderRefCloneNode(node, refHostPath, sourceChildKey, level, container, refStr) {
+    if (!node || typeof node !== 'object') return;
+    const div = document.createElement('div');
+    div.className = 'outline-node';
+    // Use a synthetic path for display (not editable)
+    const syntheticPath = refHostPath + '.__ref__.' + sourceChildKey;
+    div.dataset.path = syntheticPath;
+
+    const row = document.createElement('div');
+    row.className = 'outline-row';
+
+    // indent
+    const indent = document.createElement('span');
+    indent.className = 'indent';
+    indent.style.width = (Math.max(0, level - 1) * 24) + 'px';
+    row.appendChild(indent);
+
+    // fold arrow
+    const childLevel = level + 1;
+    const refChildKeys = getChildTKeys(node, childLevel);
+    const arrow = document.createElement('span');
+    arrow.className = 'outline-arrow' + (refChildKeys.length === 0 ? ' leaf' : '');
+    arrow.textContent = refChildKeys.length === 0 ? '•' : (node.hide ? '▶' : '▼');
+    if (refChildKeys.length > 0) {
+      arrow.onclick = () => {
+        node.hide = node.hide ? 0 : 1;
+        app.renderCurrentView();
+      };
+    }
+    row.appendChild(arrow);
+
+    // contentWrap
+    const contentWrap = document.createElement('div');
+    contentWrap.className = 'outline-content-wrap';
+
+    const style = buildNodeStyle(this.data, refHostPath, level, { isBody: false });
+
+    // numbering
+    if (level !== 0) {
+      const tg = this.data.type_global || {};
+      const numStyle = tg.numbering_style || '1.1.1';
+      if (numStyle !== 'none') {
+        const numSpan = document.createElement('span');
+        numSpan.className = 'outline-num';
+        // Compute numbering based on position among siblings in source
+        const sourceParent = this._findRefCloneParent(node, sourceChildKey, refStr);
+        numSpan.textContent = this._getRefCloneNumber(sourceChildKey, sourceParent, numStyle);
+        this.applyStyle(numSpan, style);
+        contentWrap.appendChild(numSpan);
+      }
+    }
+
+    // content (read-only clone)
+    const content = document.createElement('div');
+    content.className = 'outline-content';
+    content.contentEditable = 'false';
+    const rawContent = node.content || '';
+    const contentText = stripMediaTags(rawContent);
+    content.textContent = contentText;
+    this.applyStyle(content, style);
+    contentWrap.appendChild(content);
+
+    row.appendChild(contentWrap);
+    div.appendChild(row);
+
+    // body
+    const hasBody = node.body !== undefined && node.body !== '';
+    if (!node.hide_body && hasBody) {
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'outline-body';
+      bodyEl.contentEditable = 'false';
+      const bodyStyle = buildNodeStyle(this.data, refHostPath, level, { isBody: true });
+      const bodyText = stripMediaTags(node.body || '');
+      bodyEl.textContent = bodyText;
+      bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
+      this.applyStyle(bodyEl, bodyStyle);
+      div.appendChild(bodyEl);
+    }
+
+    // recurse children
+    if (!node.hide && refChildKeys.length > 0) {
       const childContainer = document.createElement('div');
       childContainer.className = 'outline-children';
       const fmt = app && app.outlineFmt ? app.outlineFmt : {};
@@ -1778,13 +2162,47 @@ class OutlineView {
         childContainer.classList.add('tree-lines');
         childContainer.style.setProperty('--tree-x', ((level - 1) * 24 + 30) + 'px');
       }
-      for (const ck of childKeys) {
-        this.renderNode(node[ck], path + '.' + ck, childLevel, childContainer);
+      for (const ck of refChildKeys) {
+        this._renderRefCloneNode(node[ck], refHostPath, sourceChildKey + '.' + ck, getLevel(ck), childContainer, refStr);
       }
       div.appendChild(childContainer);
     }
 
     container.appendChild(div);
+  }
+
+  _findRefCloneParent(node, sourceChildKey, refStr) {
+    // Get the source node from refStr to find siblings
+    const srcNode = getFullRefNode(this.data, refStr);
+    if (!srcNode) return null;
+    // sourceChildKey might be like "t2-1" or "t2-1.t3-1" etc.
+    const parts = sourceChildKey.split('.');
+    if (parts.length === 1) return srcNode;
+    // Walk to parent
+    let current = srcNode;
+    for (let i = 0; i < parts.length - 1; i++) {
+      current = current[parts[i]];
+      if (!current) return null;
+    }
+    return current;
+  }
+
+  _getRefCloneNumber(sourceChildKey, parentNode, numStyle) {
+    if (!parentNode) return '';
+    const parts = sourceChildKey.split('.');
+    const lastKey = parts[parts.length - 1];
+    const level = getLevel(lastKey);
+    const siblings = getChildTKeys(parentNode, level);
+    const idx = siblings.indexOf(lastKey);
+    if (idx < 0) return '';
+    const num = idx + 1;
+    // Simple numbering for cloned nodes
+    if (numStyle === 'bullet') {
+      const bullets = ['●','○','■','▪'];
+      return bullets[Math.min(parts.length - 1, bullets.length - 1)];
+    }
+    if (numStyle === 'bullet-uniform') return '●';
+    return String(num);
   }
 
   isBodyEditing(path) { return this.focusPath === path && this.focusField === 'body'; }
@@ -1883,6 +2301,8 @@ class OutlineView {
   onRefDblClick(e) {
     const el = e.target.closest('.ref-display');
     if (!el || !el.dataset.ref) return;
+    // Don't enter edit mode if clicking the ref icon
+    if (e.target.classList.contains('ref-icon')) return;
     const refStr = el.dataset.ref;
     el.contentEditable = 'plaintext-only';
     if (!el.contentEditable || el.contentEditable === 'inherit') el.contentEditable = 'true';
@@ -1902,12 +2322,10 @@ class OutlineView {
       if (!node) return;
       node[el.dataset.field] = newVal;
       app.markDirty();
-      if (isRef(newVal)) {
-        el.contentEditable = 'false';
-        el.classList.add('ref-display');
-        el.dataset.ref = newVal;
-        el.textContent = resolveRef(this.data, newVal);
-      }
+      // Re-render to properly show ref icon and full-node refs
+      this.focusPath = null;
+      this.render(this.data);
+      app._resolveAsyncRefs(this.el);
     };
     el.addEventListener('blur', onBlur);
   }
@@ -2295,8 +2713,21 @@ class DocumentView {
       nodeDiv.className = 'doc-node';
       nodeDiv.dataset.path = path;
 
-      // Fold toggle
-      const fold = createFoldToggle(node, path, level, this, 'doc-fold');
+      // Fold toggle — must account for source children
+      const desc = resolveNodeForRender(this.data, node, path, level);
+      const ownChildKeys = getChildTKeys(node, level + 1);
+      const hasDocChildren = ownChildKeys.length > 0 || (desc.sourceChildren && desc.sourceChildren.length > 0);
+      const fold = document.createElement('span');
+      fold.className = 'doc-fold' + (!hasDocChildren ? ' leaf' : '');
+      fold.textContent = !hasDocChildren ? '•' : (desc.hide ? '▶' : '▼');
+      if (hasDocChildren) {
+        fold.onclick = () => {
+          node.hide = node.hide ? 0 : 1;
+          this.focusPath = path;
+          this.render(this.data);
+          app.markDirty();
+        };
+      }
       nodeDiv.appendChild(fold);
 
       // Heading
@@ -2329,83 +2760,215 @@ class DocumentView {
         }
       }
 
-      // Editable content span
+      // === Content, body, children use desc from fold toggle above ===
+
+      // Content span
       const contentSpan = document.createElement('span');
       contentSpan.className = 'doc-editable';
-      contentSpan.contentEditable = 'plaintext-only';
-      if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
-      const rawDocContent = node.content || '';
-      const isDocContentRef = isRef(rawDocContent);
-      const displayDocContent = isDocContentRef ? getDisplayValue(this.data, node, 'content') : rawDocContent;
-      const contentText = stripMediaTags(displayDocContent);
+      const contentText = stripMediaTags(desc.displayContent);
       renderStyledText(contentSpan, contentText, node, 'content', style, (el, runStyle) => this.applyInlineStyle(el, runStyle));
       contentSpan.dataset.path = path;
       contentSpan.dataset.field = 'content';
       contentSpan.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
       contentSpan.spellcheck = false;
-      if (isDocContentRef) {
-        contentSpan.classList.add('ref-display');
-        contentSpan.dataset.ref = rawDocContent;
-        if (parseRef(rawDocContent).docName) contentSpan.dataset.refAsync = rawDocContent;
+      if (desc.contentEditable) {
+        contentSpan.contentEditable = 'plaintext-only';
+        if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
+      } else {
         contentSpan.contentEditable = 'false';
+        contentSpan.classList.add('ref-display');
+        contentSpan.dataset.ref = desc.refStr;
+        if (parseRef(desc.refStr).docName) contentSpan.dataset.refAsync = desc.refStr;
+        const docRefIcon = createRefIcon(this.data, desc.refStr, this);
+        contentSpan.insertBefore(docRefIcon, contentSpan.firstChild);
       }
       this.applyInlineStyle(contentSpan, style);
       heading.appendChild(contentSpan);
 
-      // Body button (shared)
-      const bodyBtn = createBodyBtn(node, path, this);
+      // Body button — controls node's OWN hide_body
+      const bodyBtn = document.createElement('span');
+      bodyBtn.className = 'body-btn';
+      if (desc.hasBody) {
+        bodyBtn.textContent = desc.hide_body ? '▸' : '▾';
+        bodyBtn.title = desc.hide_body ? '展开正文' : '折叠正文';
+        bodyBtn.onclick = (e) => {
+          e.stopPropagation();
+          node.hide_body = node.hide_body ? 0 : 1;
+          this.focusPath = path;
+          this.focusField = 'content';
+          this.render(this.data);
+          app.markDirty();
+        };
+      } else if (!desc.isFullRef) {
+        bodyBtn.textContent = '+';
+        bodyBtn.title = '添加正文';
+        bodyBtn.onclick = (e) => {
+          e.stopPropagation();
+          node.body = '';
+          node.hide_body = 0;
+          this.focusPath = path;
+          this.focusField = 'body';
+          this.render(this.data);
+          app.markDirty();
+        };
+      }
       heading.appendChild(bodyBtn);
 
       nodeDiv.appendChild(heading);
 
-      // Media preview from content
-      if (hasMediaTag(displayDocContent)) {
+      // Media from content
+      if (hasMediaTag(desc.displayContent)) {
         const mediaDiv = document.createElement('div');
         mediaDiv.className = 'media-inline';
-        renderTextWithMedia(node.content, mediaDiv, {path, field:'content'});
+        renderTextWithMedia(desc.displayContent, mediaDiv, {path, field:'content'});
         nodeDiv.appendChild(mediaDiv);
       }
 
-      // Body
-      const hasBody = node.body !== undefined && node.body !== '';
-      if (!node.hide_body && (hasBody || (this.focusPath === path && this.focusField === 'body'))) {
+      // Body — controlled by node's OWN hide_body
+      if (!desc.hide_body && (desc.hasBody || (!desc.isRef && this.focusPath === path && this.focusField === 'body'))) {
         const bodyDiv = document.createElement('div');
         bodyDiv.className = 'doc-body doc-editable';
-        bodyDiv.contentEditable = 'plaintext-only';
-        if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
         const bodyStyle = this.getBodyStyle(path);
-        const rawDocBody = node.body || '';
-        const isDocBodyRef = isRef(rawDocBody);
-        const displayDocBody = isDocBodyRef ? getDisplayValue(this.data, node, 'body') : rawDocBody;
-        const bodyText = stripMediaTags(displayDocBody);
-        renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
-        bodyDiv.dataset.path = path;
-        bodyDiv.dataset.field = 'body';
-        bodyDiv.spellcheck = false;
-        if (isDocBodyRef) {
-          bodyDiv.classList.add('ref-display');
-          bodyDiv.dataset.ref = rawDocBody;
-          if (parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
+        const bodyText = stripMediaTags(desc.displayBody);
+
+        if (desc.bodyEditable) {
+          bodyDiv.contentEditable = 'plaintext-only';
+          if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
+          renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
+          bodyDiv.dataset.path = path;
+          bodyDiv.dataset.field = 'body';
+          bodyDiv.spellcheck = false;
+          const rawDocBody = node.body || '';
+          if (isRef(rawDocBody)) {
+            bodyDiv.classList.add('ref-display');
+            bodyDiv.dataset.ref = rawDocBody;
+            if (parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
+            bodyDiv.contentEditable = 'false';
+            const docBodyRefIcon = createRefIcon(this.data, rawDocBody, this);
+            bodyDiv.insertBefore(docBodyRefIcon, bodyDiv.firstChild);
+          }
+        } else {
           bodyDiv.contentEditable = 'false';
+          renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
         }
-        bodyDiv.spellcheck = false;
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
 
-        // Media preview from body
-        if (hasMediaTag(node.body || '')) {
+        const bodyMediaSrc = desc.isFullRef ? desc.displayBody : (node.body || '');
+        if (hasMediaTag(bodyMediaSrc)) {
           const bodyMediaDiv = document.createElement('div');
           bodyMediaDiv.className = 'media-inline';
-          renderTextWithMedia(node.body, bodyMediaDiv, {path, field:'body'});
+          renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'});
           nodeDiv.appendChild(bodyMediaDiv);
         }
       }
 
       container.appendChild(nodeDiv);
 
-      // Recurse (skip if folded)
-      if (!node.hide) {
-        this.renderChildren(node, path, level, container, numStyle);
+      // Recurse — node's OWN hide controls folding
+      if (!desc.hide) {
+        if (desc.sourceChildren && desc.sourceChildren.length > 0) {
+          this._renderRefCloneChildren(desc.sourceNode, path, level, container, numStyle, desc.refStr);
+        } else if (!desc.isFullRef) {
+          this.renderChildren(node, path, level, container, numStyle);
+        }
+      }
+    }
+  }
+
+  // Render cloned children from a full-node reference source (DocumentView)
+  _renderRefCloneChildren(sourceNode, refHostPath, parentLevel, container, numStyle, refStr) {
+    const tkeys = getAllTKeys(sourceNode);
+    for (const key of tkeys) {
+      const child = sourceNode[key];
+      const childLevel = getLevel(key);
+      this._renderRefCloneNode(child, refHostPath, key, childLevel, container, numStyle, refStr, sourceNode);
+    }
+  }
+
+  _renderRefCloneNode(node, refHostPath, sourceChildKey, level, container, numStyle, refStr, sourceParentNode) {
+    if (!node || typeof node !== 'object') return;
+    const style = this.getStyle(level, refHostPath);
+
+    const nodeDiv = document.createElement('div');
+    nodeDiv.className = 'doc-node';
+
+    // Fold toggle (functional for collapse)
+    const childKeys = getChildTKeys(node, level + 1);
+    const fold = document.createElement('span');
+    fold.className = 'doc-fold' + (childKeys.length === 0 ? ' leaf' : '');
+    fold.textContent = childKeys.length === 0 ? '•' : (node.hide ? '▶' : '▼');
+    if (childKeys.length > 0) {
+      fold.onclick = () => {
+        node.hide = node.hide ? 0 : 1;
+        app.renderCurrentView();
+      };
+    }
+    nodeDiv.appendChild(fold);
+
+    // Heading
+    const hClass = level === 0 ? 'doc-h1' : (level <= 3 ? `doc-h${level}` : 'doc-h4');
+    const heading = document.createElement('div');
+    heading.className = hClass;
+    this.applyInlineStyle(heading, style);
+
+    // Numbering
+    if (level !== 0 && numStyle !== 'none') {
+      if (numStyle === 'bullet') {
+        const bullet = document.createElement('span');
+        bullet.className = 'doc-num';
+        const bullets = ['●','○','■','▪'];
+        bullet.textContent = bullets[Math.min(level - 1, bullets.length - 1)] + ' ';
+        this.applyInlineStyle(bullet, style);
+        heading.appendChild(bullet);
+      } else if (numStyle === 'bullet-uniform') {
+        const bullet = document.createElement('span');
+        bullet.className = 'doc-num';
+        bullet.textContent = '● ';
+        this.applyInlineStyle(bullet, style);
+        heading.appendChild(bullet);
+      } else {
+        // Simple index numbering for cloned nodes
+        const siblings = getChildTKeys(sourceParentNode, level);
+        const idx = siblings.indexOf(sourceChildKey.split('.').pop());
+        const numSpan = document.createElement('span');
+        numSpan.className = 'doc-num';
+        numSpan.textContent = (idx + 1);
+        this.applyInlineStyle(numSpan, style);
+        heading.appendChild(numSpan);
+      }
+    }
+
+    // Content (read-only clone)
+    const contentSpan = document.createElement('span');
+    contentSpan.className = 'doc-editable';
+    contentSpan.contentEditable = 'false';
+    const contentText = stripMediaTags(node.content || '');
+    contentSpan.textContent = contentText;
+    this.applyInlineStyle(contentSpan, style);
+    heading.appendChild(contentSpan);
+
+    nodeDiv.appendChild(heading);
+
+    // Body (read-only)
+    const hasBody = node.body !== undefined && node.body !== '';
+    if (!node.hide_body && hasBody) {
+      const bodyDiv = document.createElement('div');
+      bodyDiv.className = 'doc-body doc-editable';
+      bodyDiv.contentEditable = 'false';
+      const bodyStyle = this.getBodyStyle(refHostPath);
+      const bodyText = stripMediaTags(node.body || '');
+      bodyDiv.textContent = bodyText;
+      this.applyInlineStyle(bodyDiv, bodyStyle);
+      nodeDiv.appendChild(bodyDiv);
+    }
+
+    container.appendChild(nodeDiv);
+
+    // Recurse children
+    if (!node.hide && childKeys.length > 0) {
+      for (const ck of childKeys) {
+        this._renderRefCloneNode(node[ck], refHostPath, sourceChildKey + '.' + ck, getLevel(ck), container, numStyle, refStr, node);
       }
     }
   }
@@ -2482,6 +3045,8 @@ class DocumentView {
   onRefDblClick(e) {
     const el = e.target.closest('.ref-display');
     if (!el || !el.dataset.ref) return;
+    // Don't enter edit mode if clicking the ref icon
+    if (e.target.classList.contains('ref-icon')) return;
     const refStr = el.dataset.ref;
     el.contentEditable = 'plaintext-only';
     if (!el.contentEditable || el.contentEditable === 'inherit') el.contentEditable = 'true';
@@ -2500,12 +3065,10 @@ class DocumentView {
       if (!node) return;
       node[el.dataset.field] = newVal;
       app.markDirty();
-      if (isRef(newVal)) {
-        el.contentEditable = 'false';
-        el.classList.add('ref-display');
-        el.dataset.ref = newVal;
-        el.textContent = resolveRef(this.data, newVal);
-      }
+      // Re-render to properly show ref icon and full-node refs
+      this.focusPath = null;
+      this.render(this.data);
+      app._resolveAsyncRefs(this.el);
     };
     el.addEventListener('blur', onBlur);
   }
@@ -2908,15 +3471,48 @@ class MindmapView {
   }
 
   _buildNode(node, path, level) {
+    const desc = resolveNodeForRender(this.data, node, path, level);
+    const hasOwnChildren = getChildTKeys(node, level + 1).length > 0;
+    const hasChildren = hasOwnChildren || (desc.sourceChildren && desc.sourceChildren.length > 0);
+    const isHidden = node && node.hide === 1; // node's OWN hide
+
+    const item = {
+      path, label: desc.displayContent, level, w: 0, h: 0, x: 0, y: 0,
+      children: [], node,
+      hasBody: desc.hasBody,
+      bodyOpen: desc.hasBody && !desc.hide_body,  // node's OWN hide_body
+      _sourceNode: desc.sourceNode,
+      _isRef: desc.isRef
+    };
+
+    if (hasChildren && !isHidden) {
+      if (desc.sourceChildren) {
+        for (const sc of desc.sourceChildren) {
+          item.children.push(this._buildRefCloneNode(sc.node, path + '.__ref__.' + sc.key, sc.level));
+        }
+      } else {
+        const childKeys = getChildTKeys(node, level + 1);
+        for (const ck of childKeys) {
+          item.children.push(this._buildNode(node[ck], path + '.' + ck, level + 1));
+        }
+      }
+    }
+    item.folded = isHidden && hasChildren;
+    item.hasChildren = hasChildren;
+    return item;
+  }
+
+  // Build a tree item for a cloned child (from full-node ref source) for mindmap
+  _buildRefCloneNode(node, path, level) {
     const rawLabel = (node && node.content) || '';
     const label = isRef(rawLabel) ? getDisplayValue(this.data, node, 'content') : rawLabel;
-    const hasChildren = getChildTKeys(node, level + 1).length > 0;
+    const hasChildren = getAllTKeys(node).length > 0;
     const isHidden = node && node.hide === 1;
     const item = { path, label, level, w: 0, h: 0, x: 0, y: 0, children: [], node, hasBody: !!(node && node.body), bodyOpen: !!(node && node.body && !node.hide_body) };
     if (hasChildren && !isHidden) {
-      const childKeys = getChildTKeys(node, level + 1);
+      const childKeys = getAllTKeys(node);
       for (const ck of childKeys) {
-        item.children.push(this._buildNode(node[ck], path + '.' + ck, level + 1));
+        item.children.push(this._buildRefCloneNode(node[ck], path + '.' + ck, getLevel(ck)));
       }
     }
     item.folded = isHidden && hasChildren;
@@ -3115,19 +3711,29 @@ class MindmapView {
     div.addEventListener('dblclick', e => {
       e.stopPropagation();
       if (item.path === '__root__') return;
+      // Check if this is a ref node — if so, show raw formula
+      const rawContent = item.node ? (item.node.content || '') : '';
+      const isContentRef = isRef(rawContent);
+
       div.contentEditable = 'true';
       div.focus();
+      if (isContentRef) {
+        // Show raw ref formula for editing
+        div.textContent = rawContent;
+      }
       const sel = window.getSelection();
       sel.selectAllChildren(div);
       sel.collapseToEnd();
       const onBlur = () => {
         div.contentEditable = 'false';
         const newText = div.textContent.trim();
-        if (item.node && newText !== item.label) {
+        if (item.node && newText !== (isContentRef ? rawContent : item.label)) {
           app.pushUndo();
           item.node.content = newText;
           app.markDirty();
         }
+        // Re-render to show resolved value
+        this.render(this.data, { preserveView: true });
         div.removeEventListener('blur', onBlur);
       };
       div.addEventListener('blur', onBlur);
@@ -3177,13 +3783,14 @@ class MindmapView {
         closeBtn.textContent = '×';
         closeBtn.onclick = ev => { ev.stopPropagation(); popup.remove(); };
         popup.appendChild(closeBtn);
-        const rawMmBody = item.node.body || '';
-        const displayMmBody = isRef(rawMmBody) ? getDisplayValue(this.data, item.node, 'body') : rawMmBody;
+        const effectiveMmNode = item._sourceNode || item.node;
+        const rawMmBody = effectiveMmNode.body || '';
+        const displayMmBody = isRef(rawMmBody) ? getDisplayValue(this.data, effectiveMmNode, 'body') : rawMmBody;
         const bodyText = stripMediaTags(displayMmBody);
         if (bodyText) { const t = document.createElement('div'); t.textContent = bodyText; popup.appendChild(t); }
-        if (hasMediaTag(item.node.body || '')) {
+        if (hasMediaTag(rawMmBody)) {
           const md = document.createElement('div');
-          renderTextWithMedia(item.node.body, md, {path: item.path, field:'body'});
+          renderTextWithMedia(rawMmBody, md, {path: item.path, field:'body'});
           popup.appendChild(md);
         }
         container.appendChild(popup);
@@ -3711,9 +4318,8 @@ class App {
   updateSidebar(path) {
     if (!document.getElementById('sidebar').classList.contains('active')) return;
     const json = document.getElementById('sidebar-json');
-    if (path && path.indexOf('.') !== -1) {
+    if (path) {
       const node = getNodeByPath(this.data, path);
-      // Wrap with path key for context
       const parts = path.split('.');
       const key = parts[parts.length - 1];
       const wrapped = {};
@@ -3721,10 +4327,20 @@ class App {
       json.value = JSON.stringify(wrapped, null, 2);
       json.dataset.path = path;
     } else {
-      // Top-level key or no path: show complete raw data
       json.value = JSON.stringify(this.data, null, 2);
       json.dataset.path = '';
     }
+  }
+
+  showAllSidebarData() {
+    const sb = document.getElementById('sidebar');
+    if (!sb.classList.contains('active')) {
+      sb.classList.add('active');
+      document.getElementById('sidebar-toggle').classList.add('active');
+    }
+    const json = document.getElementById('sidebar-json');
+    json.value = JSON.stringify(this.data, null, 2);
+    json.dataset.path = '';
   }
 
   applySidebarJSON() {
