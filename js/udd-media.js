@@ -1,0 +1,266 @@
+// ================================================================
+//  UDD Media Rendering
+//  Media tag parsing, image/video/audio rendering, lightbox,
+//  resize handles, property editor popups
+// ================================================================
+const MEDIA_RE = /\{\{(.*?)\}\}/g;
+
+function parseMediaTag(tagContent) {
+  try { return JSON.parse('{' + tagContent + '}'); }
+  catch (e) { return null; }
+}
+
+function resolveMediaSrc(src) {
+  if (typeof app !== 'undefined' && app.resolveMediaSrc) return app.resolveMediaSrc(src);
+  return src;
+}
+function renderTextWithMedia(text, container, mediaInfo, opts) {
+  if (!text) return;
+  const noAlign = opts && opts.suppressAlign;
+  const parts = text.split(MEDIA_RE);
+  for (let i = 1; i < parts.length; i += 2) {
+    const media = parseMediaTag(parts[i]);
+    if (!media) continue;
+    if (media.image) {
+      const alignBox = document.createElement('div');
+      if (!noAlign && media['image.align']) alignBox.style.textAlign = media['image.align'];
+      const wrapper = document.createElement('div');
+      wrapper.className = 'media-wrap';
+      const imgW = media['image.width'] || '';
+      if (imgW) wrapper.style.width = imgW;
+      const img = document.createElement('img');
+      img.src = resolveMediaSrc(media.image);
+      img.className = 'media-img';
+      img.style.width = '100%';
+      const imgH = media['image.height'] || '';
+      if (imgH && !imgW.endsWith('%')) img.style.height = imgH;
+      if (media['image.angle']) img.style.transform = `rotate(${media['image.angle']}deg)`;
+      if (media['image.border']) img.style.border = '1px solid var(--gray-300)';
+      img.draggable = false;
+      img.ondblclick = (e) => { e.stopPropagation(); showLightbox(img.src); };
+      img.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+      wrapper.appendChild(img);
+      const handle = document.createElement('div');
+      handle.className = 'media-resize-handle';
+      handle.onmousedown = (e) => startMediaResize(e, img, wrapper, mediaInfo);
+      wrapper.appendChild(handle);
+      if (media['image.caption']) {
+        const cap = document.createElement('div');
+        cap.className = 'media-caption';
+        cap.textContent = media['image.caption'];
+        wrapper.appendChild(cap);
+      }
+      alignBox.appendChild(wrapper);
+      container.appendChild(alignBox);
+    } else if (media.video) {
+      const alignBox = document.createElement('div');
+      if (!noAlign && media['video.align']) alignBox.style.textAlign = media['video.align'];
+      const wrapper = document.createElement('div');
+      wrapper.className = 'media-wrap';
+      const vidW = media['video.width'] || '';
+      const vidH = media['video.height'] || '';
+      if (vidW) wrapper.style.width = vidW;
+      const vid = document.createElement('video');
+      vid.src = resolveMediaSrc(media.video);
+      vid.className = 'media-video';
+      vid.controls = true;
+      vid.style.width = '100%';
+      if (vidH && !vidW.endsWith('%')) vid.style.height = vidH;
+      if (media['video.autoplay']) vid.autoplay = true;
+      if (media['video.loop']) vid.loop = true;
+      if (media['video.poster']) vid.poster = resolveMediaSrc(media['video.poster']);
+      vid.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+      wrapper.appendChild(vid);
+      const handle = document.createElement('div');
+      handle.className = 'media-resize-handle';
+      handle.onmousedown = (e) => startMediaResize(e, vid, wrapper, mediaInfo);
+      wrapper.appendChild(handle);
+      alignBox.appendChild(wrapper);
+      container.appendChild(alignBox);
+    } else if (media.audio) {
+      const aud = document.createElement('audio');
+      aud.src = resolveMediaSrc(media.audio);
+      aud.controls = true;
+      aud.className = 'media-audio';
+      aud.onclick = (e) => { e.stopPropagation(); showMediaEditor(aud, mediaInfo); };
+      container.appendChild(aud);
+    }
+  }
+}
+// Drag-to-resize
+function startMediaResize(e, el, wrapper, mediaInfo) {
+  e.preventDefault();
+  e.stopPropagation();
+  const startX = e.clientX;
+  const startW = wrapper.offsetWidth;
+  const alignBox = wrapper.parentElement;
+  const parentW = alignBox && alignBox.parentElement ? alignBox.parentElement.offsetWidth : startW;
+  wrapper.classList.add('resizing');
+  const onMove = (ev) => {
+    const dx = ev.clientX - startX;
+    const newW = Math.max(50, startW + dx);
+    wrapper.style.width = newW + 'px';
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    wrapper.classList.remove('resizing');
+    if (mediaInfo && mediaInfo.path && mediaInfo.field) {
+      const node = getNodeByPath(app.data, mediaInfo.path);
+      if (node) {
+        const text = node[mediaInfo.field] || '';
+        const finalW = wrapper.offsetWidth;
+        const pct = Math.round(finalW / parentW * 100);
+        const widthStr = pct + '%';
+        const mediaType = el.tagName === 'VIDEO' ? 'video' : 'image';
+        const updated = text.replace(MEDIA_RE, (match, content) => {
+          try {
+            const obj = JSON.parse('{' + content + '}');
+            if (obj[mediaType]) {
+              obj[mediaType + '.width'] = widthStr;
+              delete obj[mediaType + '.height'];
+              const inner = JSON.stringify(obj).slice(1, -1);
+              return '{{' + inner + '}}';
+            }
+          } catch(ex) {}
+          return match;
+        });
+        node[mediaInfo.field] = updated;
+        app.markDirty();
+      }
+    }
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// Lightbox preview
+function showLightbox(src) {
+  const mask = document.createElement('div');
+  mask.className = 'lightbox-mask';
+  const img = document.createElement('img');
+  img.src = src;
+  img.className = 'lightbox-img';
+  mask.appendChild(img);
+  mask.onclick = () => mask.remove();
+  mask.onwheel = (e) => {
+    e.preventDefault();
+    const scale = e.deltaY < 0 ? 1.1 : 0.9;
+    const cur = parseFloat(img.style.transform.replace(/scale\(([^)]+)\)/, '$1')) || 1;
+    img.style.transform = `scale(${cur * scale})`;
+  };
+  document.body.appendChild(mask);
+}
+
+// Media property editor popup
+function showMediaEditor(mediaEl, mediaInfo) {
+  closeMediaEditor();
+  const text = (() => {
+    const node = getNodeByPath(app.data, mediaInfo.path);
+    return node ? (node[mediaInfo.field] || '') : '';
+  })();
+  const match = text.match(/\{\{(.*?)\}\}/);
+  if (!match) return;
+  const media = parseMediaTag(match[1]);
+  if (!media) return;
+  const mediaType = media.image ? 'image' : media.video ? 'video' : 'audio';
+
+  mediaEl.classList.add('media-selected');
+
+  const popup = document.createElement('div');
+  popup.className = 'media-editor';
+  popup.id = 'media-editor-popup';
+
+  const fields = [];
+  if (mediaType === 'image') {
+    fields.push(
+      {key: 'image.width', label: '宽度', val: media['image.width'] || ''},
+      {key: 'image.height', label: '高度', val: media['image.height'] || ''},
+      {key: 'image.align', label: '对齐', val: media['image.align'] || '', type: 'select', opts: ['','left','center','right']},
+      {key: 'image.angle', label: '旋转', val: media['image.angle'] || ''},
+      {key: 'image.caption', label: '说明', val: media['image.caption'] || ''},
+      {key: 'image.border', label: '边框', val: media['image.border'] || '', type: 'check'},
+    );
+  } else if (mediaType === 'video') {
+    fields.push(
+      {key: 'video.width', label: '宽度', val: media['video.width'] || ''},
+      {key: 'video.height', label: '高度', val: media['video.height'] || ''},
+      {key: 'video.align', label: '对齐', val: media['video.align'] || '', type: 'select', opts: ['','left','center','right']},
+      {key: 'video.autoplay', label: '自动播放', val: media['video.autoplay'] || '', type: 'check'},
+      {key: 'video.loop', label: '循环', val: media['video.loop'] || '', type: 'check'},
+    );
+  }
+
+  let html = `<div class="media-editor-title">${mediaType === 'image' ? '图片' : '视频'}属性</div>`;
+  for (const f of fields) {
+    if (f.type === 'select') {
+      const optHtml = f.opts.map(o => `<option value="${o}"${o===f.val?' selected':''}>${o||'默认'}</option>`).join('');
+      html += `<div class="media-editor-row"><label>${f.label}</label><select data-key="${f.key}">${optHtml}</select></div>`;
+    } else if (f.type === 'check') {
+      html += `<div class="media-editor-row"><label>${f.label}</label><input type="checkbox" data-key="${f.key}" ${f.val?'checked':''}></div>`;
+    } else {
+      html += `<div class="media-editor-row"><label>${f.label}</label><input type="text" data-key="${f.key}" value="${f.val}" placeholder="${f.label}"></div>`;
+    }
+  }
+  html += `<div class="media-editor-actions"><button class="media-editor-del">删除</button><button class="media-editor-ok">确定</button></div>`;
+  popup.innerHTML = html;
+
+  const rect = mediaEl.getBoundingClientRect();
+  popup.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  popup.style.left = (rect.left + window.scrollX) + 'px';
+  document.body.appendChild(popup);
+
+  popup.onclick = (e) => e.stopPropagation();
+
+  popup.querySelector('.media-editor-ok').onclick = () => {
+    app.pushUndo();
+    const node = getNodeByPath(app.data, mediaInfo.path);
+    if (!node) return;
+    const curText = node[mediaInfo.field] || '';
+    const updated = curText.replace(/\{\{(.*?)\}\}/, (m, content) => {
+      try {
+        const obj = JSON.parse('{' + content + '}');
+        popup.querySelectorAll('[data-key]').forEach(el => {
+          const k = el.dataset.key;
+          if (el.type === 'checkbox') {
+            if (el.checked) obj[k] = 1; else delete obj[k];
+          } else {
+            if (el.value) obj[k] = el.value; else delete obj[k];
+          }
+        });
+        return '{{' + JSON.stringify(obj).slice(1,-1) + '}}';
+      } catch(ex) { return m; }
+    });
+    node[mediaInfo.field] = updated;
+    closeMediaEditor();
+    app.renderCurrentView();
+    app.markDirty();
+  };
+
+  popup.querySelector('.media-editor-del').onclick = () => {
+    app.pushUndo();
+    const node = getNodeByPath(app.data, mediaInfo.path);
+    if (!node) return;
+    node[mediaInfo.field] = (node[mediaInfo.field] || '').replace(/\{\{.*?\}\}/, '');
+    closeMediaEditor();
+    app.renderCurrentView();
+    app.markDirty();
+    toast('已删除媒体');
+  };
+
+  setTimeout(() => {
+    document.addEventListener('click', closeMediaEditorOnOutside);
+  }, 0);
+}
+
+function closeMediaEditorOnOutside(e) {
+  const popup = document.getElementById('media-editor-popup');
+  if (popup && !popup.contains(e.target)) closeMediaEditor();
+}
+
+function closeMediaEditor() {
+  const popup = document.getElementById('media-editor-popup');
+  if (popup) popup.remove();
+  document.querySelectorAll('.media-selected').forEach(el => el.classList.remove('media-selected'));
+  document.removeEventListener('click', closeMediaEditorOnOutside);
+}
