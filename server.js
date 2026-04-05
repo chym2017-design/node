@@ -8,7 +8,7 @@ const path = require('path');
 const url = require('url');
 
 const PORT = parseInt(process.argv[2]) || 8080;
-const ROOT_DIR = process.argv[3] || process.cwd();
+const ROOT_DIR = process.argv[3] || __dirname;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -107,6 +107,25 @@ const server = http.createServer(async (req, res) => {
       res.end(data);
     } catch (e) {
       sendError(res, e.message, 404);
+    }
+    return;
+  }
+
+  // === API: Write file (binary body) ===
+  if (pathname === '/api/writefile' && req.method === 'POST') {
+    const filePath = parsed.query.path;
+    if (!filePath) { sendError(res, 'Missing path', 400); return; }
+    try {
+      const resolved = path.resolve(filePath);
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        fs.writeFileSync(resolved, buffer);
+        sendJSON(res, { ok: true, path: resolved, size: buffer.length });
+      });
+    } catch (e) {
+      sendError(res, e.message, 500);
     }
     return;
   }
