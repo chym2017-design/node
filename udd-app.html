@@ -254,6 +254,31 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .repo-item-name{flex:1;overflow:hidden;text-overflow:ellipsis}
 .repo-item-badge{font-size:10px;color:var(--gray-400);flex-shrink:0}
 #repo-status{padding:6px 12px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--gray-100);text-align:center}
+#open-docs-panel{border-bottom:1px solid var(--border);flex-shrink:0;max-height:160px;overflow-y:auto}
+#open-docs-panel .open-docs-title{padding:4px 12px;font-size:11px;color:var(--gray-400);font-weight:600}
+.open-doc-item{display:flex;align-items:center;padding:4px 8px 4px 12px;font-size:12px;cursor:pointer;gap:4px}
+.open-doc-item.active{background:var(--blue-50);color:var(--primary)}
+.open-doc-item:hover{background:var(--gray-100)}
+.open-doc-dot{width:6px;height:6px;border-radius:50%;background:#ef4444;flex-shrink:0}
+.open-doc-dot.clean{visibility:hidden}
+.open-doc-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.open-doc-close{flex-shrink:0;color:var(--gray-400);font-size:14px;padding:0 2px;border:none;background:none;cursor:pointer;line-height:1}
+.open-doc-close:hover{color:var(--text)}
+/* Media picker modal */
+#media-picker-mask{position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:1000;display:flex;align-items:center;justify-content:center}
+#media-picker{background:var(--bg);border-radius:10px;width:420px;max-height:520px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.15)}
+#media-picker .mp-header{padding:12px 16px;font-size:14px;font-weight:600;color:var(--gray-800);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+#media-picker .mp-nav{display:flex;align-items:center;padding:6px 12px;gap:4px;border-bottom:1px solid var(--gray-100)}
+#media-picker .mp-nav button{background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:14px;padding:2px 6px}
+#media-picker .mp-nav button:hover{color:var(--text)}
+#media-picker .mp-path{flex:1;font-size:11px;color:var(--gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#media-picker .mp-list{flex:1;overflow-y:auto;padding:4px 0}
+#media-picker .mp-item{display:flex;align-items:center;padding:5px 14px;font-size:13px;cursor:pointer;gap:6px}
+#media-picker .mp-item:hover{background:var(--gray-100)}
+#media-picker .mp-item.selected{background:var(--blue-50);color:var(--primary)}
+#media-picker .mp-item-icon{font-size:14px;width:18px;text-align:center;flex-shrink:0}
+#media-picker .mp-item-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#media-picker .mp-actions{padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
 
 /* ===== RESPONSIVE ===== */
 @media(max-width:768px){
@@ -347,11 +372,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
       <label><input type="checkbox" data-fmt="tree_lines">树线</label>
     </div>
     <div id="view-tabs">
+      <button id="repo-toggle" onclick="app.toggleRepo()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">仓库</button>
       <button class="view-tab active" data-view="outline" onclick="app.switchView('outline')">大纲</button>
       <button class="view-tab" data-view="mindmap" onclick="app.switchView('mindmap')">思维导图</button>
       <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
+      <button id="back-btn" onclick="app.goBack()" style="display:none;background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">← 返回</button>
       <div class="spacer"></div>
-      <button id="repo-toggle" onclick="app.toggleRepo()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">仓库</button>
+      <button id="render-toggle" onclick="app.toggleRenderMode()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染 on</button>
       <input id="tool-fold-n" type="number" value="5" min="1" max="20" title="展开层数">
       <button id="fold-level-btn" onclick="app.expandToLevel()">展开n层</button>
       <button id="fold-all-btn" onclick="app.expandAll()">全部展开</button>
@@ -365,12 +392,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
       <div class="repo-header">
         <span>仓库</span>
         <span style="display:flex;gap:4px;align-items:center">
-          <button onclick="app.repoGoUp()" title="上级目录">↑</button>
-          <button onclick="app.repoRefresh()" title="刷新">⟲</button>
           <button onclick="app.toggleRepo()" title="关闭">×</button>
         </span>
       </div>
-      <div id="repo-path" onclick="app.repoPromptDir()" title="点击修改目录"></div>
+      <div id="open-docs-panel">
+        <div class="open-docs-title">已打开的文档</div>
+      </div>
+      <div style="display:flex;align-items:center;border-bottom:1px solid var(--gray-100)">
+        <div id="repo-path" onclick="app.repoPromptDir()" title="点击修改目录" style="flex:1"></div>
+        <button onclick="app.repoGoUp()" title="上级目录" style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:16px;padding:2px 6px">↑</button>
+        <button onclick="app.repoRefresh()" title="刷新" style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:16px;padding:2px 6px">⟲</button>
+      </div>
       <div id="repo-list"></div>
       <div id="repo-status"></div>
     </div>
@@ -1050,8 +1082,10 @@ function getDisplayValue(data, node, field) {
 // ================================================================
 function resolveNodeForRender(data, node, path, level) {
   const raw = node.content || '';
-  const isContentRef = isRef(raw);
-  const fullRef = isFullNodeRef(raw);
+  // When renderMode is off, treat everything as plain text (no reference resolution)
+  const _renderOn = typeof app === 'undefined' || app.renderMode !== false;
+  const isContentRef = _renderOn && isRef(raw);
+  const fullRef = _renderOn && isFullNodeRef(raw);
   const sourceNode = fullRef ? getFullRefNode(data, raw) : null;
 
   const desc = {
@@ -1157,6 +1191,11 @@ function createRefIcon(data, refStr, viewInstance) {
 // Jump to a node in the current view
 function jumpToNode(targetPath, viewInstance) {
   if (!targetPath || !viewInstance) return;
+
+  // Save current position for "back" navigation
+  if (typeof app !== 'undefined') {
+    app._saveBackPosition(viewInstance);
+  }
 
   // Ensure the target node is visible (unfold ancestors)
   ensureNodeVisible(app.data, targetPath);
@@ -2228,21 +2267,53 @@ class OutlineView {
     this.applyStyle(content, style);
     contentWrap.appendChild(content);
 
+    // body button (fold/unfold)
+    const hasBody = node.body !== undefined && node.body !== '';
+    if (hasBody) {
+      const bodyBtn = document.createElement('span');
+      bodyBtn.className = 'body-btn';
+      bodyBtn.textContent = node.hide_body ? '▸' : '▾';
+      bodyBtn.title = node.hide_body ? '展开正文' : '折叠正文';
+      bodyBtn.onclick = (e) => {
+        e.stopPropagation();
+        node.hide_body = node.hide_body ? 0 : 1;
+        app.renderCurrentView();
+      };
+      contentWrap.appendChild(bodyBtn);
+    }
+
     row.appendChild(contentWrap);
     div.appendChild(row);
 
+    // media from content
+    if (hasMediaTag(rawContent)) {
+      const mediaDiv = document.createElement('div');
+      mediaDiv.className = 'outline-media';
+      mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
+      renderTextWithMedia(rawContent, mediaDiv, {path: refHostPath, field: 'content'}, {suppressAlign: true});
+      div.appendChild(mediaDiv);
+    }
+
     // body
-    const hasBody = node.body !== undefined && node.body !== '';
     if (!node.hide_body && hasBody) {
       const bodyEl = document.createElement('div');
       bodyEl.className = 'outline-body';
       bodyEl.contentEditable = 'false';
       const bodyStyle = buildNodeStyle(this.data, refHostPath, level, { isBody: true });
-      const bodyText = stripMediaTags(node.body || '');
+      const rawBody = node.body || '';
+      const bodyText = stripMediaTags(rawBody);
       bodyEl.textContent = bodyText;
       bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
       this.applyStyle(bodyEl, bodyStyle);
       div.appendChild(bodyEl);
+      // media from body
+      if (hasMediaTag(rawBody)) {
+        const bodyMediaDiv = document.createElement('div');
+        bodyMediaDiv.className = 'outline-media';
+        bodyMediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
+        renderTextWithMedia(rawBody, bodyMediaDiv, {path: refHostPath, field: 'body'}, {suppressAlign: true});
+        div.appendChild(bodyMediaDiv);
+      }
     }
 
     // recurse children
@@ -3035,24 +3106,55 @@ class DocumentView {
     const contentSpan = document.createElement('span');
     contentSpan.className = 'doc-editable';
     contentSpan.contentEditable = 'false';
-    const contentText = stripMediaTags(node.content || '');
+    const rawDocCloneContent = node.content || '';
+    const contentText = stripMediaTags(rawDocCloneContent);
     contentSpan.textContent = contentText;
     this.applyInlineStyle(contentSpan, style);
     heading.appendChild(contentSpan);
 
+    // body button (fold/unfold)
+    const hasDocCloneBody = node.body !== undefined && node.body !== '';
+    if (hasDocCloneBody) {
+      const bodyBtn = document.createElement('span');
+      bodyBtn.className = 'body-btn';
+      bodyBtn.textContent = node.hide_body ? '▸' : '▾';
+      bodyBtn.title = node.hide_body ? '展开正文' : '折叠正文';
+      bodyBtn.onclick = (e) => {
+        e.stopPropagation();
+        node.hide_body = node.hide_body ? 0 : 1;
+        app.renderCurrentView();
+      };
+      heading.appendChild(bodyBtn);
+    }
+
     nodeDiv.appendChild(heading);
 
+    // media from content
+    if (hasMediaTag(rawDocCloneContent)) {
+      const mediaDiv = document.createElement('div');
+      mediaDiv.className = 'media-inline';
+      renderTextWithMedia(rawDocCloneContent, mediaDiv, {path: refHostPath, field: 'content'});
+      nodeDiv.appendChild(mediaDiv);
+    }
+
     // Body (read-only)
-    const hasBody = node.body !== undefined && node.body !== '';
-    if (!node.hide_body && hasBody) {
+    if (!node.hide_body && hasDocCloneBody) {
       const bodyDiv = document.createElement('div');
       bodyDiv.className = 'doc-body doc-editable';
       bodyDiv.contentEditable = 'false';
       const bodyStyle = this.getBodyStyle(refHostPath);
-      const bodyText = stripMediaTags(node.body || '');
+      const rawDocCloneBody = node.body || '';
+      const bodyText = stripMediaTags(rawDocCloneBody);
       bodyDiv.textContent = bodyText;
       this.applyInlineStyle(bodyDiv, bodyStyle);
       nodeDiv.appendChild(bodyDiv);
+      // media from body
+      if (hasMediaTag(rawDocCloneBody)) {
+        const bodyMediaDiv = document.createElement('div');
+        bodyMediaDiv.className = 'media-inline';
+        renderTextWithMedia(rawDocCloneBody, bodyMediaDiv, {path: refHostPath, field: 'body'});
+        nodeDiv.appendChild(bodyMediaDiv);
+      }
     }
 
     container.appendChild(nodeDiv);
@@ -4270,12 +4372,20 @@ class MindmapView {
 // ================================================================
 class App {
   constructor() {
-    this.data = createDefaultData();
+    // Multi-document session management
+    this.sessions = [];
+    this.activeSessionId = null;
+
+    // Create initial session
+    const initData = createDefaultData();
+    const initSession = this._createSessionObj('未命名文档', initData, null, null);
+    this.sessions.push(initSession);
+    this.activeSessionId = initSession.id;
+
+    // Expose convenience accessors
     this.currentView = 'outline';
-    this.dirty = false;
-    this.fileHandle = null;
-    this.fileName = '未命名文档';
-    this.undoMgr = new UndoManager();
+    this.renderMode = true;
+
     this.outlineView = new OutlineView(document.getElementById('outline-view'));
     this.mindmapView = new MindmapView(document.getElementById('mindmap-view'));
     this.documentView = new DocumentView(document.getElementById('document-view'));
@@ -4284,9 +4394,9 @@ class App {
     this.savedSelection = null;
 
     // Repository panel state
-    this.repoDir = null;       // current directory path
-    this.repoServerUrl = '';   // e.g. 'http://localhost:8080'
-    this._repoFiles = [];      // cached file list
+    this.repoDir = null;
+    this.repoServerUrl = '';
+    this._repoFiles = [];
 
     // Format switches
     this.outlineFmt = { font: true, font_size: true, color: true, bold: true,
@@ -4326,21 +4436,230 @@ class App {
     this.initColorPalettes();
   }
 
+  // --- Session property accessors (proxy to active session) ---
+  get _activeSession() { return this.sessions.find(s => s.id === this.activeSessionId); }
+  get data() { const s = this._activeSession; return s ? s.data : null; }
+  set data(v) { const s = this._activeSession; if (s) s.data = v; }
+  get fileName() { const s = this._activeSession; return s ? s.fileName : ''; }
+  set fileName(v) { const s = this._activeSession; if (s) s.fileName = v; }
+  get fileHandle() { const s = this._activeSession; return s ? s.fileHandle : null; }
+  set fileHandle(v) { const s = this._activeSession; if (s) s.fileHandle = v; }
+  get dirty() { const s = this._activeSession; return s ? s.dirty : false; }
+  set dirty(v) { const s = this._activeSession; if (s) s.dirty = v; }
+  get undoMgr() { const s = this._activeSession; return s ? s.undoMgr : null; }
+  set undoMgr(v) { const s = this._activeSession; if (s) s.undoMgr = v; }
+
+  _createSessionObj(fileName, data, fileHandle, filePath) {
+    const undoMgr = new UndoManager();
+    return {
+      id: String(Date.now()) + '_' + Math.random().toString(36).slice(2, 6),
+      fileName, data: deepClone(data), fileHandle, filePath,
+      undoMgr, dirty: false,
+      focusPath: null, scrollTop: 0
+    };
+  }
+
+  _saveCurrentSessionState() {
+    const s = this._activeSession;
+    if (!s) return;
+    // Sync editable content
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
+    else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
+    // Save view state
+    const view = this.currentView === 'outline' ? this.outlineView : this.currentView === 'mindmap' ? this.mindmapView : this.documentView;
+    s.focusPath = view.focusPath;
+    const editorEl = document.getElementById('editor');
+    s.scrollTop = editorEl ? editorEl.scrollTop : 0;
+  }
+
+  switchSession(sessionId) {
+    if (sessionId === this.activeSessionId) return;
+    const target = this.sessions.find(s => s.id === sessionId);
+    if (!target) return;
+    // Save current session state
+    this._saveCurrentSessionState();
+    // Switch
+    this.activeSessionId = sessionId;
+    // Restore UI
+    document.getElementById('doc-title').value = target.fileName;
+    document.title = 'UDD - ' + target.fileName;
+    // Reset views
+    this.outlineView.focusPath = target.focusPath;
+    this.outlineView.focusField = 'content';
+    this.documentView.focusPath = target.focusPath;
+    this.documentView.focusField = 'content';
+    this.mindmapView.focusPath = target.focusPath;
+    this.renderCurrentView();
+    // Restore scroll
+    requestAnimationFrame(() => {
+      const editorEl = document.getElementById('editor');
+      if (editorEl) editorEl.scrollTop = target.scrollTop;
+    });
+    // Update status
+    if (target.dirty) {
+      document.getElementById('stat-save').textContent = '● 未保存';
+      document.getElementById('stat-save').style.color = '#ef4444';
+    } else {
+      document.getElementById('stat-save').textContent = '✓ 已保存';
+      document.getElementById('stat-save').style.color = '#22c55e';
+    }
+    this._renderOpenDocs();
+  }
+
+  closeSession(sessionId) {
+    const session = this.sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    if (session.dirty && !confirm(`"${session.fileName}" 未保存，确定关闭？`)) return;
+    const idx = this.sessions.indexOf(session);
+    this.sessions.splice(idx, 1);
+    // Remove from IndexedDB
+    this._removeSessionFromDB(session.id);
+    if (this.sessions.length === 0) {
+      // Create a new empty session
+      const newData = createDefaultData();
+      const newSession = this._createSessionObj('未命名文档', newData, null, null);
+      this.sessions.push(newSession);
+      this.activeSessionId = newSession.id;
+    } else if (sessionId === this.activeSessionId) {
+      // Switch to nearest session
+      const newIdx = Math.min(idx, this.sessions.length - 1);
+      this.activeSessionId = this.sessions[newIdx].id;
+    }
+    // Refresh UI
+    const s = this._activeSession;
+    document.getElementById('doc-title').value = s.fileName;
+    document.title = 'UDD - ' + s.fileName;
+    this.outlineView.focusPath = s.focusPath;
+    this.documentView.focusPath = s.focusPath;
+    this.mindmapView.focusPath = s.focusPath;
+    this.renderCurrentView();
+    this._renderOpenDocs();
+  }
+
+  async _removeSessionFromDB(sessionId) {
+    try {
+      const db = await openDB();
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete('session_' + sessionId);
+    } catch (e) { /* ignore */ }
+  }
+
+  _addSessionAndSwitch(fileName, data, fileHandle, filePath) {
+    // Check if file is already open (by filePath)
+    if (filePath) {
+      const existing = this.sessions.find(s => s.filePath === filePath);
+      if (existing) {
+        this.switchSession(existing.id);
+        return;
+      }
+    }
+    // Ensure unique fileName (only for new docs without a source file)
+    let name = fileName;
+    if (!filePath) {
+      let n = 1;
+      while (this.sessions.some(s => s.fileName === name)) {
+        n++;
+        name = fileName + ' ' + n;
+      }
+    }
+    this._saveCurrentSessionState();
+    const session = this._createSessionObj(name, data, fileHandle, filePath);
+    session.undoMgr.push(data);
+    this.sessions.push(session);
+    this.activeSessionId = session.id;
+    document.getElementById('doc-title').value = name;
+    document.title = 'UDD - ' + name;
+    this.outlineView.focusPath = null;
+    this.documentView.focusPath = null;
+    this.mindmapView.focusPath = null;
+    this.renderCurrentView();
+    this._renderOpenDocs();
+  }
+
+  _renderOpenDocs() {
+    const panel = document.getElementById('open-docs-panel');
+    if (!panel) return;
+    // Keep title, remove old items
+    const title = panel.querySelector('.open-docs-title');
+    panel.innerHTML = '';
+    if (title) panel.appendChild(title);
+    else {
+      const t = document.createElement('div');
+      t.className = 'open-docs-title';
+      t.textContent = '已打开的文档';
+      panel.appendChild(t);
+    }
+    for (const s of this.sessions) {
+      const item = document.createElement('div');
+      item.className = 'open-doc-item' + (s.id === this.activeSessionId ? ' active' : '');
+      // Dirty dot
+      const dot = document.createElement('span');
+      dot.className = 'open-doc-dot' + (s.dirty ? '' : ' clean');
+      item.appendChild(dot);
+      // Name
+      const name = document.createElement('span');
+      name.className = 'open-doc-name';
+      name.textContent = s.fileName || '未命名文档';
+      name.title = s.filePath || s.fileName;
+      item.appendChild(name);
+      // Close button
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'open-doc-close';
+      closeBtn.textContent = '×';
+      closeBtn.title = '关闭';
+      closeBtn.onclick = (e) => { e.stopPropagation(); this.closeSession(s.id); };
+      item.appendChild(closeBtn);
+      // Click to switch
+      item.onclick = () => this.switchSession(s.id);
+      panel.appendChild(item);
+    }
+  }
+
   async init() {
 
-    // Try restore from IndexedDB
+    // Try restore sessions from IndexedDB
     try {
-      const saved = await dbLoad('current');
-      if (saved && saved.data) {
-        this.data = saved.data;
-        this.fileName = this.data.meta?.title || '未命名文档';
-        document.getElementById('doc-title').value = this.fileName;
-        document.title = 'UDD - ' + this.fileName;
-        this.undoMgr.push(this.data);
-        toast('已恢复上次编辑');
+      const idx = await dbLoad('sessions_index');
+      if (idx && idx.data && idx.data.list && idx.data.list.length > 0) {
+        const sessionList = idx.data.list;
+        const restoredSessions = [];
+        for (const meta of sessionList) {
+          try {
+            const saved = await dbLoad('session_' + meta.id);
+            if (saved && saved.data) {
+              const s = this._createSessionObj(meta.fileName, saved.data, null, meta.filePath);
+              s.id = meta.id;
+              s.dirty = meta.dirty || false;
+              s.undoMgr.push(saved.data);
+              restoredSessions.push(s);
+            }
+          } catch (e) { /* skip */ }
+        }
+        if (restoredSessions.length > 0) {
+          this.sessions = restoredSessions;
+          const activeId = idx.data.activeId;
+          this.activeSessionId = this.sessions.find(s => s.id === activeId) ? activeId : this.sessions[0].id;
+          const s = this._activeSession;
+          document.getElementById('doc-title').value = s.fileName;
+          document.title = 'UDD - ' + s.fileName;
+          toast('已恢复 ' + restoredSessions.length + ' 个文档');
+        }
+      } else {
+        // Fallback: try old 'current' key
+        const saved = await dbLoad('current');
+        if (saved && saved.data) {
+          this.data = saved.data;
+          this.fileName = this.data.meta?.title || '未命名文档';
+          document.getElementById('doc-title').value = this.fileName;
+          document.title = 'UDD - ' + this.fileName;
+          this.undoMgr.push(this.data);
+          toast('已恢复上次编辑');
+        }
       }
     } catch (e) { /* ignore */ }
     this.renderCurrentView();
+    this._renderOpenDocs();
   }
 
   renderCurrentView() {
@@ -4410,6 +4729,56 @@ class App {
     if (sb.classList.contains('active')) {
       this.updateSidebar(this.getCurrentFocusPath());
     }
+  }
+
+  toggleRenderMode() {
+    this.renderMode = !this.renderMode;
+    const btn = document.getElementById('render-toggle');
+    if (btn) {
+      btn.textContent = '渲染 ' + (this.renderMode ? 'on' : 'off');
+      btn.style.color = this.renderMode ? 'var(--gray-500)' : 'var(--primary)';
+      btn.style.borderColor = this.renderMode ? 'var(--gray-200)' : 'var(--blue-200)';
+      btn.style.background = this.renderMode ? 'none' : 'var(--blue-50)';
+    }
+    this.renderCurrentView();
+  }
+
+  _saveBackPosition(viewInstance) {
+    const editorEl = document.getElementById('editor');
+    this._backStack = this._backStack || [];
+    this._backStack.push({
+      view: this.currentView,
+      focusPath: viewInstance.focusPath,
+      focusField: viewInstance.focusField || 'content',
+      scrollTop: editorEl ? editorEl.scrollTop : 0
+    });
+    document.getElementById('back-btn').style.display = '';
+  }
+
+  goBack() {
+    if (!this._backStack || !this._backStack.length) return;
+    const pos = this._backStack.pop();
+    if (this._backStack.length === 0) {
+      document.getElementById('back-btn').style.display = 'none';
+    }
+    // Switch view if needed
+    if (pos.view !== this.currentView) {
+      this.switchView(pos.view);
+    }
+    const viewInstance = pos.view === 'outline' ? this.outlineView : pos.view === 'document' ? this.documentView : this.mindmapView;
+    viewInstance.focusPath = pos.focusPath;
+    viewInstance.focusField = pos.focusField;
+    viewInstance.focusCursorEnd = false;
+    viewInstance.render(viewInstance.data);
+    // Restore scroll
+    requestAnimationFrame(() => {
+      const editorEl = document.getElementById('editor');
+      if (editorEl) editorEl.scrollTop = pos.scrollTop;
+      if (pos.focusPath) {
+        const el = viewInstance.el.querySelector(`[data-path="${pos.focusPath}"][data-field="${pos.focusField}"]`);
+        if (el) el.focus();
+      }
+    });
   }
 
   updateSidebar(path) {
@@ -4641,32 +5010,95 @@ class App {
   async insertMedia() {
     const nodePath = this.getCurrentFocusPath();
     if (!nodePath) { toast('请先选中一个节点'); return; }
-    try {
-      // Step 1: pick directory
-      const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-      // Step 2: pick file from that directory
-      const [fileHandle] = await window.showOpenFilePicker({
-        types: [{ description: '媒体文件', accept: { 'image/*': [], 'video/*': [] } }]
-      });
-      // Step 3: resolve relative path from dir to file
-      const relParts = await dirHandle.resolve(fileHandle);
-      if (!relParts) { toast('所选文件不在该目录下'); return; }
-      // Step 4: get dir absolute path (cached per dirHandle.name in localStorage)
-      const cacheKey = 'media_dir_' + dirHandle.name;
-      let dirPath = localStorage.getItem(cacheKey);
-      if (!dirPath) {
-        dirPath = prompt('首次使用该目录，请输入其绝对路径：', 'E:\\' + dirHandle.name);
-        if (!dirPath) return;
-        localStorage.setItem(cacheKey, dirPath);
+
+    if (this.repoServerUrl) {
+      this._showMediaPicker(nodePath);
+    } else {
+      toast('请先连接服务器（运行 node server.js）');
+    }
+  }
+
+  async _showMediaPicker(nodePath) {
+    const MEDIA_EXTS = ['.png','.jpg','.jpeg','.gif','.svg','.webp','.bmp','.mp4','.webm','.ogg','.mov','.avi','.mp3','.wav','.aac'];
+    let currentDir = this.repoDir || '';
+    let selectedItem = null;
+
+    const mask = document.createElement('div');
+    mask.id = 'media-picker-mask';
+    const picker = document.createElement('div');
+    picker.id = 'media-picker';
+    picker.innerHTML = `
+      <div class="mp-header"><span>选择媒体文件</span><button onclick="this.closest('#media-picker-mask').remove()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--gray-400)">×</button></div>
+      <div class="mp-nav"><button id="mp-up" title="上级目录">↑</button><span class="mp-path" id="mp-path"></span></div>
+      <div class="mp-list" id="mp-list"></div>
+      <div class="mp-actions"><button class="btn" id="mp-cancel">取消</button><button class="btn btn-primary" id="mp-ok" disabled>确定</button></div>`;
+    mask.appendChild(picker);
+    document.body.appendChild(mask);
+
+    const pathEl = picker.querySelector('#mp-path');
+    const listEl = picker.querySelector('#mp-list');
+    const okBtn = picker.querySelector('#mp-ok');
+    const cancelBtn = picker.querySelector('#mp-cancel');
+    const upBtn = picker.querySelector('#mp-up');
+
+    const loadDir = async (dir) => {
+      currentDir = dir;
+      pathEl.textContent = dir;
+      listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--gray-400)">加载中...</div>';
+      selectedItem = null;
+      okBtn.disabled = true;
+      try {
+        const resp = await fetch(this.repoServerUrl + '/api/files?dir=' + encodeURIComponent(dir));
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        currentDir = json.dir;
+        pathEl.textContent = json.dir;
+        listEl.innerHTML = '';
+        for (const item of json.items) {
+          if (item.type === 'file' && !MEDIA_EXTS.includes(item.ext)) continue;
+          const el = document.createElement('div');
+          el.className = 'mp-item';
+          const icon = document.createElement('span');
+          icon.className = 'mp-item-icon';
+          if (item.type === 'dir') icon.textContent = '📁';
+          else if (['.mp4','.webm','.ogg','.mov','.avi'].includes(item.ext)) icon.textContent = '📹';
+          else if (['.mp3','.wav','.aac'].includes(item.ext)) icon.textContent = '🔊';
+          else icon.textContent = '🖼';
+          el.appendChild(icon);
+          const name = document.createElement('span');
+          name.className = 'mp-item-name';
+          name.textContent = item.name;
+          el.appendChild(name);
+          el.onclick = () => {
+            if (item.type === 'dir') { loadDir(item.path); return; }
+            listEl.querySelectorAll('.mp-item').forEach(e => e.classList.remove('selected'));
+            el.classList.add('selected');
+            selectedItem = item;
+            okBtn.disabled = false;
+          };
+          el.ondblclick = () => {
+            if (item.type === 'dir') { loadDir(item.path); return; }
+            selectedItem = item;
+            confirmSelection();
+          };
+          listEl.appendChild(el);
+        }
+        if (listEl.children.length === 0) {
+          listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--gray-400)">无媒体文件</div>';
+        }
+      } catch (e) {
+        listEl.innerHTML = '<div style="padding:16px;text-align:center;color:#ef4444">' + e.message + '</div>';
       }
-      // Step 5: build absolute path
-      const absPath = dirPath.replace(/[\\/]$/, '') + '\\' + relParts.join('\\');
-      const file = await fileHandle.getFile();
-      const isVideo = file.type.startsWith('video/');
-      const mediaType = isVideo ? 'video' : 'image';
-      // Cache blob URL for current session preview
-      if (!this._mediaBlobUrls) this._mediaBlobUrls = {};
-      this._mediaBlobUrls[absPath] = URL.createObjectURL(file);
+    };
+
+    const confirmSelection = () => {
+      if (!selectedItem) return;
+      mask.remove();
+      const absPath = selectedItem.path;
+      const ext = selectedItem.ext.toLowerCase();
+      const isVideo = ['.mp4','.webm','.ogg','.mov','.avi'].includes(ext);
+      const isAudio = ['.mp3','.wav','.aac'].includes(ext);
+      const mediaType = isVideo ? 'video' : isAudio ? 'audio' : 'image';
       const tag = `{{"${mediaType}":"${absPath.replace(/\\/g, '\\\\')}","${mediaType}.width":"100%"}}`;
       this.pushUndo();
       const node = getNodeByPath(this.data, nodePath);
@@ -4681,16 +5113,27 @@ class App {
       }
       this.renderCurrentView();
       this.markDirty();
-      toast('已插入' + (isVideo ? '视频' : '图片'));
-    } catch (e) {
-      if (e.name !== 'AbortError') toast('插入失败：' + e.message);
-    }
+      toast('已插入' + (isVideo ? '视频' : isAudio ? '音频' : '图片'));
+    };
+
+    upBtn.onclick = () => {
+      const parent = currentDir.replace(/[\\/][^\\/]+$/, '');
+      if (parent && parent !== currentDir) loadDir(parent);
+    };
+    cancelBtn.onclick = () => mask.remove();
+    okBtn.onclick = confirmSelection;
+    mask.onclick = (e) => { if (e.target === mask) mask.remove(); };
+
+    loadDir(currentDir);
   }
 
   resolveMediaSrc(src) {
     if (this._mediaBlobUrls && this._mediaBlobUrls[src]) return this._mediaBlobUrls[src];
     if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('file:')) return src;
-    // Convert absolute path (e.g. E:\xxx\yyy.jpg) to file:/// URL
+    // Use server proxy for local absolute paths
+    if (/^[A-Za-z]:[\\/]/.test(src) && this.repoServerUrl) {
+      return this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(src);
+    }
     if (/^[A-Za-z]:[\\/]/.test(src)) return 'file:///' + src.replace(/\\/g, '/');
     return src;
   }
@@ -4734,12 +5177,16 @@ class App {
     document.getElementById('stat-save').style.color = '#ef4444';
     this.debouncedAutoSave();
     this.debouncedRefreshRefs();
+    this._debouncedRenderOpenDocs();
   }
   markClean() {
     this.dirty = false;
     document.getElementById('stat-save').textContent = '✓ 已保存';
     document.getElementById('stat-save').style.color = '#22c55e';
+    this._debouncedRenderOpenDocs();
   }
+
+  _debouncedRenderOpenDocs = debounce(() => this._renderOpenDocs(), 500);
 
   debouncedAutoSave = debounce(() => this.autoSave(), 5000);
   debouncedRefreshRefs = debounce(() => {
@@ -4749,50 +5196,60 @@ class App {
   }, 300);
 
   async autoSave() {
-    if (!this.dirty) return;
+    // Save all dirty sessions
     if (this.currentView === 'outline') this.outlineView.syncAll();
     else if (this.currentView === 'document') this.documentView.syncAll();
     else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
-    this.data.meta.modified = new Date().toISOString();
+    let anyDirty = false;
     try {
-      await dbSave('current', this.data);
-      // Also save as named doc for cross-file references
-      const docTitle = this.data.meta?.title;
-      if (docTitle && docTitle !== '未命名文档') {
-        await dbSaveNamedDoc(docTitle, this.data);
+      for (const s of this.sessions) {
+        if (!s.dirty) continue;
+        anyDirty = true;
+        s.data.meta.modified = new Date().toISOString();
+        await dbSave('session_' + s.id, s.data);
+        const docTitle = s.data.meta?.title;
+        if (docTitle && docTitle !== '未命名文档') {
+          await dbSaveNamedDoc(docTitle, s.data);
+        }
       }
-      this.markClean();
+      // Save session index
+      const index = this.sessions.map(s => ({
+        id: s.id, fileName: s.fileName, filePath: s.filePath, dirty: s.dirty
+      }));
+      await dbSave('sessions_index', { list: index, activeId: this.activeSessionId });
+      if (anyDirty || this.dirty) this.markClean();
     } catch (e) { console.error('Auto-save failed:', e); }
   }
 
   // File operations
   async newFile() {
-    if (this.dirty && !confirm('当前文档未保存，是否新建？')) return;
-    this.data = createDefaultData();
-    this.fileHandle = null;
-    this.fileName = '未命名文档';
-    document.getElementById('doc-title').value = this.fileName;
-    document.title = 'UDD - ' + this.fileName;
-    this.undoMgr = new UndoManager();
-    this.undoMgr.push(this.data);
-    this.outlineView.focusPath = 't1-1';
+    const newData = createDefaultData();
+    const baseName = '未命名文档';
+    let name = baseName;
+    let n = 1;
+    while (this.sessions.some(s => s.fileName === name)) {
+      n++;
+      name = baseName + ' ' + n;
+    }
+    newData.meta.title = name;
+    this._addSessionAndSwitch(name, newData, null, null);
+    this.outlineView.focusPath = 't0-1';
     this.renderCurrentView();
-    this.markDirty();
     toast('已新建文档');
   }
 
   async openFile() {
     try {
-      let file;
+      let file, handle = null;
       if (window.showOpenFilePicker) {
-        const [handle] = await window.showOpenFilePicker({
+        const [h] = await window.showOpenFilePicker({
           types: [
             { description: 'UDD文档', accept: { 'application/zip': ['.udd'] } },
             { description: 'JSON文件', accept: { 'application/json': ['.json'] } }
           ]
         });
-        this.fileHandle = handle;
-        file = await handle.getFile();
+        handle = h;
+        file = await h.getFile();
       } else {
         file = await new Promise(resolve => {
           const input = document.createElement('input');
@@ -4805,21 +5262,16 @@ class App {
 
       if (!file) return;
 
+      let data;
       if (file.name.endsWith('.json')) {
         const text = await file.text();
-        this.data = JSON.parse(text);
+        data = JSON.parse(text);
       } else {
-        this.data = await parseUDDBlob(file);
+        data = await parseUDDBlob(file);
       }
 
-      this.fileName = this.data.meta?.title || file.name.replace(/\.(udd|json)$/, '');
-      document.getElementById('doc-title').value = this.fileName;
-      document.title = 'UDD - ' + this.fileName;
-      this.undoMgr = new UndoManager();
-      this.undoMgr.push(this.data);
-      this.outlineView.focusPath = null;
-      this.renderCurrentView();
-      this.markClean();
+      const name = data.meta?.title || file.name.replace(/\.(udd|json)$/, '');
+      this._addSessionAndSwitch(name, data, handle, null);
       toast('已打开: ' + file.name);
     } catch (e) {
       if (e.name !== 'AbortError') toast('打开失败: ' + e.message);
@@ -4834,20 +5286,26 @@ class App {
     this.data.meta.title = this.fileName;
 
     try {
+      const blob = await createUDDBlob(this.data);
       if (this.fileHandle) {
-        const blob = await createUDDBlob(this.data);
         const writable = await this.fileHandle.createWritable();
         await writable.write(blob);
         await writable.close();
-        // Save named doc for cross-file references
-        if (this.fileName && this.fileName !== '未命名文档') {
-          await dbSaveNamedDoc(this.fileName, this.data);
-        }
-        this.markClean();
-        toast('已保存');
+      } else if (this._activeSession && this._activeSession.filePath && this.repoServerUrl) {
+        // Write back to original file via server API
+        const resp = await fetch(this.repoServerUrl + '/api/writefile?path=' + encodeURIComponent(this._activeSession.filePath), {
+          method: 'POST', body: blob
+        });
+        if (!resp.ok) throw new Error('服务器写入失败: HTTP ' + resp.status);
       } else {
         await this.saveFileAs();
+        return;
       }
+      if (this.fileName && this.fileName !== '未命名文档') {
+        await dbSaveNamedDoc(this.fileName, this.data);
+      }
+      this.markClean();
+      toast('已保存');
     } catch (e) {
       if (e.name !== 'AbortError') toast('保存失败: ' + e.message);
     }
@@ -5096,27 +5554,25 @@ class App {
   async _repoItemDblClick(item) {
     if (item.type === 'dir') return;
     if (item.ext === '.udd' || item.ext === '.json') {
-      // Open this file
+      // Check if already open
+      const existing = this.sessions.find(s => s.filePath === item.path);
+      if (existing) {
+        this.switchSession(existing.id);
+        return;
+      }
       try {
-        if (this.dirty && !confirm('当前文档未保存，是否打开新文档？')) return;
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(item.path));
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        let data;
         if (item.ext === '.json') {
           const text = await resp.text();
-          this.data = JSON.parse(text);
+          data = JSON.parse(text);
         } else {
           const blob = await resp.blob();
-          this.data = await parseUDDBlob(blob);
+          data = await parseUDDBlob(blob);
         }
-        this.fileName = this.data.meta?.title || item.name.replace(/\.(udd|json)$/, '');
-        document.getElementById('doc-title').value = this.fileName;
-        document.title = 'UDD - ' + this.fileName;
-        this.fileHandle = null;
-        this.undoMgr = new UndoManager();
-        this.undoMgr.push(this.data);
-        this.outlineView.focusPath = null;
-        this.renderCurrentView();
-        this.markClean();
+        const name = item.name.replace(/\.(udd|json)$/, '');
+        this._addSessionAndSwitch(name, data, null, item.path);
         toast('已打开: ' + item.name);
       } catch (e) {
         toast('打开失败: ' + e.message);
