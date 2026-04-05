@@ -30,7 +30,9 @@ js/
                      仓库面板、文件操作、快捷键）、PWA 清单、启动初始化
 
 脚本加载顺序（有依赖关系）
-  1. jszip（CDN）
+  1. js/jszip.min.js（本地文件，已下载，无需联网）
+     来源：https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js
+     作用：读写 .udd 文件（ZIP 格式压缩包）
   2. udd-data.js
   3. udd-ref.js（依赖 udd-data.js）
   4. udd-media.js（依赖 udd-data.js）
