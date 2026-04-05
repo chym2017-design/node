@@ -53,6 +53,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #sidebar-toggle{background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)}
 #sidebar-toggle:hover{background:var(--gray-100);color:var(--text)}
 #sidebar-toggle.active{background:var(--blue-50);color:var(--primary);border-color:var(--blue-200)}
+#repo-toggle:hover{background:var(--gray-100);color:var(--text)}
+#repo-toggle.active{background:var(--blue-50);color:var(--primary);border-color:var(--blue-200)}
 #fold-level-btn,#fold-all-btn{background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)}
 #fold-level-btn:hover,#fold-all-btn:hover{background:var(--gray-100);color:var(--text)}
 #tool-fold-n{width:32px;font-size:12px;padding:3px 2px;border:1px solid var(--gray-200);border-radius:var(--radius);text-align:center;color:var(--gray-500)}
@@ -236,9 +238,27 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .mm-ctx div:hover{background:var(--gray-100)}
 .mm-ctx hr{margin:3px 0;border:none;border-top:1px solid var(--gray-200)}
 
+/* ===== REPOSITORY PANEL (left side) ===== */
+#repo-panel{width:280px;border-right:1px solid var(--border);display:none;flex-direction:column;background:var(--bg);flex-shrink:0;overflow:hidden}
+#repo-panel.active{display:flex}
+#repo-panel .repo-header{padding:10px 14px;font-size:13px;font-weight:600;color:var(--gray-600);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+#repo-panel .repo-header button{background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:16px;padding:0 4px}
+#repo-panel .repo-header button:hover{color:var(--text)}
+#repo-path{padding:4px 10px;font-size:11px;color:var(--gray-500);background:var(--gray-50);border-bottom:1px solid var(--gray-100);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;user-select:none}
+#repo-path:hover{background:var(--gray-100);color:var(--text)}
+#repo-list{flex:1;overflow:auto;padding:4px 0}
+.repo-item{display:flex;align-items:center;padding:4px 12px;font-size:13px;color:var(--text);cursor:pointer;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none;border-radius:0}
+.repo-item:hover{background:var(--gray-100)}
+.repo-item.active{background:var(--blue-50);color:var(--primary)}
+.repo-item-icon{font-size:14px;flex-shrink:0;width:18px;text-align:center}
+.repo-item-name{flex:1;overflow:hidden;text-overflow:ellipsis}
+.repo-item-badge{font-size:10px;color:var(--gray-400);flex-shrink:0}
+#repo-status{padding:6px 12px;font-size:11px;color:var(--gray-400);border-top:1px solid var(--gray-100);text-align:center}
+
 /* ===== RESPONSIVE ===== */
 @media(max-width:768px){
   #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:100;box-shadow:-4px 0 20px rgba(0,0,0,.1)}
+  #repo-panel{position:absolute;left:0;top:0;bottom:0;z-index:100;box-shadow:4px 0 20px rgba(0,0,0,.1)}
   .doc-page{padding:24px 20px;margin:10px}
   #outline-view{padding:10px 8px 60px}
   #toolbar{padding:0 6px}
@@ -331,6 +351,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
       <button class="view-tab" data-view="mindmap" onclick="app.switchView('mindmap')">思维导图</button>
       <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
       <div class="spacer"></div>
+      <button id="repo-toggle" onclick="app.toggleRepo()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">仓库</button>
       <input id="tool-fold-n" type="number" value="5" min="1" max="20" title="展开层数">
       <button id="fold-level-btn" onclick="app.expandToLevel()">展开n层</button>
       <button id="fold-all-btn" onclick="app.expandAll()">全部展开</button>
@@ -340,6 +361,19 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
   <!-- MAIN -->
   <main id="main">
+    <div id="repo-panel">
+      <div class="repo-header">
+        <span>仓库</span>
+        <span style="display:flex;gap:4px;align-items:center">
+          <button onclick="app.repoGoUp()" title="上级目录">↑</button>
+          <button onclick="app.repoRefresh()" title="刷新">⟲</button>
+          <button onclick="app.toggleRepo()" title="关闭">×</button>
+        </span>
+      </div>
+      <div id="repo-path" onclick="app.repoPromptDir()" title="点击修改目录"></div>
+      <div id="repo-list"></div>
+      <div id="repo-status"></div>
+    </div>
     <div id="editor">
       <div id="outline-view" class="active"></div>
       <div id="mindmap-view"></div>
@@ -747,12 +781,17 @@ function isFullNodeRef(refStr) {
   return ref.nodePath && !ref.field && !ref.slice && !ref.matchExpr;
 }
 
-// Get the source node for a full node reference
+// Get the source node for a full node reference (local or cross-doc)
 function getFullRefNode(data, refStr) {
   if (!isRef(refStr)) return null;
   const ref = parseRef(refStr);
   if (!ref.nodePath || ref.field || ref.slice || ref.matchExpr) return null;
-  if (ref.docName) return null; // cross-doc not supported for full clone yet
+  if (ref.docName) {
+    // Cross-doc full ref: look up from cache synchronously
+    const docData = _refDocCache[ref.docName];
+    if (!docData) return null;  // not loaded yet — will show as loading
+    return findRefNode(docData, ref.nodePath);
+  }
   return findRefNode(data, ref.nodePath);
 }
 
@@ -924,20 +963,27 @@ async function resolveRefAsync(data, refStr) {
 
   if (!ref.docName) return resolveRef(data, refStr);
 
-  // Cross-file: load from IndexedDB
+  // Cross-file: load from cache, IndexedDB, or local server
   let docData = _refDocCache[ref.docName];
   if (!docData) {
+    // Try IndexedDB first
     try {
       const saved = await dbLoad(ref.docName);
       if (saved && saved.data) {
         docData = saved.data;
         _refDocCache[ref.docName] = docData;
-      } else {
-        return '#DOC!';
       }
-    } catch (e) {
-      return '#DOC!';
+    } catch (e) { /* skip */ }
+
+    // If not in IndexedDB, try loading from local server
+    if (!docData) {
+      try {
+        docData = await _loadDocFromServer(ref.docName);
+        if (docData) _refDocCache[ref.docName] = docData;
+      } catch (e) { /* skip */ }
     }
+
+    if (!docData) return '#DOC!';
   }
 
   // Rebuild refStr without docName for local resolution
@@ -950,6 +996,44 @@ async function resolveRefAsync(data, refStr) {
   if (ref.slice) localRef += '(' + ref.slice[0] + ',' + ref.slice[1] + ')';
 
   return resolveRef(docData, localRef);
+}
+
+// Try to load a document from the local server by name or path
+async function _loadDocFromServer(docName) {
+  // Determine server URL from app instance or localStorage
+  const serverUrl = (typeof app !== 'undefined' && app.repoServerUrl) || localStorage.getItem('udd_server_url') || '';
+  if (!serverUrl) return null;
+  const repoDir = (typeof app !== 'undefined' && app.repoDir) || localStorage.getItem('udd_repo_dir') || '';
+
+  // Try several path patterns
+  const candidates = [];
+  // If docName looks like an absolute path (D:\...), use it directly
+  if (/^[A-Za-z]:[\\/]/.test(docName)) {
+    candidates.push(docName);
+    if (!docName.endsWith('.udd')) candidates.push(docName + '.udd');
+  } else {
+    // Try as filename in repo dir
+    if (repoDir) {
+      candidates.push(repoDir + '/' + docName + '.udd');
+      candidates.push(repoDir + '\\' + docName + '.udd');
+      candidates.push(repoDir + '/' + docName + '.json');
+    }
+  }
+
+  for (const filePath of candidates) {
+    try {
+      const resp = await fetch(serverUrl + '/api/readfile?path=' + encodeURIComponent(filePath), { signal: AbortSignal.timeout(3000) });
+      if (!resp.ok) continue;
+      if (filePath.endsWith('.json')) {
+        const text = await resp.text();
+        return JSON.parse(text);
+      } else {
+        const blob = await resp.blob();
+        return await parseUDDBlob(blob);
+      }
+    } catch (e) { continue; }
+  }
+  return null;
 }
 
 function getDisplayValue(data, node, field) {
@@ -1003,6 +1087,14 @@ function resolveNodeForRender(data, node, path, level) {
     if (srcChildKeys.length > 0) {
       desc.sourceChildren = srcChildKeys.map(k => ({ key: k, node: sourceNode[k], level: getLevel(k) }));
     }
+  } else if (fullRef && !sourceNode) {
+    // Full node ref but source not loaded yet (cross-doc async)
+    // Trigger async loading; show placeholder for now
+    desc.displayContent = '#LOADING...';
+    desc.displayBody = '';
+    desc.hasBody = false;
+    desc.bodyEditable = false;
+    desc._needsAsyncLoad = true;
   } else if (isContentRef) {
     // Field ref (=t1-1.content etc): only content comes from ref
     desc.displayContent = resolveRef(data, raw);
@@ -4191,6 +4283,11 @@ class App {
     this.lastBgColor = '#ffffff';
     this.savedSelection = null;
 
+    // Repository panel state
+    this.repoDir = null;       // current directory path
+    this.repoServerUrl = '';   // e.g. 'http://localhost:8080'
+    this._repoFiles = [];      // cached file list
+
     // Format switches
     this.outlineFmt = { font: true, font_size: true, color: true, bold: true,
       italic: false, underline: false, strikethrough: false, background_color: false, text_align: false, tree_lines: false };
@@ -4844,6 +4941,206 @@ class App {
     if (ctrl && e.key === 'b') { e.preventDefault(); this.toggleStyle('bold'); }
     if (ctrl && e.key === 'i') { e.preventDefault(); this.toggleStyle('italic'); }
     if (ctrl && e.key === 'u') { e.preventDefault(); this.toggleStyle('underline'); }
+  }
+
+  // ================================================================
+  //  REPOSITORY PANEL
+  // ================================================================
+  toggleRepo() {
+    const panel = document.getElementById('repo-panel');
+    const btn = document.getElementById('repo-toggle');
+    panel.classList.toggle('active');
+    btn.classList.toggle('active');
+    if (panel.classList.contains('active') && !this.repoDir) {
+      this._detectServer();
+    }
+  }
+
+  async _detectServer() {
+    // Try to detect local server
+    const tryUrls = [
+      window.location.origin,  // if served from server.js
+      'http://localhost:8080',
+      'http://localhost:3000',
+      'http://127.0.0.1:8080',
+    ];
+    for (const base of tryUrls) {
+      try {
+        const resp = await fetch(base + '/api/root', { signal: AbortSignal.timeout(1500) });
+        if (resp.ok) {
+          const json = await resp.json();
+          this.repoServerUrl = base;
+          this.repoDir = json.root;
+          localStorage.setItem('udd_server_url', base);
+          localStorage.setItem('udd_repo_dir', this.repoDir);
+          this._renderRepoList();
+          return;
+        }
+      } catch (e) { /* skip */ }
+    }
+    // No server found
+    const savedUrl = localStorage.getItem('udd_server_url');
+    if (savedUrl) {
+      this.repoServerUrl = savedUrl;
+      this.repoDir = localStorage.getItem('udd_repo_dir') || '';
+    }
+    document.getElementById('repo-status').textContent = '未连接服务器。运行: node server.js';
+    document.getElementById('repo-path').textContent = '点击此处配置服务器地址';
+  }
+
+  async repoGoUp() {
+    if (!this.repoDir || !this.repoServerUrl) return;
+    try {
+      const resp = await fetch(this.repoServerUrl + '/api/files?dir=' + encodeURIComponent(this.repoDir));
+      const json = await resp.json();
+      if (json.parent && json.parent !== this.repoDir) {
+        this.repoDir = json.parent;
+        this._renderRepoList();
+      }
+    } catch (e) { toast('无法访问: ' + e.message); }
+  }
+
+  repoRefresh() {
+    this._renderRepoList();
+  }
+
+  repoPromptDir() {
+    const newDir = prompt('输入目录路径:', this.repoDir || 'D:\\projects\\node');
+    if (newDir) {
+      this.repoDir = newDir;
+      localStorage.setItem('udd_repo_dir', newDir);
+      this._renderRepoList();
+    }
+    if (!this.repoServerUrl) {
+      const url = prompt('输入服务器地址:', 'http://localhost:8080');
+      if (url) {
+        this.repoServerUrl = url.replace(/\/+$/, '');
+        localStorage.setItem('udd_server_url', this.repoServerUrl);
+        this._renderRepoList();
+      }
+    }
+  }
+
+  async _renderRepoList() {
+    const listEl = document.getElementById('repo-list');
+    const pathEl = document.getElementById('repo-path');
+    const statusEl = document.getElementById('repo-status');
+    if (!this.repoDir || !this.repoServerUrl) {
+      pathEl.textContent = '点击配置目录';
+      listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--gray-400);font-size:12px">请先运行 node server.js<br>然后刷新此页面</div>';
+      return;
+    }
+    pathEl.textContent = this.repoDir;
+    statusEl.textContent = '加载中...';
+    try {
+      const resp = await fetch(this.repoServerUrl + '/api/files?dir=' + encodeURIComponent(this.repoDir));
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const json = await resp.json();
+      this.repoDir = json.dir;
+      this._repoFiles = json.items;
+      listEl.innerHTML = '';
+
+      for (const item of json.items) {
+        const el = document.createElement('div');
+        el.className = 'repo-item';
+
+        const icon = document.createElement('span');
+        icon.className = 'repo-item-icon';
+        if (item.type === 'dir') icon.textContent = '📁';
+        else if (item.ext === '.udd') icon.textContent = '📄';
+        else if (item.ext === '.json') icon.textContent = '📋';
+        else if (item.ext === '.md') icon.textContent = '📝';
+        else if (['.png','.jpg','.jpeg','.gif','.svg','.webp'].includes(item.ext)) icon.textContent = '🖼';
+        else icon.textContent = '📃';
+        el.appendChild(icon);
+
+        const name = document.createElement('span');
+        name.className = 'repo-item-name';
+        name.textContent = item.name;
+        el.appendChild(name);
+
+        if (item.ext === '.udd') {
+          const badge = document.createElement('span');
+          badge.className = 'repo-item-badge';
+          badge.textContent = 'UDD';
+          el.appendChild(badge);
+        }
+
+        el.onclick = () => this._repoItemClick(item);
+        el.ondblclick = () => this._repoItemDblClick(item);
+        listEl.appendChild(el);
+      }
+
+      const uddCount = json.items.filter(i => i.ext === '.udd').length;
+      statusEl.textContent = json.items.length + ' 项' + (uddCount > 0 ? '，' + uddCount + ' 个UDD文档' : '');
+
+      // Preload all .udd files in this directory into ref cache
+      this._preloadRepoUDDs(json.items.filter(i => i.ext === '.udd'));
+
+    } catch (e) {
+      listEl.innerHTML = '<div style="padding:16px;text-align:center;color:#ef4444;font-size:12px">加载失败: ' + e.message + '</div>';
+      statusEl.textContent = '错误';
+    }
+  }
+
+  _repoItemClick(item) {
+    if (item.type === 'dir') {
+      this.repoDir = item.path;
+      this._renderRepoList();
+    }
+    // Highlight active
+    document.querySelectorAll('.repo-item').forEach(el => el.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+  }
+
+  async _repoItemDblClick(item) {
+    if (item.type === 'dir') return;
+    if (item.ext === '.udd' || item.ext === '.json') {
+      // Open this file
+      try {
+        if (this.dirty && !confirm('当前文档未保存，是否打开新文档？')) return;
+        const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(item.path));
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (item.ext === '.json') {
+          const text = await resp.text();
+          this.data = JSON.parse(text);
+        } else {
+          const blob = await resp.blob();
+          this.data = await parseUDDBlob(blob);
+        }
+        this.fileName = this.data.meta?.title || item.name.replace(/\.(udd|json)$/, '');
+        document.getElementById('doc-title').value = this.fileName;
+        document.title = 'UDD - ' + this.fileName;
+        this.fileHandle = null;
+        this.undoMgr = new UndoManager();
+        this.undoMgr.push(this.data);
+        this.outlineView.focusPath = null;
+        this.renderCurrentView();
+        this.markClean();
+        toast('已打开: ' + item.name);
+      } catch (e) {
+        toast('打开失败: ' + e.message);
+      }
+    }
+  }
+
+  // Preload .udd files into the cross-file reference cache
+  async _preloadRepoUDDs(uddFiles) {
+    for (const item of uddFiles) {
+      const docName = item.name.replace(/\.udd$/, '');
+      if (_refDocCache[docName]) continue; // already cached
+      try {
+        const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(item.path));
+        if (!resp.ok) continue;
+        const blob = await resp.blob();
+        const docData = await parseUDDBlob(blob);
+        _refDocCache[docName] = docData;
+        // Also cache with full path as key
+        _refDocCache[item.path] = docData;
+      } catch (e) { /* skip */ }
+    }
+    // Re-resolve async refs in current view
+    this._resolveAsyncRefs(this.currentView === 'outline' ? this.outlineView.el : this.documentView.el);
   }
 }
 
