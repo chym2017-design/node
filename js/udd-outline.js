@@ -101,7 +101,12 @@ class OutlineView {
     content.dataset.field = 'content';
     content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
     content.spellcheck = false;
-    if (desc.hasInlineRefs && desc.inlineSegments) {
+    if (!desc.renderOn) {
+      // Render OFF: show raw content as plain editable text
+      content.textContent = node.content || '';
+      content.contentEditable = 'plaintext-only';
+      if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
+    } else if (desc.hasInlineRefs && desc.inlineSegments) {
       renderInlineSegments(content, desc.inlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), style);
       content.contentEditable = 'false';
       content.classList.add('ref-display');
@@ -158,8 +163,8 @@ class OutlineView {
     row.appendChild(contentWrap);
     div.appendChild(row);
 
-    // Media from content
-    if (hasMediaTag(desc.displayContent)) {
+    // Media from content (render ON only)
+    if (desc.renderOn && hasMediaTag(desc.displayContent)) {
       const mediaDiv = document.createElement('div');
       mediaDiv.className = 'outline-media';
       mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
@@ -172,6 +177,20 @@ class OutlineView {
       const bodyEl = document.createElement('div');
       bodyEl.className = 'outline-body';
       const bodyStyle = this.getBodyStyle(path);
+
+      if (!desc.renderOn) {
+        // Render OFF: show raw body as plain editable text
+        bodyEl.textContent = node.body || '';
+        bodyEl.contentEditable = 'plaintext-only';
+        if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
+        bodyEl.dataset.path = path;
+        bodyEl.dataset.field = 'body';
+        bodyEl.spellcheck = false;
+        bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
+        this.applyStyle(bodyEl, bodyStyle);
+        div.appendChild(bodyEl);
+      } else {
+
       const bodyText = stripMediaTags(desc.displayBody);
 
       if (desc.bodyEditable) {
@@ -201,7 +220,7 @@ class OutlineView {
       this.applyStyle(bodyEl, bodyStyle);
       div.appendChild(bodyEl);
 
-      // Media from body
+      // Media from body (render ON only)
       const bodyMediaSrc = desc.isFullRef ? desc.displayBody : (node.body || '');
       if (hasMediaTag(bodyMediaSrc)) {
         const bodyMediaDiv = document.createElement('div');
@@ -210,6 +229,7 @@ class OutlineView {
         renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'}, {suppressAlign: !fmt.text_align});
         div.appendChild(bodyMediaDiv);
       }
+      } // end render ON body block
     }
 
     // children — node's OWN hide controls visibility

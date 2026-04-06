@@ -110,7 +110,11 @@ class DocumentView {
       contentSpan.dataset.field = 'content';
       contentSpan.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
       contentSpan.spellcheck = false;
-      if (desc.hasInlineRefs && desc.inlineSegments) {
+      if (!desc.renderOn) {
+        contentSpan.textContent = node.content || '';
+        contentSpan.contentEditable = 'plaintext-only';
+        if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
+      } else if (desc.hasInlineRefs && desc.inlineSegments) {
         renderInlineSegments(contentSpan, desc.inlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), style);
         contentSpan.contentEditable = 'false';
         contentSpan.classList.add('ref-display');
@@ -164,8 +168,8 @@ class DocumentView {
 
       nodeDiv.appendChild(heading);
 
-      // Media from content
-      if (hasMediaTag(desc.displayContent)) {
+      // Media from content (render ON only)
+      if (desc.renderOn && hasMediaTag(desc.displayContent)) {
         const mediaDiv = document.createElement('div');
         mediaDiv.className = 'media-inline';
         renderTextWithMedia(desc.displayContent, mediaDiv, {path, field:'content'});
@@ -177,6 +181,18 @@ class DocumentView {
         const bodyDiv = document.createElement('div');
         bodyDiv.className = 'doc-body doc-editable';
         const bodyStyle = this.getBodyStyle(path);
+
+        if (!desc.renderOn) {
+          bodyDiv.textContent = node.body || '';
+          bodyDiv.contentEditable = 'plaintext-only';
+          if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
+          bodyDiv.dataset.path = path;
+          bodyDiv.dataset.field = 'body';
+          bodyDiv.spellcheck = false;
+          this.applyInlineStyle(bodyDiv, bodyStyle);
+          nodeDiv.appendChild(bodyDiv);
+        } else {
+
         const bodyText = stripMediaTags(desc.displayBody);
 
         if (desc.bodyEditable) {
@@ -209,6 +225,7 @@ class DocumentView {
           renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'});
           nodeDiv.appendChild(bodyMediaDiv);
         }
+        } // end render ON body block
       }
 
       container.appendChild(nodeDiv);

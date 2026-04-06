@@ -66,12 +66,16 @@ function getRefTargetPath(data, refStr) {
 
 // Find the full path of a node key in the data tree
 function findFullPath(data, nodeKey) {
-  // If nodeKey contains dots, it's already a path — verify it
   if (nodeKey.includes('.')) {
-    const node = getNodeByPath(data, nodeKey);
-    if (node) return nodeKey;
+    const parts = nodeKey.split('.');
+    // Find the full path of the first segment recursively
+    const rootPath = _findPathRecursive(data, parts[0], '');
+    if (!rootPath) return null;
+    // Build and verify the full path
+    const fullPath = rootPath + '.' + parts.slice(1).join('.');
+    if (getNodeByPath(data, fullPath)) return fullPath;
+    return null;
   }
-  // Single key — search recursively
   return _findPathRecursive(data, nodeKey, '');
 }
 
@@ -359,11 +363,12 @@ function resolveNodeForRender(data, node, path, level) {
     isFullRef: fullRef,
     refStr: isContentRef ? raw : null,
     hasInlineRefs: hasInline,
-    inlineSegments: null,       // [{type:'text'|'ref', value/raw/resolved}]
+    inlineSegments: null,
     contentEditable: !isContentRef && !hasInline,
     bodyEditable: true,
     hide: node.hide || 0,
     hide_body: node.hide_body || 0,
+    renderOn: _renderOn,   // false = show raw text as-is
   };
 
   if (hasInline) {
@@ -591,12 +596,13 @@ function hexToRgb(hex) {
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 function stripMediaTags(text) {
   if (!text) return '';
-  return text.replace(/\{\{.*?\}\}/g, '');
+  // Remove {{...}} media tags but preserve {{=ref}} inline references
+  return text.replace(/\{\{(?!=)(.*?)\}\}/g, '');
 }
 function extractMediaTags(text) {
   if (!text) return '';
   const tags = [];
-  text.replace(/\{\{.*?\}\}/g, m => { tags.push(m); return ''; });
+  text.replace(/\{\{(?!=)(.*?)\}\}/g, m => { tags.push(m); return ''; });
   return tags.join('');
 }
 function hasMediaTag(text) {
