@@ -42,6 +42,7 @@ class App {
     this.documentView = new DocumentView(document.getElementById('document-view'));
     this.sheetView = new SheetView(document.getElementById('sheet-view'));
     this.sheetView.resetWithDefaultData();
+    this.pptView = new PptView(document.getElementById('ppt-view'));
     this.lastFgColor = '#1e293b';
     this.lastBgColor = '#ffffff';
     this.savedSelection = null;
@@ -323,6 +324,8 @@ class App {
       this.mindmapView.render(this.data);
     } else if (this.currentView === 'sheet') {
       this.sheetView.render(this.data);
+    } else if (this.currentView === 'ppt') {
+      this.pptView.render(this.data).catch(e => console.error('PPT render:', e));
     } else {
       this.documentView.render(this.data);
       this._resolveAsyncRefs(this.documentView.el);
@@ -349,6 +352,7 @@ class App {
     document.getElementById('mindmap-view').classList.toggle('active', view === 'mindmap');
     document.getElementById('document-view').classList.toggle('active', view === 'document');
     document.getElementById('sheet-view').classList.toggle('active', view === 'sheet');
+    document.getElementById('ppt-view').classList.toggle('active', view === 'ppt');
     this.syncFmtCheckboxes();
     this.renderCurrentView();
   }

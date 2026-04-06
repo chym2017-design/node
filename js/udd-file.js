@@ -210,6 +210,11 @@ async function createUDDBlob(data) {
     const xlsxBin = app.sheetView.toBinary();
     if (xlsxBin) zip.file('sheets.xlsx', xlsxBin);
   }
+  // Embed ppt-format.json if PPT format exists
+  if (typeof app !== 'undefined' && app.pptView) {
+    const fmt = app.pptView.getFormat();
+    if (fmt) zip.file('ppt-format.json', JSON.stringify(fmt, null, 2));
+  }
   return await zip.generateAsync({ type: 'blob' });
 }
 
@@ -225,6 +230,14 @@ async function parseUDDBlob(blob) {
   if (sheetsFile && typeof app !== 'undefined' && app.sheetView) {
     const xlsxBin = await sheetsFile.async('uint8array');
     app.sheetView.loadFromBinary(xlsxBin);
+  }
+  // Load embedded ppt-format.json if present
+  const pptFile = zip.file('ppt-format.json');
+  if (pptFile && typeof app !== 'undefined' && app.pptView) {
+    try {
+      const pptJson = await pptFile.async('string');
+      app.pptView.setFormat(JSON.parse(pptJson));
+    } catch (e) {}
   }
   return data;
 }
