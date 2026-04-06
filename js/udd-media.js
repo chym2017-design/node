@@ -52,8 +52,14 @@ function renderInlineTable(container, ref) {
     for (let c = startC; c <= endC; c++) {
       const td = document.createElement(r === startR ? 'th' : 'td');
       const addr = colName(c) + (r + 1);
-      const cell = ws[addr];
-      td.textContent = cell ? (cell.w || (cell.v !== undefined ? String(cell.v) : '')) : '';
+      const refKey = ref.sheetName + '!' + addr;
+      const sheetRefs = (typeof app !== 'undefined' && app.data && app.data._sheetRefs) ? app.data._sheetRefs : {};
+      if (sheetRefs[refKey] && typeof resolveRef === 'function') {
+        td.textContent = resolveRef(app.data, sheetRefs[refKey]);
+      } else {
+        const cell = ws[addr];
+        td.textContent = cell ? (cell.w || (cell.v !== undefined ? String(cell.v) : '')) : '';
+      }
       tr.appendChild(td);
     }
     table.appendChild(tr);

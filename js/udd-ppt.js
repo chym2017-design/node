@@ -126,32 +126,29 @@ class PptView {
         layout = group.layout || override.layout || defaultLayout;
         depth = group.depth || override.depth || defaultDepth;
       }
-      const bullets = [], images = [], tables = [];
+      const bullets = [], mediaItems = [];
       for (const itemKey of items) {
         const child = node[itemKey];
         if (!child) continue;
-        await this._collectBullets(child, 0, depth - 2, bullets, images, tables);
+        await this._collectBullets(child, 0, depth - 2, bullets, mediaItems);
       }
       slides.push({
         type: 'content', title: await this._resolveContent(node.content),
         notes: node.body ? await this._resolveContent(node.body) : '',
-        bullets, images, tables, theme, layout, nodePath: path, splitIndex: i
+        bullets, mediaItems, theme, layout, nodePath: path, splitIndex: i
       });
     }
   }
 
   async _buildContentSlide(node, path, depth, layout, theme, baseLevel) {
-    const bullets = [], images = [], tables = [];
+    const bullets = [], mediaItems = [];
     const childKeys = getChildTKeys(node, baseLevel + 1);
     for (const ck of childKeys) {
       const child = node[ck];
       if (!child) continue;
-      await this._collectBullets(child, 0, depth - baseLevel - 1, bullets, images, tables);
+      await this._collectBullets(child, 0, depth - baseLevel - 1, bullets, mediaItems);
     }
-    if (node.body) {
-      this._extractImages(node.body, images);
-      this._extractTables(node.body, tables);
-    }
+    if (node.body) this._collectMediaItems(node.body, mediaItems);
     // Title: for full node refs, use the source node's content as title
     let title = await this._resolveContent(node.content);
     let notes = node.body ? await this._resolveContent(node.body) : '';
@@ -163,14 +160,14 @@ class PptView {
         if (sourceNode.body) notes = await this._resolveContent(sourceNode.body);
         const srcChildKeys = Object.keys(sourceNode).filter(k => isTNode(k)).sort();
         for (const ck of srcChildKeys) {
-          await this._collectBullets(sourceNode[ck], 0, depth - baseLevel - 1, bullets, images, tables);
+          await this._collectBullets(sourceNode[ck], 0, depth - baseLevel - 1, bullets, mediaItems);
         }
       }
     }
-    return { type: 'content', title, notes, bullets, images, tables, theme, layout, nodePath: path };
+    return { type: 'content', title, notes, bullets, mediaItems, theme, layout, nodePath: path };
   }
 
-  async _collectBullets(node, level, maxDepth, bullets, images, tables) {
+  async _collectBullets(node, level, maxDepth, bullets, mediaItems) {
     if (!node || typeof node !== 'object') return;
     const raw = node.content || '';
 
@@ -178,26 +175,24 @@ class PptView {
     if (isRef(raw) && isFullNodeRef(raw)) {
       const sourceNode = await this._resolveFullNodeAsync(raw);
       if (sourceNode && typeof sourceNode === 'object') {
-        await this._collectBullets(sourceNode, level, maxDepth, bullets, images, tables);
+        await this._collectBullets(sourceNode, level, maxDepth, bullets, mediaItems);
         return;
       }
     }
 
     const content = await this._resolveContent(raw);
     if (content) bullets.push({ text: content, level });
-    this._extractImages(raw, images);
-    this._extractTables(raw, tables);
+    this._collectMediaItems(raw, mediaItems);
     if (node.body) {
       const bodyText = await this._resolveContent(node.body);
       const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
       if (bodyDisplay) bullets.push({ text: bodyDisplay, level, isBody: true });
-      this._extractImages(node.body, images);
-      this._extractTables(node.body, tables);
+      this._collectMediaItems(node.body, mediaItems);
     }
     if (level < maxDepth) {
       const childKeys = Object.keys(node).filter(k => isTNode(k)).sort();
       for (const ck of childKeys) {
-        await this._collectBullets(node[ck], level + 1, maxDepth, bullets, images, tables);
+        await this._collectBullets(node[ck], level + 1, maxDepth, bullets, mediaItems);
       }
     }
   }
@@ -219,25 +214,22 @@ class PptView {
     return findRefNode(this.data, ref.nodePath);
   }
 
-  _extractImages(text, images) {
+  // Collect images and tables in order of appearance into mediaItems array
+  _collectMediaItems(text, mediaItems) {
     if (!text) return;
     const re = /\{\{(?!=)(.*?)\}\}/g;
     let m;
     while ((m = re.exec(text)) !== null) {
       const media = parseMediaTag(m[1]);
-      if (media && media.image) images.push(media.image);
-    }
-  }
-
-  _extractTables(text, tables) {
-    if (!text || typeof parseTableRef !== 'function') return;
-    const re = /\{\{(?!=)(.*?)\}\}/g;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const tableRef = parseTableRef(m[1]);
-      if (!tableRef) continue;
-      const rows = this._readTableRows(tableRef);
-      if (rows && rows.length) tables.push({ ref: tableRef, rows });
+      if (media && media.image) {
+        mediaItems.push({ type: 'image', src: media.image });
+      } else if (typeof parseTableRef === 'function') {
+        const tableRef = parseTableRef(m[1]);
+        if (tableRef) {
+          const rows = this._readTableRows(tableRef);
+          if (rows && rows.length) mediaItems.push({ type: 'table', rows });
+        }
+      }
     }
   }
 
@@ -249,13 +241,19 @@ class PptView {
     const startC = this._colIndex(ref.startAddr.match(/^[A-Z]+/)[0]);
     const endR = parseInt(ref.endAddr.match(/\d+/)[0], 10) - 1;
     const endC = this._colIndex(ref.endAddr.match(/^[A-Z]+/)[0]);
+    const sheetRefs = (app.data && app.data._sheetRefs) ? app.data._sheetRefs : {};
     const rows = [];
     for (let r = startR; r <= endR; r++) {
       const row = [];
       for (let c = startC; c <= endC; c++) {
         const addr = this._colName(c) + (r + 1);
-        const cell = ws[addr];
-        row.push(cell ? (cell.w || (cell.v !== undefined ? String(cell.v) : '')) : '');
+        const refKey = ref.sheetName + '!' + addr;
+        if (sheetRefs[refKey] && typeof resolveRef === 'function') {
+          row.push(resolveRef(app.data, sheetRefs[refKey]));
+        } else {
+          const cell = ws[addr];
+          row.push(cell ? (cell.w || (cell.v !== undefined ? String(cell.v) : '')) : '');
+        }
       }
       rows.push(row);
     }
@@ -390,45 +388,47 @@ class PptView {
       return `<div class="slide-bullet" data-level="${b.level}" style="${opacity};${scale}">${this._esc(b.text)}</div>`;
     }).join('');
 
-    const hasImg = slide.images && slide.images.length > 0;
-    const hasTable = slide.tables && slide.tables.length > 0;
-    const imgHTML = hasImg ? slide.images.map(src => {
-      const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(src) : src;
-      return `<img class="slide-img" src="${this._esc(resolved)}" />`;
-    }).join('') : '';
-    const tableHTML = hasTable ? slide.tables.map(tbl => {
-      const rows = tbl.rows || [];
-      return `<table class="slide-table">${rows.map((row, ri) => `<tr>${row.map(cell => ri === 0 ? `<th>${this._esc(cell)}</th>` : `<td>${this._esc(cell)}</td>`).join('')}</tr>`).join('')}</table>`;
-    }).join('') : '';
+    const mediaItems = slide.mediaItems || [];
+    const hasMedia = mediaItems.length > 0;
 
-    // Combine bullets + tables in the main content column
-    const mainColHTML = bulletHTML + (hasTable ? `<div class="slide-tables">${tableHTML}</div>` : '');
+    // Build ordered media HTML (images and tables in appearance order)
+    const buildMediaHTML = (items) => items.map(m => {
+      if (m.type === 'image') {
+        const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
+        return `<img class="slide-img" src="${this._esc(resolved)}" />`;
+      } else {
+        return `<table class="slide-table">${(m.rows || []).map((row, ri) => `<tr>${row.map(cell => ri === 0 ? `<th>${this._esc(cell)}</th>` : `<td>${this._esc(cell)}</td>`).join('')}</tr>`).join('')}</table>`;
+      }
+    }).join('');
+
+    const mediaHTML = buildMediaHTML(mediaItems);
 
     if (layout === 'title_only') {
       return html;
-    } else if (layout === 'two_col_left' && hasImg) {
-      html += `<div class="slide-body"><div class="slide-col">${mainColHTML}</div><div class="slide-col">${imgHTML}</div></div>`;
-    } else if (layout === 'two_col_right' && hasImg) {
-      html += `<div class="slide-body"><div class="slide-col">${imgHTML}</div><div class="slide-col">${mainColHTML}</div></div>`;
+    } else if (layout === 'two_col_left') {
+      html += `<div class="slide-body"><div class="slide-col">${bulletHTML}</div><div class="slide-col" style="overflow:auto">${mediaHTML}</div></div>`;
+    } else if (layout === 'two_col_right') {
+      html += `<div class="slide-body"><div class="slide-col" style="overflow:auto">${mediaHTML}</div><div class="slide-col">${bulletHTML}</div></div>`;
     } else if (layout === 'three_col') {
       const third = Math.ceil(slide.bullets.length / 3);
       const cols = [slide.bullets.slice(0, third), slide.bullets.slice(third, third * 2), slide.bullets.slice(third * 2)];
       html += '<div class="slide-body">';
-      for (const col of cols) {
-        html += '<div class="slide-col">' + col.map(b =>
-          `<div class="slide-bullet" data-level="${b.level}" style="${scale}">${this._esc(b.text)}</div>`
-        ).join('') + '</div>';
+      for (let ci = 0; ci < cols.length; ci++) {
+        // Distribute media: assign each mediaItem to a column by round-robin index
+        const colMedia = mediaItems.filter((_, mi) => mi % 3 === ci);
+        html += `<div class="slide-col">${cols[ci].map(b =>
+          `<div class="slide-bullet" data-level="${b.level}" style="${b.isBody ? 'opacity:.6;font-style:italic' : ''};${scale}">${this._esc(b.text)}</div>`
+        ).join('')}${buildMediaHTML(colMedia)}</div>`;
       }
       html += '</div>';
-      if (hasTable) html += `<div class="slide-tables">${tableHTML}</div>`;
-    } else if (layout === 'image_full' && hasImg) {
-      const imgSrc0 = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(slide.images[0]) : slide.images[0];
+    } else if (layout === 'image_full' && hasMedia && mediaItems[0].type === 'image') {
+      const imgSrc0 = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(mediaItems[0].src) : mediaItems[0].src;
       html = `<img class="slide-img" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.3" src="${this._esc(imgSrc0)}" />
-              <div style="position:relative;z-index:1">${html}<div class="slide-body"><div class="slide-col">${mainColHTML}</div></div></div>`;
+              <div style="position:relative;z-index:1">${html}<div class="slide-body"><div class="slide-col">${bulletHTML}</div></div></div>`;
     } else {
-      // one_col default
-      html += `<div class="slide-body"><div class="slide-col">${mainColHTML}</div>`;
-      if (hasImg) html += `<div class="slide-col" style="max-width:40%">${imgHTML}</div>`;
+      // one_col default — media goes in right column (max-width:40%)
+      html += `<div class="slide-body"><div class="slide-col">${bulletHTML}</div>`;
+      if (hasMedia) html += `<div class="slide-col" style="max-width:40%;overflow:auto">${mediaHTML}</div>`;
       html += '</div>';
     }
     return html;
@@ -590,40 +590,67 @@ class PptView {
 
         // Content based on layout
         const layout = slide.layout || 'one_col';
+        const mediaItems = slide.mediaItems || [];
+        const hasMedia = mediaItems.length > 0;
         const bulletTexts = (slide.bullets || []).map(b => ({
           text: '  '.repeat(b.level) + (b.level === 0 ? '• ' : b.level === 1 ? '◦ ' : '▪ ') + b.text,
           options: { fontSize: 14 - b.level, color: t.text.replace('#', ''), breakLine: true, italic: !!b.isBody }
         }));
 
+        // Helper: add all mediaItems starting at given x,y,w bounds
+        const addMediaItems = (items, x, y, w) => {
+          let curY = y;
+          for (const m of items) {
+            if (m.type === 'image') {
+              try {
+                const src = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
+                if (src && (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('http'))) {
+                  const imgOpts = src.startsWith('data:') ? { data: src } : { path: src };
+                  s.addImage({ ...imgOpts, x, y: curY, w, h: 2.5 });
+                  curY += 2.6;
+                }
+              } catch (e) {}
+            } else if (m.type === 'table' && m.rows && m.rows.length) {
+              try {
+                const tableRows = m.rows.map((row, ri) => row.map(cell => ({
+                  text: cell,
+                  options: ri === 0 ? { bold: true, fill: { color: 'F0F0F0' }, color: t.text.replace('#', '') } : { color: t.text.replace('#', '') }
+                })));
+                s.addTable(tableRows, { x, y: curY, w, fontSize: 11, border: { pt: 0.5, color: 'CCCCCC' } });
+                curY += m.rows.length * 0.3 + 0.2;
+              } catch (e) {}
+            }
+          }
+        };
+
         if (layout === 'title_only') {
           // nothing more
-        } else if ((layout === 'two_col_left' || layout === 'two_col_right') && slide.images && slide.images.length > 0) {
-          const textX = layout === 'two_col_left' ? 0.6 : 7;
-          const imgX = layout === 'two_col_left' ? 7 : 0.6;
-          s.addText(bulletTexts, { x: textX, y: 1.4, w: 5.8, h: 5.5, valign: 'top' });
-          // Note: local images need to be base64 or path — skip external for now
-          try {
-            if (slide.images[0] && slide.images[0].startsWith('data:')) {
-              s.addImage({ data: slide.images[0], x: imgX, y: 1.4, w: 5.5, h: 5 });
-            }
-          } catch (e) {}
+        } else if (layout === 'two_col_left') {
+          s.addText(bulletTexts, { x: 0.6, y: 1.4, w: 5.8, h: 5.5, valign: 'top' });
+          if (hasMedia) addMediaItems(mediaItems, 7, 1.4, 5.5);
+        } else if (layout === 'two_col_right') {
+          if (hasMedia) addMediaItems(mediaItems, 0.6, 1.4, 5.5);
+          s.addText(bulletTexts, { x: 7, y: 1.4, w: 5.8, h: 5.5, valign: 'top' });
         } else if (layout === 'three_col') {
           const third = Math.ceil(bulletTexts.length / 3);
           const cols = [bulletTexts.slice(0, third), bulletTexts.slice(third, third * 2), bulletTexts.slice(third * 2)];
           for (let i = 0; i < 3; i++) {
-            s.addText(cols[i], { x: 0.6 + i * 4.1, y: 1.4, w: 3.8, h: 5.5, valign: 'top' });
+            const colX = 0.6 + i * 4.1;
+            if (cols[i].length) s.addText(cols[i], { x: colX, y: 1.4, w: 3.8, h: 3.5, valign: 'top' });
+            const colMedia = mediaItems.filter((_, mi) => mi % 3 === i);
+            if (colMedia.length) addMediaItems(colMedia, colX, 5.0, 3.8);
           }
+        } else if (layout === 'image_full' && hasMedia && mediaItems[0].type === 'image') {
+          try {
+            const src = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(mediaItems[0].src) : mediaItems[0].src;
+            if (src && src.startsWith('data:')) s.addImage({ data: src, x: 0, y: 0, w: 13.33, h: 7.5 });
+          } catch (e) {}
+          s.addText(bulletTexts, { x: 0.6, y: 1.4, w: 12, h: 5.5, valign: 'top' });
         } else {
-          // one_col
-          const textW = (slide.images && slide.images.length > 0) ? 7.5 : 12;
+          // one_col — bullets left, media right
+          const textW = hasMedia ? 7.5 : 12;
           s.addText(bulletTexts, { x: 0.6, y: 1.4, w: textW, h: 5.5, valign: 'top' });
-          if (slide.images && slide.images.length > 0) {
-            try {
-              if (slide.images[0] && slide.images[0].startsWith('data:')) {
-                s.addImage({ data: slide.images[0], x: 8.3, y: 1.4, w: 4.5, h: 5 });
-              }
-            } catch (e) {}
-          }
+          if (hasMedia) addMediaItems(mediaItems, 8.3, 1.4, 4.5);
         }
 
         // Speaker notes
