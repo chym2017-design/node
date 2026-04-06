@@ -27,16 +27,74 @@ function createDefaultData() {
       "body.paragraph_line": 1.8, "body.paragraph_first_indent": 2,
       hide_t: "t>3", numbering_style: "1.1.1"
     },
+    // 表格→大纲引用
+    "_sheetRefs": {
+      "Sheet1!A2": "=t1-5.t2-1.content",
+      "Sheet1!A3": "=t1-5.t2-2.content",
+      "Sheet1!A4": "=t1-5.t2-3.content"
+    },
+
+    // ── 根节点 ──
     "t0-1": {
-      content: "内容引用示例", hide: 0, hide_body: 0,
-      "t1-1": { content: "源数据：HelloWorld 2026", hide: 0, hide_body: 0,
-        "t2-1": { content: "标题1-1", hide: 0, hide_body: 0 }
-      , body: "标题1的正文" },
-      "t1-2": { content: "=t1-1", hide: 0, hide_body: 0 },
-      "t1-3": { content: "=t1-1.content", hide: 0, hide_body: 0 },
-      "t1-4": { content: "=示例文档.t1-1.content", hide: 0, hide_body: 0 },
-      "t1-5": { content: "=t1-1.content(0,3)", hide: 0, hide_body: 0 },
-      "t1-6": { content: "=t1-1.content.match(/\\d+/).[0]", hide: 0, hide_body: 0 }
+      content: "UDD 统一数据文档", hide: 0, hide_body: 0,
+      body: "UDD 的核心理念：一份数据，多种视图。大纲、思维导图、文档、表格共享同一棵数据树，通过引用实现数据联动。",
+
+      // ── 1. 引用基础 ──
+      "t1-1": {
+        content: "引用基础", hide: 0, hide_body: 0,
+        body: "UDD 中所有引用使用 {{=引用}} 语法。引用可放在内容任意位置，前后可自由添加文字。",
+        "t2-1": { content: "原始数据节点", hide: 0, hide_body: 0, body: "这是一段会被其他节点引用的正文。修改这里，所有引用处同步更新。" },
+        "t2-2": { content: "=t1-1.t2-1", hide: 0, hide_body: 0 },
+        "t2-3": { content: "内容引用：{{=t1-1.t2-1.content}}", hide: 0, hide_body: 0 },
+        "t2-4": { content: "正文引用：{{=t1-1.t2-1.body}}", hide: 0, hide_body: 0 }
+      },
+
+      // ── 2. 引用进阶 ──
+      "t1-2": {
+        content: "引用进阶", hide: 0, hide_body: 0,
+        body: "引用支持截取和正则提取，可从源数据中精确提取所需片段。",
+        "t2-1": { content: "截取前6字：{{=t1-1.t2-1.content(0,6)}}", hide: 0, hide_body: 0 },
+        "t2-2": { content: "正则提取：{{=t1-1.t2-1.body.match(/修改(.+?)，/).[1]}}", hide: 0, hide_body: 0 }
+      },
+
+      // ── 3. 混合内容演示 ──
+      "t1-3": {
+        content: "混合内容演示", hide: 0, hide_body: 0,
+        body: "在同一行中混合手敲文字和多个引用，实现灵活的数据拼接。",
+        "t2-1": { content: "产品「{{=t1-5.t2-1.content}}」库存 {{=Sheet1.B2}} 件，单价 {{=Sheet1.C2}} 元", hide: 0, hide_body: 0 },
+        "t2-2": { content: "源节点：{{=t1-1.t2-1.content}}，正文片段：{{=t1-1.t2-1.body(0,10)}}", hide: 0, hide_body: 0 }
+      },
+
+      // ── 4. 跨文档引用 ──
+      "t1-4": {
+        content: "跨文档引用", hide: 0, hide_body: 0,
+        body: "引用其他 .udd 文件数据。格式：{{=文档名.节点.字段}}。需在同一仓库目录中。",
+        "t2-1": { content: "跨文档数据：{{=测试文档1.t1-1.content}}", hide: 0, hide_body: 0 }
+      },
+
+      // ── 5. 表格↔大纲互引 ──
+      "t1-5": {
+        content: "表格与大纲互引", hide: 0, hide_body: 0,
+        body: "大纲用 {{=Sheet1.B2}} 引用表格单元格，表格用 _sheetRefs 引用大纲节点。切换到「表格」视图查看。",
+        "t2-1": { content: "苹果", hide: 0, hide_body: 0,
+          "t3-1": { content: "数量：{{=Sheet1.B2}}，单价：{{=Sheet1.C2}}", hide: 0, hide_body: 0 }
+        },
+        "t2-2": { content: "香蕉", hide: 0, hide_body: 0,
+          "t3-1": { content: "数量：{{=Sheet1.B3}}，单价：{{=Sheet1.C3}}", hide: 0, hide_body: 0 }
+        },
+        "t2-3": { content: "橙子", hide: 0, hide_body: 0,
+          "t3-1": { content: "数量：{{=Sheet1.B4}}，单价：{{=Sheet1.C4}}", hide: 0, hide_body: 0 }
+        }
+      },
+
+      // ── 6. 设计理念 ──
+      "t1-6": {
+        content: "UDD 设计特点", hide: 0, hide_body: 0,
+        "t2-1": { content: "一份数据，四种视图", hide: 0, hide_body: 0, body: "大纲、思维导图、文档、表格共享同一棵 JSON 数据树，无需重复录入。" },
+        "t2-2": { content: "引用即联动", hide: 0, hide_body: 0, body: "修改源节点，所有引用处自动同步。支持节点级、字段级、跨文档、跨表格引用。" },
+        "t2-3": { content: "离线优先", hide: 0, hide_body: 0, body: "所有资源本地加载，IndexedDB 自动保存，.udd 文件基于 ZIP 格式自包含。" },
+        "t2-4": { content: "结构化存储", hide: 0, hide_body: 0, body: "数据以树形 JSON 存储，支持样式继承、层级折叠、编号系统。" }
+      }
     }
   };
 }
@@ -147,6 +205,11 @@ async function createUDDBlob(data) {
     created: meta.created || '', modified: new Date().toISOString()
   }, null, 2));
   zip.file('view_state.json', JSON.stringify({ last_view: 'outline' }, null, 2));
+  // Embed sheets.xlsx if sheet data exists
+  if (typeof app !== 'undefined' && app.sheetView) {
+    const xlsxBin = app.sheetView.toBinary();
+    if (xlsxBin) zip.file('sheets.xlsx', xlsxBin);
+  }
   return await zip.generateAsync({ type: 'blob' });
 }
 
@@ -156,5 +219,12 @@ async function parseUDDBlob(blob) {
   if (!dataFile) throw new Error('无效的 .udd 文件：缺少 data.json');
   const json = await dataFile.async('string');
   const bottom = JSON.parse(json);
-  return decompressData(bottom);
+  const data = decompressData(bottom);
+  // Load embedded sheets.xlsx if present
+  const sheetsFile = zip.file('sheets.xlsx');
+  if (sheetsFile && typeof app !== 'undefined' && app.sheetView) {
+    const xlsxBin = await sheetsFile.async('uint8array');
+    app.sheetView.loadFromBinary(xlsxBin);
+  }
+  return data;
 }

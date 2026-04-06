@@ -40,6 +40,8 @@ class App {
     this.outlineView = new OutlineView(document.getElementById('outline-view'));
     this.mindmapView = new MindmapView(document.getElementById('mindmap-view'));
     this.documentView = new DocumentView(document.getElementById('document-view'));
+    this.sheetView = new SheetView(document.getElementById('sheet-view'));
+    this.sheetView.resetWithDefaultData();
     this.lastFgColor = '#1e293b';
     this.lastBgColor = '#ffffff';
     this.savedSelection = null;
@@ -319,6 +321,8 @@ class App {
       this._resolveAsyncRefs(this.outlineView.el);
     } else if (this.currentView === 'mindmap') {
       this.mindmapView.render(this.data);
+    } else if (this.currentView === 'sheet') {
+      this.sheetView.render(this.data);
     } else {
       this.documentView.render(this.data);
       this._resolveAsyncRefs(this.documentView.el);
@@ -338,11 +342,13 @@ class App {
     if (this.currentView === 'outline') this.outlineView.syncAll();
     else if (this.currentView === 'document') this.documentView.syncAll();
     else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
+    else if (this.currentView === 'sheet') this.sheetView.syncAll();
     this.currentView = view;
     document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
     document.getElementById('outline-view').classList.toggle('active', view === 'outline');
     document.getElementById('mindmap-view').classList.toggle('active', view === 'mindmap');
     document.getElementById('document-view').classList.toggle('active', view === 'document');
+    document.getElementById('sheet-view').classList.toggle('active', view === 'sheet');
     this.syncFmtCheckboxes();
     this.renderCurrentView();
   }
@@ -910,6 +916,7 @@ class App {
       name = baseName + ' ' + n;
     }
     newData.meta.title = name;
+    this.sheetView.resetWithDefaultData();
     this._addSessionAndSwitch(name, newData, null, null);
     this.outlineView.focusPath = 't0-1';
     this.renderCurrentView();

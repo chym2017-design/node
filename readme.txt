@@ -26,6 +26,11 @@ js/
                      标题层级、正文、引用克隆、内联编辑
   udd-mindmap.js     思维导图视图：MindmapView 类，多种布局（向右/双向/组织架构）、
                      连线样式、配色方案、缩放平移、导出 PNG/SVG
+  xlsx.min.js         SheetJS 库（本地离线），来源 https://cdn.sheetjs.com/xlsx-0.20.3/
+                     作用：读写 xlsx 格式，Excel 兼容复制粘贴
+  udd-sheet.js       表格视图：SheetView 类，网格渲染、单元格编辑、选区、
+                     Excel 兼容复制粘贴、下拉填充、多 Sheet tab 管理、
+                     UDD 引用（=t1-1.content）、SheetJS workbook 交互
   udd-app.js         应用控制器：App 类（多文档会话管理、工具栏、侧边栏、
                      仓库面板、文件操作、快捷键）、PWA 清单、启动初始化
 
@@ -40,7 +45,9 @@ js/
   6. udd-outline.js（依赖 udd-data/ref/media）
   7. udd-document.js（依赖 udd-data/ref/media）
   8. udd-mindmap.js（依赖 udd-data/ref/media）
-  9. udd-app.js（依赖以上全部）
+  9. xlsx.min.js（SheetJS 库，本地，表格视图 Excel 兼容）
+ 10. udd-sheet.js（依赖 xlsx.min.js、udd-ref.js）
+ 11. udd-app.js（依赖以上全部）
 
 启动方式
   node server.js [端口] [根目录]

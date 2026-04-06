@@ -11,6 +11,26 @@ function isRef(value) {
   return typeof value === 'string' && value.startsWith('=') && value.length > 1;
 }
 
+// Check if content has inline {{=ref}} patterns
+function hasInlineRefs(value) {
+  return typeof value === 'string' && value.includes('{{=');
+}
+
+// Parse content with {{=ref}} into segments: [{type:'text',value:...}, {type:'ref',raw:...,resolved:...}]
+function resolveInlineRefs(data, text) {
+  const segments = [];
+  const re = /\{\{(=[^}]+)\}\}/g;
+  let lastIdx = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > lastIdx) segments.push({ type: 'text', value: text.slice(lastIdx, m.index) });
+    const refStr = m[1];
+    segments.push({ type: 'ref', raw: refStr, resolved: resolveRef(data, refStr) });
+    lastIdx = re.lastIndex;
+  }
+  if (lastIdx < text.length) segments.push({ type: 'text', value: text.slice(lastIdx) });
+  return segments;
+}
+
 // Check if a reference is a "full node" reference (e.g. =t1-1, no .field suffix)
 function isFullNodeRef(refStr) {
   if (!isRef(refStr)) return false;
@@ -126,6 +146,20 @@ function nodeToText(node) {
 
 function resolveRef(data, refStr) {
   if (!isRef(refStr)) return refStr;
+
+  // Sheet reference: =Sheet1.B2 format — detect by splitting on '.'
+  const dotIdx = refStr.indexOf('.');
+  if (dotIdx > 1) {
+    const maybeSheet = refStr.slice(1, dotIdx);
+    const maybeAddr = refStr.slice(dotIdx + 1);
+    if (/^[A-Za-z][A-Za-z0-9_]*$/.test(maybeSheet) && /^[A-Z]{1,3}\d{1,7}$/.test(maybeAddr) && !/^t\d+$/.test(maybeSheet)) {
+      if (typeof app !== 'undefined' && app.sheetView) {
+        return String(app.sheetView.getCellValue(maybeSheet, maybeAddr) ?? '');
+      }
+      return '';
+    }
+  }
+
   const ref = parseRef(refStr);
   if (!ref.nodePath) return '#REF!';
 
@@ -164,13 +198,25 @@ function resolveRef(data, refStr) {
 }
 
 function findRefNode(data, nodePath) {
-  // Handle multi-segment paths like "t0-1.t1-1" — walk step by step
+  if (!nodePath) return null;
+  // Try direct path from root first (e.g. t0-1.t1-1.t2-1)
   if (nodePath.includes('.')) {
     const segments = nodePath.split('.');
     let current = data;
+    let ok = true;
     for (const seg of segments) {
-      if (!current || typeof current !== 'object' || !current[seg]) return null;
+      if (!current || typeof current !== 'object' || !current[seg]) { ok = false; break; }
       current = current[seg];
+    }
+    if (ok) return current;
+    // Direct path failed — search for the first segment recursively, then walk the rest
+    const rootKey = segments[0];
+    const found = findNodeRecursive(data, rootKey);
+    if (!found) return null;
+    current = found;
+    for (let i = 1; i < segments.length; i++) {
+      if (!current || typeof current !== 'object' || !current[segments[i]]) return null;
+      current = current[segments[i]];
     }
     return current;
   }
@@ -193,8 +239,18 @@ function findNodeRecursive(obj, targetKey) {
 
 const _refDocCache = {};
 
+function isSheetRef(refStr) {
+  if (!isRef(refStr)) return false;
+  const dotIdx = refStr.indexOf('.');
+  if (dotIdx <= 1) return false;
+  const maybeSheet = refStr.slice(1, dotIdx);
+  const maybeAddr = refStr.slice(dotIdx + 1);
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(maybeSheet) && /^[A-Z]{1,3}\d{1,7}$/.test(maybeAddr) && !/^t\d+$/.test(maybeSheet);
+}
+
 async function resolveRefAsync(data, refStr) {
   if (!isRef(refStr)) return refStr;
+  if (isSheetRef(refStr)) return resolveRef(data, refStr);
   const ref = parseRef(refStr);
   if (!ref.nodePath) return '#REF!';
 
@@ -287,66 +343,70 @@ function getDisplayValue(data, node, field) {
 // ================================================================
 function resolveNodeForRender(data, node, path, level) {
   const raw = node.content || '';
-  // When renderMode is off, treat everything as plain text (no reference resolution)
   const _renderOn = typeof app === 'undefined' || app.renderMode !== false;
-  const isContentRef = _renderOn && isRef(raw);
+  const hasInline = _renderOn && hasInlineRefs(raw);
+  const isContentRef = _renderOn && !hasInline && isRef(raw);
   const fullRef = _renderOn && isFullNodeRef(raw);
   const sourceNode = fullRef ? getFullRefNode(data, raw) : null;
 
   const desc = {
-    // --- Content (from source when fullRef) ---
-    displayContent: '',        // resolved text for title
-    displayBody: '',           // resolved text for body
-    hasBody: false,            // whether body exists
-    sourceChildren: null,      // array of {key, node} from source (null = use own children)
-    sourceNode: sourceNode,    // the source node object (for style inheritance)
-
-    // --- Reference info ---
-    isRef: isContentRef,       // content is any kind of reference
-    isFullRef: fullRef,        // content is a full-node ref (=t1-1)
-    refStr: isContentRef ? raw : null,  // raw ref string
-
-    // --- Editability ---
-    contentEditable: !isContentRef,  // can user edit the content text?
-    bodyEditable: true,        // can user edit the body text? (refs: no)
-
-    // --- Render control (always from the node itself, never from source) ---
+    displayContent: '',
+    displayBody: '',
+    hasBody: false,
+    sourceChildren: null,
+    sourceNode: sourceNode,
+    isRef: isContentRef,
+    isFullRef: fullRef,
+    refStr: isContentRef ? raw : null,
+    hasInlineRefs: hasInline,
+    inlineSegments: null,       // [{type:'text'|'ref', value/raw/resolved}]
+    contentEditable: !isContentRef && !hasInline,
+    bodyEditable: true,
     hide: node.hide || 0,
     hide_body: node.hide_body || 0,
   };
 
-  if (fullRef && sourceNode) {
-    // Full node ref: content & body & children come from source
+  if (hasInline) {
+    // Mixed content: text + {{=ref}} inline references
+    desc.inlineSegments = resolveInlineRefs(data, raw);
+    // Build plain display text for search/export
+    desc.displayContent = desc.inlineSegments.map(s => s.type === 'ref' ? s.resolved : s.value).join('');
+    desc.displayBody = node.body || '';
+    desc.hasBody = !!(node.body);
+    const rawBody = node.body || '';
+    if (hasInlineRefs(rawBody)) {
+      desc.bodyInlineSegments = resolveInlineRefs(data, rawBody);
+      desc.displayBody = desc.bodyInlineSegments.map(s => s.type === 'ref' ? s.resolved : s.value).join('');
+      desc.bodyEditable = false;
+    } else if (isRef(rawBody)) {
+      desc.bodyEditable = false;
+      desc.displayBody = resolveRef(data, rawBody);
+    }
+  } else if (fullRef && sourceNode) {
     desc.displayContent = sourceNode.content || '';
     desc.displayBody = sourceNode.body || '';
     desc.hasBody = !!(sourceNode.body);
     desc.bodyEditable = false;
-    // Collect source children
     const srcChildKeys = getAllTKeys(sourceNode);
     if (srcChildKeys.length > 0) {
       desc.sourceChildren = srcChildKeys.map(k => ({ key: k, node: sourceNode[k], level: getLevel(k) }));
     }
   } else if (fullRef && !sourceNode) {
-    // Full node ref but source not loaded yet (cross-doc async)
-    // Trigger async loading; show placeholder for now
     desc.displayContent = '#LOADING...';
     desc.displayBody = '';
     desc.hasBody = false;
     desc.bodyEditable = false;
     desc._needsAsyncLoad = true;
   } else if (isContentRef) {
-    // Field ref (=t1-1.content etc): only content comes from ref
     desc.displayContent = resolveRef(data, raw);
     desc.displayBody = node.body || '';
     desc.hasBody = !!(node.body);
-    // Body is still owned by the node
     const rawBody = node.body || '';
     if (isRef(rawBody)) {
       desc.bodyEditable = false;
       desc.displayBody = resolveRef(data, rawBody);
     }
   } else {
-    // Normal node: everything is local
     desc.displayContent = raw;
     desc.displayBody = node.body || '';
     desc.hasBody = !!(node.body);
@@ -355,11 +415,41 @@ function resolveNodeForRender(data, node, path, level) {
   return desc;
 }
 
-// Create a clickable reference icon (⟐) with tooltip and jump-to-source
+// Render inline segments (text + {{=ref}}) into a container element
+function renderInlineSegments(container, segments, data, viewInstance, applyStyleFn, baseStyle) {
+  container.innerHTML = '';
+  for (const seg of segments) {
+    if (seg.type === 'text') {
+      const span = document.createElement('span');
+      span.textContent = seg.value;
+      if (applyStyleFn && baseStyle) applyStyleFn(span, baseStyle);
+      container.appendChild(span);
+    } else {
+      const refSpan = document.createElement('span');
+      refSpan.className = 'inline-ref';
+      refSpan.dataset.ref = seg.raw;
+      refSpan.title = seg.raw;
+      // Check if cross-doc async needed
+      const ref = parseRef(seg.raw);
+      if (ref.docName && !isSheetRef(seg.raw)) {
+        refSpan.dataset.refAsync = seg.raw;
+      }
+      refSpan.textContent = seg.resolved;
+      if (seg.resolved.startsWith('#')) refSpan.classList.add('ref-error');
+      if (viewInstance) {
+        const icon = createRefIcon(data, seg.raw, viewInstance);
+        refSpan.appendChild(icon);
+      }
+      container.appendChild(refSpan);
+    }
+  }
+}
+
+// Create a clickable reference icon with tooltip and jump-to-source
 function createRefIcon(data, refStr, viewInstance) {
   const icon = document.createElement('span');
   icon.className = 'ref-icon';
-  icon.textContent = '⟐';
+  icon.textContent = '↗';
 
   const ref = parseRef(refStr);
   const targetPath = getRefTargetPath(data, refStr);

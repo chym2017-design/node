@@ -97,22 +97,29 @@ class OutlineView {
     // content
     const content = document.createElement('div');
     content.className = 'outline-content';
-    const contentText = stripMediaTags(desc.displayContent);
-    renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
     content.dataset.path = path;
     content.dataset.field = 'content';
     content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
     content.spellcheck = false;
-    if (desc.contentEditable) {
+    if (desc.hasInlineRefs && desc.inlineSegments) {
+      renderInlineSegments(content, desc.inlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), style);
+      content.contentEditable = 'false';
+      content.classList.add('ref-display');
+      content.dataset.hasRef = '1';
+    } else if (desc.contentEditable) {
+      const contentText = stripMediaTags(desc.displayContent);
+      renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
       content.contentEditable = 'plaintext-only';
       if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
     } else {
+      const contentText = stripMediaTags(desc.displayContent);
+      renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
       content.contentEditable = 'false';
       content.classList.add('ref-display');
       content.dataset.ref = desc.refStr;
-      if (parseRef(desc.refStr).docName) content.dataset.refAsync = desc.refStr;
+      if (!isSheetRef(desc.refStr) && parseRef(desc.refStr).docName) content.dataset.refAsync = desc.refStr;
       const refIcon = createRefIcon(this.data, desc.refStr, this);
-      content.insertBefore(refIcon, content.firstChild);
+      content.appendChild(refIcon);
     }
     this.applyStyle(content, style);
     const fmt = app && app.outlineFmt ? app.outlineFmt : {};
@@ -457,7 +464,7 @@ class OutlineView {
   // Sync all editable elements to data
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
-      if (el.dataset.ref) return; // skip reference cells
+      if (el.dataset.ref || el.dataset.hasRef) return; // skip reference cells
       const node = getNodeByPath(this.data, el.dataset.path);
       if (!node) return;
       const field = el.dataset.field;
@@ -469,7 +476,7 @@ class OutlineView {
   onInput(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
-    if (el.dataset.ref) return; // skip reference cells
+    if (el.dataset.ref || el.dataset.hasRef) return; // skip reference cells
     const node = getNodeByPath(this.data, el.dataset.path);
     if (node) {
       const media = extractMediaTags(node[el.dataset.field]);
@@ -482,7 +489,7 @@ class OutlineView {
   onFocusOut(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
-    if (el.dataset.ref) return;
+    if (el.dataset.ref || el.dataset.hasRef) return;
     const node = getNodeByPath(this.data, el.dataset.path);
     if (!node) return;
     const val = node[el.dataset.field];
@@ -496,7 +503,22 @@ class OutlineView {
 
   onRefDblClick(e) {
     const el = e.target.closest('.ref-display');
-    if (!el || !el.dataset.ref) return;
+    if (!el) return;
+    if (!el.dataset.ref && !el.dataset.hasRef) return;
+    // For inline ref content, show raw source in a prompt instead of inline edit
+    if (el.dataset.hasRef) {
+      const node = getNodeByPath(this.data, el.dataset.path);
+      if (!node) return;
+      const field = el.dataset.field || 'content';
+      const newVal = prompt('编辑内容（{{=引用}} 语法）:', node[field]);
+      if (newVal !== null && newVal !== node[field]) {
+        node[field] = newVal;
+        app.markDirty();
+        this.render(this.data);
+      }
+      return;
+    }
+    if (!el.dataset.ref) return;
     // Don't enter edit mode if clicking the ref icon
     if (e.target.classList.contains('ref-icon')) return;
     const refStr = el.dataset.ref;

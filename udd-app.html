@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>UDD - 统一数据展示系统</title>
 <link rel="stylesheet" href="css/udd-styles.css">
+<link rel="stylesheet" href="css/udd-sheet.css">
 </head>
 <body>
 <div id="app">
@@ -94,6 +95,7 @@
       <button class="view-tab active" data-view="outline" onclick="app.switchView('outline')">大纲</button>
       <button class="view-tab" data-view="mindmap" onclick="app.switchView('mindmap')">思维导图</button>
       <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
+      <button class="view-tab" data-view="sheet" onclick="app.switchView('sheet')">表格</button>
       <button id="back-btn" onclick="app.goBack()" style="display:none;background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">← 返回</button>
       <div class="spacer"></div>
       <button id="render-toggle" onclick="app.toggleRenderMode()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染 on</button>
@@ -131,6 +133,7 @@
       <div id="outline-view" class="active"></div>
       <div id="mindmap-view"></div>
       <div id="document-view"></div>
+      <div id="sheet-view"></div>
     </div>
 
     <!-- Sidebar (right) -->
@@ -173,6 +176,8 @@
 <script src="js/udd-outline.js"></script>
 <script src="js/udd-document.js"></script>
 <script src="js/udd-mindmap.js"></script>
+<script src="js/xlsx.min.js"></script>
+<script src="js/udd-sheet.js"></script>
 <script src="js/udd-app.js"></script>
 </body>
 </html>
