@@ -54,7 +54,7 @@ class App {
 
     // Format switches
     this.outlineFmt = { font: true, font_size: true, color: true, bold: true,
-      italic: false, underline: false, strikethrough: false, background_color: false, text_align: false, tree_lines: false };
+      italic: false, underline: false, strikethrough: false, background_color: false, text_align: false, tree_lines: false, body_border: false };
     this.documentFmt = { font: true, font_size: true, color: true, bold: true,
       italic: true, underline: true, strikethrough: true, background_color: true, text_align: true, tree_lines: false };
     this.initFmtSwitches();
@@ -208,9 +208,16 @@ class App {
         return;
       }
     }
+    if (fileHandle) {
+      const existing = this.sessions.find(s => s.fileHandle === fileHandle);
+      if (existing) {
+        this.switchSession(existing.id);
+        return;
+      }
+    }
     // Ensure unique fileName (only for new docs without a source file)
     let name = fileName;
-    if (!filePath) {
+    if (!filePath && !fileHandle) {
       let n = 1;
       while (this.sessions.some(s => s.fileName === name)) {
         n++;
@@ -317,6 +324,7 @@ class App {
   }
 
   renderCurrentView() {
+    this._normalizeEmbeddedTagsInData(this.data);
     if (this.currentView === 'outline') {
       this.outlineView.render(this.data);
       this._resolveAsyncRefs(this.outlineView.el);
@@ -329,6 +337,71 @@ class App {
     } else {
       this.documentView.render(this.data);
       this._resolveAsyncRefs(this.documentView.el);
+    }
+  }
+
+  async editSourceField(path, field) {
+    const node = getNodeByPath(this.data, path);
+    if (!node) return;
+    const current = node[field] || '';
+    const next = await this._showSourceEditor(current, field === 'body' ? '编辑正文源码' : '编辑内容源码');
+    if (next === null || next === current) return;
+    this.pushUndo();
+    node[field] = next;
+    this.markDirty();
+    if (this.currentView === 'outline') this.outlineView.focusPath = path;
+    if (this.currentView === 'document') this.documentView.focusPath = path;
+    this.renderCurrentView();
+    this.updateSidebar(path);
+  }
+
+  _showSourceEditor(value, title) {
+    return new Promise(resolve => {
+      const mask = document.createElement('div');
+      mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:10000;display:flex;align-items:center;justify-content:center';
+      const dlg = document.createElement('div');
+      dlg.style.cssText = 'width:min(860px,92vw);background:#fff;border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,.18);padding:14px';
+      dlg.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:15px;font-weight:600">${title}</div>
+          <button type="button" data-act="cancel" style="border:none;background:none;font-size:18px;cursor:pointer;color:#64748b">×</button>
+        </div>
+        <textarea data-role="editor" style="width:100%;height:min(60vh,420px);resize:vertical;border:1px solid #dbe2ea;border-radius:8px;padding:10px;font:13px/1.6 Consolas,Monaco,monospace"></textarea>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+          <button type="button" data-act="cancel" style="padding:6px 14px;border:1px solid #dbe2ea;background:#fff;border-radius:6px;cursor:pointer">取消</button>
+          <button type="button" data-act="ok" style="padding:6px 14px;border:none;background:var(--primary);color:#fff;border-radius:6px;cursor:pointer">确定</button>
+        </div>`;
+      mask.appendChild(dlg);
+      document.body.appendChild(mask);
+      const textarea = dlg.querySelector('[data-role="editor"]');
+      textarea.value = value;
+      textarea.focus();
+      textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+      const close = (result) => { mask.remove(); resolve(result); };
+      dlg.querySelectorAll('[data-act="cancel"]').forEach(btn => btn.onclick = () => close(null));
+      dlg.querySelector('[data-act="ok"]').onclick = () => close(textarea.value);
+      mask.onclick = (e) => { if (e.target === mask) close(null); };
+      textarea.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          close(textarea.value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          close(null);
+        }
+      });
+    });
+  }
+
+  _normalizeEmbeddedTagsInData(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (typeof val === 'string' && val.includes('{{')) {
+        obj[key] = val.replace(/(\{\{(?!=)(.*?)\}\})(\1)+/g, '$1');
+      } else if (val && typeof val === 'object') {
+        this._normalizeEmbeddedTagsInData(val);
+      }
     }
   }
 
@@ -694,6 +767,25 @@ class App {
     });
   }
 
+  // Insert table reference
+  insertTableRef() {
+    const nodePath = this.getCurrentFocusPath();
+    if (!nodePath) { toast('请先选中一个节点'); return; }
+    const field = this.getCurrentFocusField();
+    const sheetNames = (this.sheetView && this.sheetView.workbook) ? this.sheetView.workbook.SheetNames : ['Sheet1'];
+    const defaultSheet = sheetNames[0] || 'Sheet1';
+    const input = prompt('插入表格引用\n格式: 表格名.起始:结束\n例如: Sheet1.A1:C4\n跨文档: 文件名.Sheet1.A1:C4', defaultSheet + '.A1:C4');
+    if (!input) return;
+    this.pushUndo();
+    const node = getNodeByPath(this.data, nodePath);
+    if (!node) return;
+    const tag = '{{' + input + '}}';
+    const curVal = node[field] || '';
+    node[field] = curVal.endsWith(tag) ? curVal : curVal + tag;
+    this.markDirty();
+    this.renderCurrentView();
+  }
+
   // Media insert
   async insertMedia() {
     const nodePath = this.getCurrentFocusPath();
@@ -959,12 +1051,40 @@ class App {
         data = await parseUDDBlob(file);
       }
 
-      const name = data.meta?.title || file.name.replace(/\.(udd|json)$/, '');
+      const name = file.name.replace(/\.(udd|json)$/i, '') || data.meta?.title || '未命名文档';
       this._addSessionAndSwitch(name, data, handle, null);
       toast('已打开: ' + file.name);
     } catch (e) {
       if (e.name !== 'AbortError') toast('打开失败: ' + e.message);
     }
+  }
+
+  // Show save options dialog, returns {embedMedia, embedRefs} or null if cancelled
+  _showSaveOptions() {
+    return new Promise(resolve => {
+      const mask = document.createElement('div');
+      mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:9999;display:flex;align-items:center;justify-content:center';
+      const dlg = document.createElement('div');
+      dlg.style.cssText = 'background:#fff;border-radius:8px;padding:20px 24px;min-width:280px;box-shadow:0 4px 20px rgba(0,0,0,.2)';
+      dlg.innerHTML = `
+        <div style="font-weight:600;font-size:15px;margin-bottom:12px">保存选项</div>
+        <label style="display:block;margin:8px 0;cursor:pointer"><input type="checkbox" id="save-embed-media"> 嵌入媒体（图片/视频/音频文件）</label>
+        <label style="display:block;margin:8px 0;cursor:pointer"><input type="checkbox" id="save-embed-refs"> 嵌入引用（跨文档引用、表格数据）</label>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+          <button id="save-cancel" style="padding:6px 16px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer">取消</button>
+          <button id="save-ok" style="padding:6px 16px;border:none;border-radius:4px;background:var(--primary);color:#fff;cursor:pointer">保存</button>
+        </div>`;
+      mask.appendChild(dlg);
+      document.body.appendChild(mask);
+      dlg.querySelector('#save-cancel').onclick = () => { mask.remove(); resolve(null); };
+      mask.onclick = e => { if (e.target === mask) { mask.remove(); resolve(null); } };
+      dlg.querySelector('#save-ok').onclick = () => {
+        const embedMedia = dlg.querySelector('#save-embed-media').checked;
+        const embedRefs = dlg.querySelector('#save-embed-refs').checked;
+        mask.remove();
+        resolve({ embedMedia, embedRefs });
+      };
+    });
   }
 
   async saveFile() {
@@ -974,14 +1094,17 @@ class App {
     this.data.meta.modified = new Date().toISOString();
     this.data.meta.title = this.fileName;
 
+    const opts = await this._showSaveOptions();
+    if (!opts) return;
+
     try {
-      const blob = await createUDDBlob(this.data);
+      toast('正在保存...');
+      const blob = await createUDDBlob(this.data, opts);
       if (this.fileHandle) {
         const writable = await this.fileHandle.createWritable();
         await writable.write(blob);
         await writable.close();
       } else if (this._activeSession && this._activeSession.filePath && this.repoServerUrl) {
-        // Write back to original file via server API
         const resp = await fetch(this.repoServerUrl + '/api/writefile?path=' + encodeURIComponent(this._activeSession.filePath), {
           method: 'POST', body: blob
         });
@@ -1007,8 +1130,12 @@ class App {
     this.data.meta.modified = new Date().toISOString();
     this.data.meta.title = this.fileName;
 
+    const opts = await this._showSaveOptions();
+    if (!opts) return;
+
     try {
-      const blob = await createUDDBlob(this.data);
+      toast('正在保存...');
+      const blob = await createUDDBlob(this.data, opts);
       if (window.showSaveFilePicker) {
         const handle = await window.showSaveFilePicker({
           suggestedName: this.fileName + '.udd',
@@ -1019,7 +1146,6 @@ class App {
         await writable.write(blob);
         await writable.close();
       } else {
-        // Fallback download
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = this.fileName + '.udd';

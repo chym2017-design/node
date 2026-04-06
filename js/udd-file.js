@@ -194,28 +194,144 @@ function toast(msg, ms = 2000) {
 // ================================================================
 //  FILE MANAGER
 // ================================================================
-async function createUDDBlob(data) {
+async function createUDDBlob(data, opts = {}) {
   const zip = new JSZip();
-  const bottom = compressData(data);
+
+  let saveData = data;
+  const needClone = opts.embedMedia || opts.embedRefs;
+  if (needClone) saveData = JSON.parse(JSON.stringify(data));
+
+  // Embed media files (images/video/audio)
+  if (opts.embedMedia && typeof app !== 'undefined' && app.repoServerUrl) {
+    await _embedMediaFiles(saveData, zip, app.repoServerUrl);
+  }
+
+  // Embed cross-doc references (resolve and inline cached data)
+  if (opts.embedRefs) {
+    _embedRefsInline(saveData);
+  }
+
+  const bottom = compressData(saveData);
   zip.file('data.json', JSON.stringify(bottom, null, 2));
-  const meta = data.meta || {};
+  const meta = saveData.meta || {};
   zip.file('meta.json', JSON.stringify({
     format_version: '1.0', app_version: '1.0.0',
     title: meta.title || '', author: meta.author || '',
     created: meta.created || '', modified: new Date().toISOString()
   }, null, 2));
   zip.file('view_state.json', JSON.stringify({ last_view: 'outline' }, null, 2));
-  // Embed sheets.xlsx if sheet data exists
   if (typeof app !== 'undefined' && app.sheetView) {
     const xlsxBin = app.sheetView.toBinary();
     if (xlsxBin) zip.file('sheets.xlsx', xlsxBin);
   }
-  // Embed ppt-format.json if PPT format exists
   if (typeof app !== 'undefined' && app.pptView) {
     const fmt = app.pptView.getFormat();
     if (fmt) zip.file('ppt-format.json', JSON.stringify(fmt, null, 2));
   }
+  // Embed referenced doc caches so file is self-contained
+  if (opts.embedRefs && typeof _refDocCache !== 'undefined') {
+    const refs = {};
+    for (const [name, docData] of Object.entries(_refDocCache)) {
+      refs[name] = docData;
+    }
+    if (Object.keys(refs).length > 0) {
+      zip.file('ref-docs.json', JSON.stringify(refs));
+    }
+  }
   return await zip.generateAsync({ type: 'blob' });
+}
+
+// Resolve all {{=crossDocRef}} to their values inline
+function _embedRefsInline(data) {
+  const refRe = /\{\{(=[^}]+)\}\}/g;
+  function walk(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    for (const k of Object.keys(obj)) {
+      if (typeof obj[k] === 'string' && obj[k].includes('{{=')) {
+        obj[k] = obj[k].replace(refRe, (full, refStr) => {
+          // Try sync resolve from cache
+          try {
+            const val = resolveRef(data, refStr);
+            if (val && !val.startsWith('#')) return val;
+          } catch (e) {}
+          // Try cross-doc from cache
+          if (typeof _refDocCache !== 'undefined') {
+            const ref = parseRef(refStr);
+            if (ref && ref.docName && _refDocCache[ref.docName]) {
+              let localRef = '=' + ref.nodePath;
+              if (ref.field) localRef += '.' + ref.field;
+              try {
+                const val = resolveRef(_refDocCache[ref.docName], localRef);
+                if (val && !val.startsWith('#')) return val;
+              } catch (e) {}
+            }
+          }
+          return full; // keep unresolved
+        });
+      } else if (typeof obj[k] === 'object') {
+        walk(obj[k]);
+      }
+    }
+  }
+  walk(data);
+}
+
+// Scan all nodes for media paths, fetch them, embed in zip, rewrite paths
+async function _embedMediaFiles(data, zip, serverUrl) {
+  const mediaFolder = zip.folder('media');
+  const pathMap = {}; // original path → embedded relative path
+  const mediaRe = /\{\{(?!=)(.*?)\}\}/g;
+  const pathRe = /("(?:image|video|audio)")\s*:\s*"([^"]+)"/;
+
+  function collectPaths(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'string') {
+        let m;
+        mediaRe.lastIndex = 0;
+        while ((m = mediaRe.exec(v)) !== null) {
+          const pm = m[1].match(pathRe);
+          if (pm && /^[A-Za-z]:[\\/]/.test(pm[2])) {
+            pathMap[pm[2]] = null; // mark for download
+          }
+        }
+      } else if (typeof v === 'object') {
+        collectPaths(v);
+      }
+    }
+  }
+  collectPaths(data);
+
+  // Download each unique path
+  let idx = 0;
+  for (const origPath of Object.keys(pathMap)) {
+    try {
+      const resp = await fetch(serverUrl + '/api/readfile?path=' + encodeURIComponent(origPath));
+      if (!resp.ok) continue;
+      const blob = await resp.blob();
+      const ext = origPath.split('.').pop().toLowerCase();
+      const fname = 'media_' + (idx++) + '.' + ext;
+      mediaFolder.file(fname, blob);
+      pathMap[origPath] = 'media/' + fname;
+    } catch (e) { /* skip */ }
+  }
+
+  // Rewrite paths in data
+  function rewritePaths(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    for (const k of Object.keys(obj)) {
+      if (typeof obj[k] === 'string') {
+        for (const [orig, embedded] of Object.entries(pathMap)) {
+          if (embedded && obj[k].includes(orig)) {
+            obj[k] = obj[k].split(orig).join(embedded);
+          }
+        }
+      } else if (typeof obj[k] === 'object') {
+        rewritePaths(obj[k]);
+      }
+    }
+  }
+  rewritePaths(data);
 }
 
 async function parseUDDBlob(blob) {
@@ -239,5 +355,45 @@ async function parseUDDBlob(blob) {
       app.pptView.setFormat(JSON.parse(pptJson));
     } catch (e) {}
   }
+  // Load embedded media files and create blob URLs
+  const mediaFolder = zip.folder('media');
+  if (mediaFolder && typeof app !== 'undefined') {
+    if (!app._mediaBlobUrls) app._mediaBlobUrls = {};
+    const mediaFiles = [];
+    zip.forEach((path, entry) => {
+      if (path.startsWith('media/') && !entry.dir) mediaFiles.push({ path, entry });
+    });
+    for (const { path, entry } of mediaFiles) {
+      const blob = await entry.async('blob');
+      const blobUrl = URL.createObjectURL(blob);
+      app._mediaBlobUrls[path] = blobUrl;
+    }
+    _rewriteMediaToBlobUrls(data, app._mediaBlobUrls);
+  }
+  // Load embedded ref-docs cache
+  const refDocsFile = zip.file('ref-docs.json');
+  if (refDocsFile && typeof _refDocCache !== 'undefined') {
+    try {
+      const refDocs = JSON.parse(await refDocsFile.async('string'));
+      for (const [name, docData] of Object.entries(refDocs)) {
+        _refDocCache[name] = docData;
+      }
+    } catch (e) {}
+  }
   return data;
+}
+
+function _rewriteMediaToBlobUrls(obj, blobMap) {
+  if (!obj || typeof obj !== 'object') return;
+  for (const k of Object.keys(obj)) {
+    if (typeof obj[k] === 'string') {
+      for (const [relPath, blobUrl] of Object.entries(blobMap)) {
+        if (obj[k].includes(relPath)) {
+          obj[k] = obj[k].split(relPath).join(blobUrl);
+        }
+      }
+    } else if (typeof obj[k] === 'object') {
+      _rewriteMediaToBlobUrls(obj[k], blobMap);
+    }
+  }
 }

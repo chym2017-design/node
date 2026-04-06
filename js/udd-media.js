@@ -10,6 +10,69 @@ function parseMediaTag(tagContent) {
   catch (e) { return null; }
 }
 
+// Inline table: {{Sheet1.A1:C4}} or {{文件名.Sheet1.A1:C4}}
+function parseTableRef(tagContent) {
+  // Match: docName.sheetName.A1:C4 or sheetName.A1:C4
+  const m = tagContent.match(/^(.+)\.([A-Z]{1,3}\d+):([A-Z]{1,3}\d+)$/);
+  if (!m) return null;
+  const prefix = m[1], startAddr = m[2], endAddr = m[3];
+  const dot = prefix.lastIndexOf('.');
+  let docName = null, sheetName;
+  if (dot > 0) {
+    docName = prefix.substring(0, dot);
+    sheetName = prefix.substring(dot + 1);
+  } else {
+    sheetName = prefix;
+  }
+  return { docName, sheetName, startAddr, endAddr };
+}
+
+function renderInlineTable(container, ref) {
+  const table = document.createElement('table');
+  table.className = 'inline-table';
+  // Get cell data from sheetView
+  let ws = null;
+  if (typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook) {
+    ws = app.sheetView.workbook.Sheets[ref.sheetName];
+  }
+  if (!ws) {
+    const err = document.createElement('span');
+    err.className = 'ref-error';
+    err.textContent = '#TABLE! (' + ref.sheetName + ')';
+    container.appendChild(err);
+    return;
+  }
+  const startR = parseInt(ref.startAddr.match(/\d+/)[0]) - 1;
+  const startC = colIndex(ref.startAddr.match(/^[A-Z]+/)[0]);
+  const endR = parseInt(ref.endAddr.match(/\d+/)[0]) - 1;
+  const endC = colIndex(ref.endAddr.match(/^[A-Z]+/)[0]);
+
+  for (let r = startR; r <= endR; r++) {
+    const tr = document.createElement('tr');
+    for (let c = startC; c <= endC; c++) {
+      const td = document.createElement(r === startR ? 'th' : 'td');
+      const addr = colName(c) + (r + 1);
+      const cell = ws[addr];
+      td.textContent = cell ? (cell.w || (cell.v !== undefined ? String(cell.v) : '')) : '';
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  container.appendChild(table);
+}
+
+function colIndex(name) {
+  let idx = 0;
+  for (let i = 0; i < name.length; i++) idx = idx * 26 + (name.charCodeAt(i) - 64);
+  return idx - 1;
+}
+function colName(c) {
+  let name = '';
+  c++;
+  while (c > 0) { c--; name = String.fromCharCode(65 + (c % 26)) + name; c = Math.floor(c / 26); }
+  return name;
+}
+
 function resolveMediaSrc(src) {
   if (typeof app !== 'undefined' && app.resolveMediaSrc) return app.resolveMediaSrc(src);
   return src;
@@ -20,7 +83,12 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
   const parts = text.split(MEDIA_RE);
   for (let i = 1; i < parts.length; i += 2) {
     const media = parseMediaTag(parts[i]);
-    if (!media) continue;
+    if (!media) {
+      // Not JSON media — try inline table ref
+      const tableRef = parseTableRef(parts[i]);
+      if (tableRef) renderInlineTable(container, tableRef);
+      continue;
+    }
     if (media.image) {
       const alignBox = document.createElement('div');
       if (!noAlign && media['image.align']) alignBox.style.textAlign = media['image.align'];

@@ -605,6 +605,19 @@ function extractMediaTags(text) {
   text.replace(/\{\{(?!=)(.*?)\}\}/g, m => { tags.push(m); return ''; });
   return tags.join('');
 }
+function normalizeMediaTags(text) {
+  if (!text) return '';
+  const tags = [];
+  text.replace(/\{\{(?!=)(.*?)\}\}/g, m => { if (tags[tags.length - 1] !== m) tags.push(m); return ''; });
+  return tags.join('');
+}
+function mergeEditableTextAndMedia(originalRaw, editedText) {
+  const media = normalizeMediaTags(originalRaw);
+  if (!media) return editedText || '';
+  let cleanText = editedText || '';
+  media.replace(/\{\{(?!=)(.*?)\}\}/g, m => { cleanText = cleanText.split(m).join(''); return ''; });
+  return cleanText + media;
+}
 function hasMediaTag(text) {
   return text && text.indexOf('{{') !== -1 && text.indexOf('}}') !== -1;
 }

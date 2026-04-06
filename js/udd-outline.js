@@ -22,7 +22,7 @@ class OutlineView {
     this.el.addEventListener('dragleave', e => this.onDragLeave(e));
     this.el.addEventListener('drop', e => this.onDrop(e));
     this.el.addEventListener('dragend', e => this.onDragEnd(e));
-    // Reference cell: click to edit, blur to resolve
+    this.el.addEventListener('click', e => this.onClick(e));
     this.el.addEventListener('dblclick', e => this.onRefDblClick(e));
     this.el.addEventListener('focusout', e => this.onFocusOut(e));
   }
@@ -102,7 +102,7 @@ class OutlineView {
     content.dataset.placeholder = level <= 1 ? '输入标题...' : '输入内容...';
     content.spellcheck = false;
     if (!desc.renderOn) {
-      // Render OFF: show raw content as plain editable text
+      // Render OFF: edit raw source directly
       content.textContent = node.content || '';
       content.contentEditable = 'plaintext-only';
       if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
@@ -176,10 +176,11 @@ class OutlineView {
     if (!desc.hide_body && (desc.hasBody || (!desc.isRef && this.isBodyEditing(path)))) {
       const bodyEl = document.createElement('div');
       bodyEl.className = 'outline-body';
+      if (app && app.outlineFmt && app.outlineFmt.body_border) bodyEl.classList.add('show-border');
       const bodyStyle = this.getBodyStyle(path);
 
       if (!desc.renderOn) {
-        // Render OFF: show raw body as plain editable text
+        // Render OFF: edit raw body directly
         bodyEl.textContent = node.body || '';
         bodyEl.contentEditable = 'plaintext-only';
         if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
@@ -358,6 +359,7 @@ class OutlineView {
     if (!node.hide_body && hasBody) {
       const bodyEl = document.createElement('div');
       bodyEl.className = 'outline-body';
+      if (app && app.outlineFmt && app.outlineFmt.body_border) bodyEl.classList.add('show-border');
       bodyEl.contentEditable = 'false';
       const bodyStyle = buildNodeStyle(this.data, refHostPath, level, { isBody: true });
       const rawBody = node.body || '';
@@ -485,11 +487,11 @@ class OutlineView {
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
       if (el.dataset.ref || el.dataset.hasRef) return; // skip reference cells
+      if (!el.isContentEditable) return;
       const node = getNodeByPath(this.data, el.dataset.path);
       if (!node) return;
       const field = el.dataset.field;
-      const media = extractMediaTags(node[field]);
-      node[field] = el.textContent + media;
+      node[field] = mergeEditableTextAndMedia(node[field], el.textContent);
     });
   }
 
@@ -497,10 +499,10 @@ class OutlineView {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
     if (el.dataset.ref || el.dataset.hasRef) return; // skip reference cells
+    if (!el.isContentEditable) return;
     const node = getNodeByPath(this.data, el.dataset.path);
     if (node) {
-      const media = extractMediaTags(node[el.dataset.field]);
-      node[el.dataset.field] = el.textContent + media;
+      node[el.dataset.field] = mergeEditableTextAndMedia(node[el.dataset.field], el.textContent);
       app.markDirty();
     }
     this.updateStatus();
@@ -522,50 +524,39 @@ class OutlineView {
   }
 
   onRefDblClick(e) {
-    const el = e.target.closest('.ref-display');
-    if (!el) return;
-    if (!el.dataset.ref && !el.dataset.hasRef) return;
-    // For inline ref content, show raw source in a prompt instead of inline edit
-    if (el.dataset.hasRef) {
-      const node = getNodeByPath(this.data, el.dataset.path);
-      if (!node) return;
-      const field = el.dataset.field || 'content';
-      const newVal = prompt('编辑内容（{{=引用}} 语法）:', node[field]);
-      if (newVal !== null && newVal !== node[field]) {
-        node[field] = newVal;
-        app.markDirty();
-        this.render(this.data);
-      }
-      return;
-    }
-    if (!el.dataset.ref) return;
-    // Don't enter edit mode if clicking the ref icon
-    if (e.target.classList.contains('ref-icon')) return;
-    const refStr = el.dataset.ref;
-    el.contentEditable = 'plaintext-only';
-    if (!el.contentEditable || el.contentEditable === 'inherit') el.contentEditable = 'true';
-    el.classList.remove('ref-display');
-    el.textContent = refStr;
-    el.focus();
-    // Select all text
+    const el = e.target.closest('[data-path][data-field]');
+    if (!el || e.target.classList.contains('ref-icon')) return;
+    const refEl = e.target.closest('.ref-display');
+    if (!refEl || (!refEl.dataset.ref && !refEl.dataset.hasRef)) return;
+    const node = getNodeByPath(this.data, refEl.dataset.path);
+    if (!node) return;
+    const field = refEl.dataset.field || 'content';
+    const raw = node[field] || '';
+    this.focusPath = refEl.dataset.path;
+    this.focusField = field;
+    refEl.classList.remove('ref-display');
+    delete refEl.dataset.ref;
+    delete refEl.dataset.hasRef;
+    delete refEl.dataset.refAsync;
+    refEl.textContent = raw;
+    refEl.contentEditable = 'plaintext-only';
+    if (!refEl.contentEditable || refEl.contentEditable === 'inherit') refEl.contentEditable = 'true';
+    refEl.focus();
     const range = document.createRange();
-    range.selectNodeContents(el);
+    range.selectNodeContents(refEl);
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
-    const onBlur = () => {
-      el.removeEventListener('blur', onBlur);
-      const newVal = el.textContent.trim();
-      const node = getNodeByPath(this.data, el.dataset.path);
-      if (!node) return;
-      node[el.dataset.field] = newVal;
-      app.markDirty();
-      // Re-render to properly show ref icon and full-node refs
-      this.focusPath = null;
-      this.render(this.data);
-      app._resolveAsyncRefs(this.el);
-    };
-    el.addEventListener('blur', onBlur);
+  }
+
+  onClick(e) {
+    const el = e.target.closest('[data-path][data-field]');
+    if (!el) return;
+    this.focusPath = el.dataset.path;
+    this.focusField = el.dataset.field || 'content';
+    app.updateToolbar(this.focusPath);
+    this.updateStatus();
+    app.updateSidebar(this.focusPath);
   }
 
   onFocusIn(e) {

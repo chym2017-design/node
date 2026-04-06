@@ -95,7 +95,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .outline-content:empty::before{content:attr(data-placeholder);color:var(--gray-300);pointer-events:none}
 .body-btn{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-300);font-size:15px;border-radius:3px;flex-shrink:0;margin-left:3px;padding:2px 4px;line-height:1;user-select:none}
 .body-btn:hover{background:var(--gray-200);color:var(--gray-500)}
-.outline-body{padding:3px 6px;margin-left:22px;color:var(--text);font-size:12pt;line-height:1.5;outline:none;border-left:2px solid var(--gray-200);border-radius:0 3px 3px 0;min-height:20px;word-break:break-word}
+.outline-body{padding:3px 6px;margin-left:22px;color:var(--text);font-size:12pt;line-height:1.5;outline:none;border-left:2px solid transparent;border-radius:0 3px 3px 0;min-height:20px;word-break:break-word}
+.outline-body.show-border{border-left-color:var(--gray-200)}
 .outline-body:focus{background:var(--blue-50);border-left-color:var(--primary)}
 .outline-body:empty::before{content:'输入正文...';color:var(--gray-300);pointer-events:none}
 .outline-children{margin-left:0}
@@ -113,6 +114,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .inline-ref{display:inline;background:var(--blue-50);border-radius:2px;padding:0 2px;color:var(--blue-700);cursor:default}
 .inline-ref:hover{background:var(--blue-100)}
 .inline-ref .ref-icon{font-size:8px;margin-left:1px}
+
+/* Inline table */
+.inline-table{border-collapse:collapse;margin:8px 0;font-size:12px;width:auto}
+.inline-table th,.inline-table td{border:1px solid var(--gray-200);padding:3px 8px;text-align:left}
+.inline-table th{background:var(--gray-50);font-weight:600;font-size:11px;color:var(--gray-500)}
 
 /* Full node reference: cloned node display */
 .ref-full-node{position:relative}
