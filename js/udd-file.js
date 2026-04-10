@@ -197,16 +197,15 @@ function toast(msg, ms = 2000) {
 async function createUDDBlob(data, opts = {}) {
   const zip = new JSZip();
 
-  let saveData = data;
-  const needClone = opts.embedMedia || opts.embedRefs;
-  if (needClone) saveData = JSON.parse(JSON.stringify(data));
+  // Always clone to avoid mutating live data
+  const saveData = JSON.parse(JSON.stringify(data));
 
-  // Embed media files (images/video/audio)
+  // Embed media files: rewrite paths to udd.media/xxx in saveData
   if (opts.embedMedia && typeof app !== 'undefined' && app.repoServerUrl) {
     await _embedMediaFiles(saveData, zip, app.repoServerUrl);
   }
 
-  // Embed cross-doc references (resolve and inline cached data)
+  // Embed cross-doc references: rewrite =docName.path to =udd.ref-docs.docName.path
   if (opts.embedRefs) {
     _embedRefsInline(saveData);
   }
@@ -228,7 +227,7 @@ async function createUDDBlob(data, opts = {}) {
     const fmt = app.pptView.getFormat();
     if (fmt) zip.file('ppt-format.json', JSON.stringify(fmt, null, 2));
   }
-  // Embed referenced doc caches so file is self-contained
+  // Write ref-docs.json when embedding refs
   if (opts.embedRefs && typeof _refDocCache !== 'undefined') {
     const refs = {};
     for (const [name, docData] of Object.entries(_refDocCache)) {
@@ -241,33 +240,25 @@ async function createUDDBlob(data, opts = {}) {
   return await zip.generateAsync({ type: 'blob' });
 }
 
-// Resolve all {{=crossDocRef}} to their values inline
+// Rewrite cross-doc inline refs to udd.ref-docs. prefix in saveData clone
 function _embedRefsInline(data) {
   const refRe = /\{\{(=[^}]+)\}\}/g;
   function walk(obj) {
     if (!obj || typeof obj !== 'object') return;
     for (const k of Object.keys(obj)) {
-      if (typeof obj[k] === 'string' && obj[k].includes('{{=')) {
-        obj[k] = obj[k].replace(refRe, (full, refStr) => {
-          // Try sync resolve from cache
-          try {
-            const val = resolveRef(data, refStr);
-            if (val && !val.startsWith('#')) return val;
-          } catch (e) {}
-          // Try cross-doc from cache
-          if (typeof _refDocCache !== 'undefined') {
-            const ref = parseRef(refStr);
-            if (ref && ref.docName && _refDocCache[ref.docName]) {
-              let localRef = '=' + ref.nodePath;
-              if (ref.field) localRef += '.' + ref.field;
-              try {
-                const val = resolveRef(_refDocCache[ref.docName], localRef);
-                if (val && !val.startsWith('#')) return val;
-              } catch (e) {}
-            }
-          }
-          return full; // keep unresolved
-        });
+      if (k === '_sheetRefs') continue; // skip sheet refs
+      if (typeof obj[k] === 'string') {
+        // Rewrite full-field refs (=docName.path)
+        if (isRef(obj[k])) {
+          obj[k] = _rewriteRefToUdd(obj[k]);
+        }
+        // Rewrite inline {{=docName.path}} refs
+        if (obj[k].includes('{{=')) {
+          obj[k] = obj[k].replace(refRe, (full, refStr) => {
+            const rewritten = _rewriteRefToUdd(refStr);
+            return '{{' + rewritten + '}}';
+          });
+        }
       } else if (typeof obj[k] === 'object') {
         walk(obj[k]);
       }
@@ -276,10 +267,25 @@ function _embedRefsInline(data) {
   walk(data);
 }
 
-// Scan all nodes for media paths, fetch them, embed in zip, rewrite paths
+// Rewrite =docName.t1-1.field to =udd.ref-docs.docName.t1-1.field (only cross-doc)
+function _rewriteRefToUdd(refStr) {
+  if (!refStr.startsWith('=')) return refStr;
+  const ref = parseRef(refStr);
+  if (!ref.docName) return refStr; // local ref, no change
+  if (ref.docName.startsWith('udd.ref-docs.')) return refStr; // already rewritten
+  // Rebuild with udd.ref-docs. prefix
+  let rebuilt = '=udd.ref-docs.' + ref.docName;
+  if (ref.nodePath) rebuilt += '.' + ref.nodePath;
+  if (ref.field) rebuilt += '.' + ref.field;
+  if (ref.slice) rebuilt += '(' + ref.slice[0] + ',' + ref.slice[1] + ')';
+  if (ref.matchExpr) rebuilt += '.match(/' + ref.matchExpr.pattern.source + '/' + ref.matchExpr.pattern.flags + ').[' + ref.matchExpr.index + ']';
+  return rebuilt;
+}
+
+// Scan all nodes for media paths, fetch them, embed in zip, rewrite paths to udd.media/xxx
 async function _embedMediaFiles(data, zip, serverUrl) {
   const mediaFolder = zip.folder('media');
-  const pathMap = {}; // original path → embedded relative path
+  const pathMap = {}; // original path → 'udd.media/media_N.ext'
   const mediaRe = /\{\{(?!=)(.*?)\}\}/g;
   const pathRe = /("(?:image|video|audio)")\s*:\s*"([^"]+)"/;
 
@@ -291,8 +297,11 @@ async function _embedMediaFiles(data, zip, serverUrl) {
         mediaRe.lastIndex = 0;
         while ((m = mediaRe.exec(v)) !== null) {
           const pm = m[1].match(pathRe);
-          if (pm && /^[A-Za-z]:[\\/]/.test(pm[2])) {
-            pathMap[pm[2]] = null; // mark for download
+          if (!pm) continue;
+          const src = pm[2];
+          // Collect local absolute paths or existing udd.media/ paths (for re-embed)
+          if (/^[A-Za-z]:[\\/]/.test(src) && !pathMap[src]) {
+            pathMap[src] = null;
           }
         }
       } else if (typeof v === 'object') {
@@ -302,21 +311,25 @@ async function _embedMediaFiles(data, zip, serverUrl) {
   }
   collectPaths(data);
 
-  // Download each unique path
+  // Download/fetch each unique path
   let idx = 0;
   for (const origPath of Object.keys(pathMap)) {
     try {
-      const resp = await fetch(serverUrl + '/api/readfile?path=' + encodeURIComponent(origPath));
-      if (!resp.ok) continue;
-      const blob = await resp.blob();
+      let fetchBlob = null;
+      if (/^[A-Za-z]:[\\/]/.test(origPath)) {
+        const resp = await fetch(serverUrl + '/api/readfile?path=' + encodeURIComponent(origPath));
+        if (!resp.ok) continue;
+        fetchBlob = await resp.blob();
+      }
+      if (!fetchBlob) continue;
       const ext = origPath.split('.').pop().toLowerCase();
       const fname = 'media_' + (idx++) + '.' + ext;
-      mediaFolder.file(fname, blob);
-      pathMap[origPath] = 'media/' + fname;
+      mediaFolder.file(fname, fetchBlob);
+      pathMap[origPath] = 'udd.media/' + fname;
     } catch (e) { /* skip */ }
   }
 
-  // Rewrite paths in data
+  // Rewrite paths in saveData clone
   function rewritePaths(obj) {
     if (!obj || typeof obj !== 'object') return;
     for (const k of Object.keys(obj)) {
@@ -334,6 +347,7 @@ async function _embedMediaFiles(data, zip, serverUrl) {
   rewritePaths(data);
 }
 
+// Returns { data, embeddedMedia, embeddedRefDocs } — caller stores per-session
 async function parseUDDBlob(blob) {
   const zip = await JSZip.loadAsync(blob);
   const dataFile = zip.file('data.json');
@@ -341,6 +355,7 @@ async function parseUDDBlob(blob) {
   const json = await dataFile.async('string');
   const bottom = JSON.parse(json);
   const data = decompressData(bottom);
+
   // Load embedded sheets.xlsx if present
   const sheetsFile = zip.file('sheets.xlsx');
   if (sheetsFile && typeof app !== 'undefined' && app.sheetView) {
@@ -355,45 +370,27 @@ async function parseUDDBlob(blob) {
       app.pptView.setFormat(JSON.parse(pptJson));
     } catch (e) {}
   }
-  // Load embedded media files and create blob URLs
-  const mediaFolder = zip.folder('media');
-  if (mediaFolder && typeof app !== 'undefined') {
-    if (!app._mediaBlobUrls) app._mediaBlobUrls = {};
-    const mediaFiles = [];
-    zip.forEach((path, entry) => {
-      if (path.startsWith('media/') && !entry.dir) mediaFiles.push({ path, entry });
-    });
-    for (const { path, entry } of mediaFiles) {
-      const blob = await entry.async('blob');
-      const blobUrl = URL.createObjectURL(blob);
-      app._mediaBlobUrls[path] = blobUrl;
-    }
-    _rewriteMediaToBlobUrls(data, app._mediaBlobUrls);
+
+  // Load embedded media files — returned per-session, NOT written to app global
+  const embeddedMedia = {};
+  const mediaFiles = [];
+  zip.forEach((zipPath, entry) => {
+    if (zipPath.startsWith('media/') && !entry.dir) mediaFiles.push({ zipPath, entry });
+  });
+  for (const { zipPath, entry } of mediaFiles) {
+    const fileBlob = await entry.async('blob');
+    embeddedMedia['udd.' + zipPath] = fileBlob;
   }
-  // Load embedded ref-docs cache
+
+  // Load embedded ref-docs — returned per-session
+  const embeddedRefDocs = {};
   const refDocsFile = zip.file('ref-docs.json');
-  if (refDocsFile && typeof _refDocCache !== 'undefined') {
+  if (refDocsFile) {
     try {
       const refDocs = JSON.parse(await refDocsFile.async('string'));
-      for (const [name, docData] of Object.entries(refDocs)) {
-        _refDocCache[name] = docData;
-      }
+      Object.assign(embeddedRefDocs, refDocs);
     } catch (e) {}
   }
-  return data;
-}
 
-function _rewriteMediaToBlobUrls(obj, blobMap) {
-  if (!obj || typeof obj !== 'object') return;
-  for (const k of Object.keys(obj)) {
-    if (typeof obj[k] === 'string') {
-      for (const [relPath, blobUrl] of Object.entries(blobMap)) {
-        if (obj[k].includes(relPath)) {
-          obj[k] = obj[k].split(relPath).join(blobUrl);
-        }
-      }
-    } else if (typeof obj[k] === 'object') {
-      _rewriteMediaToBlobUrls(obj[k], blobMap);
-    }
-  }
+  return { data, embeddedMedia, embeddedRefDocs };
 }

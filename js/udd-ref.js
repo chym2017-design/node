@@ -93,7 +93,7 @@ function _findPathRecursive(obj, targetKey, prefix) {
 
 function parseRef(refStr) {
   const raw = refStr.slice(1); // remove leading '='
-  const result = { docName: null, nodePath: null, field: null, slice: null, matchExpr: null };
+  const result = { docName: null, nodePath: null, field: null, slice: null, matchExpr: null, isUddEmbed: false };
 
   // Extract .match(/pattern/).[index] if present
   let work = raw;
@@ -110,6 +110,13 @@ function parseRef(refStr) {
   if (sm) {
     result.slice = [parseInt(sm[1]), parseInt(sm[2])];
     work = work.slice(0, sm.index);
+  }
+
+  // Handle udd.ref-docs. prefix (embedded cross-doc ref)
+  const UDD_PREFIX = 'udd.ref-docs.';
+  if (work.startsWith(UDD_PREFIX)) {
+    result.isUddEmbed = true;
+    work = work.slice(UDD_PREFIX.length);
   }
 
   // Split remaining by '.'
@@ -166,6 +173,18 @@ function resolveRef(data, refStr) {
 
   const ref = parseRef(refStr);
   if (!ref.nodePath) return '#REF!';
+
+  // udd.ref-docs. embedded refs: resolve from session embeddedRefDocs or _refDocCache
+  if (ref.isUddEmbed && ref.docName) {
+    const useEmbed = !app || app.contentSource !== 'repo';
+    const sessionRefDocs = app && app._activeSession && app._activeSession.embeddedRefDocs;
+    const embedDoc = useEmbed && sessionRefDocs && sessionRefDocs[ref.docName];
+    const cacheDoc = _refDocCache[ref.docName];
+    const srcData = embedDoc || cacheDoc;
+    if (!srcData) return '#REF!';
+    const localRef = '=' + ref.nodePath + (ref.field ? '.' + ref.field : '');
+    return resolveRef(srcData, localRef);
+  }
 
   // Cross-file refs need async — return placeholder
   if (ref.docName) return '#LOADING...';
@@ -259,6 +278,18 @@ async function resolveRefAsync(data, refStr) {
   if (!ref.nodePath) return '#REF!';
 
   if (!ref.docName) return resolveRef(data, refStr);
+
+  // udd.ref-docs. embedded refs: resolve from session embeddedRefDocs (no async needed)
+  if (ref.isUddEmbed) {
+    const useEmbed = !app || app.contentSource !== 'repo';
+    const sessionRefDocs = app && app._activeSession && app._activeSession.embeddedRefDocs;
+    const embedDoc = useEmbed && sessionRefDocs && sessionRefDocs[ref.docName];
+    const cacheDoc = _refDocCache[ref.docName];
+    const srcData = embedDoc || cacheDoc;
+    if (!srcData) return '#REF!';
+    const localRef = '=' + ref.nodePath + (ref.field ? '.' + ref.field : '');
+    return resolveRef(srcData, localRef);
+  }
 
   // Cross-file: load from cache, IndexedDB, or local server
   let docData = _refDocCache[ref.docName];

@@ -120,9 +120,22 @@ const server = http.createServer(async (req, res) => {
       const chunks = [];
       req.on('data', chunk => chunks.push(chunk));
       req.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        fs.writeFileSync(resolved, buffer);
-        sendJSON(res, { ok: true, path: resolved, size: buffer.length });
+        try {
+          const buffer = Buffer.concat(chunks);
+          // Write to temp file first, then rename — avoids EBUSY on Windows
+          const tmpPath = resolved + '.' + Date.now() + '.tmp';
+          fs.writeFileSync(tmpPath, buffer);
+          try {
+            fs.renameSync(tmpPath, resolved);
+          } catch (renameErr) {
+            // Fallback: copy + delete (cross-device or rename failed)
+            fs.copyFileSync(tmpPath, resolved);
+            fs.unlinkSync(tmpPath);
+          }
+          sendJSON(res, { ok: true, path: resolved, size: buffer.length });
+        } catch (writeErr) {
+          sendError(res, writeErr.message, 500);
+        }
       });
     } catch (e) {
       sendError(res, e.message, 500);

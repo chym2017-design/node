@@ -36,6 +36,10 @@ class App {
     this.currentView = 'outline';
     this.renderMode = true;
     this.sidebarMode = 'raw'; // 'raw' or 'values'
+    this.contentSource = 'embedded'; // 'embedded' | 'repo'
+    this._embeddedMedia = {};    // { 'udd.media/media_0.jpg': Blob }
+    this._embeddedMediaUrls = {}; // blob URL cache
+    this._embeddedRefDocs = {};  // { 'docName': data }
 
     this.outlineView = new OutlineView(document.getElementById('outline-view'));
     this.mindmapView = new MindmapView(document.getElementById('mindmap-view'));
@@ -145,6 +149,8 @@ class App {
     this.documentView.focusField = 'content';
     this.mindmapView.focusPath = target.focusPath;
     this.renderCurrentView();
+    this._updateSourceBtn();
+    this._ensureEmbeddedMediaLoaded();
     // Restore scroll
     requestAnimationFrame(() => {
       const editorEl = document.getElementById('editor');
@@ -199,7 +205,7 @@ class App {
     } catch (e) { /* ignore */ }
   }
 
-  _addSessionAndSwitch(fileName, data, fileHandle, filePath) {
+  _addSessionAndSwitch(fileName, data, fileHandle, filePath, originPath) {
     // Check if file is already open (by filePath)
     if (filePath) {
       const existing = this.sessions.find(s => s.filePath === filePath);
@@ -226,6 +232,7 @@ class App {
     }
     this._saveCurrentSessionState();
     const session = this._createSessionObj(name, data, fileHandle, filePath);
+    if (originPath) session.originPath = originPath;
     session.undoMgr.push(data);
     this.sessions.push(session);
     this.activeSessionId = session.id;
@@ -236,6 +243,8 @@ class App {
     this.mindmapView.focusPath = null;
     this.renderCurrentView();
     this._renderOpenDocs();
+    this._updateSourceBtn();
+    this._ensureEmbeddedMediaLoaded();
   }
 
   _renderOpenDocs() {
@@ -262,7 +271,7 @@ class App {
       const name = document.createElement('span');
       name.className = 'open-doc-name';
       name.textContent = s.fileName || '未命名文档';
-      name.title = s.filePath || s.fileName;
+      name.title = s.originPath || s.filePath || s.fileName || '';
       item.appendChild(name);
       // Close button
       const closeBtn = document.createElement('button');
@@ -475,6 +484,63 @@ class App {
       btn.style.background = this.renderMode ? 'none' : 'var(--blue-50)';
     }
     this.renderCurrentView();
+  }
+
+  toggleContentSource() {
+    this.contentSource = this.contentSource === 'embedded' ? 'repo' : 'embedded';
+    this._embeddedMediaUrls = {}; // clear blob URL cache on source switch
+    this._updateSourceBtn();
+    this.renderCurrentView();
+  }
+
+  // Lazy-load embedded media/refs from the .udd file if data has udd. paths but blobs are missing
+  async _ensureEmbeddedMediaLoaded() {
+    const session = this._activeSession;
+    if (!session || session._embeddedLoading) return;
+    const dataStr = JSON.stringify(session.data || {});
+    const needsMedia = dataStr.includes('udd.media/');
+    const needsRefs = dataStr.includes('udd.ref-docs.');
+    if (!needsMedia && !needsRefs) return;
+    const hasMedia = session.embeddedMedia && Object.keys(session.embeddedMedia).length > 0;
+    const hasRefs = session.embeddedRefDocs && Object.keys(session.embeddedRefDocs).length > 0;
+    if ((needsMedia && hasMedia) && (!needsRefs || hasRefs)) return;
+    session._embeddedLoading = true;
+    try {
+      let blob = null;
+      // Try fileHandle first (for local picker-opened files)
+      if (session.fileHandle) {
+        try {
+          const file = await session.fileHandle.getFile();
+          blob = file;
+        } catch (e) { /* handle may be stale */ }
+      }
+      // Fallback: try repo server
+      if (!blob && session.filePath && this.repoServerUrl) {
+        const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(session.filePath));
+        if (resp.ok) blob = await resp.blob();
+      }
+      if (!blob) return;
+      const { embeddedMedia, embeddedRefDocs } = await parseUDDBlob(blob);
+      session.embeddedMedia = embeddedMedia || {};
+      session.embeddedRefDocs = embeddedRefDocs || {};
+      session.embeddedMediaUrls = {};
+      this.renderCurrentView();
+    } catch (e) { /* skip */ }
+    finally { session._embeddedLoading = false; }
+  }
+
+  _updateSourceBtn() {
+    const btn = document.getElementById('source-toggle');
+    if (!btn) return;
+    // Show button if current data contains any embedded udd. paths
+    const dataStr = this.data ? JSON.stringify(this.data) : '';
+    const hasEmbedded = dataStr.includes('udd.media/') || dataStr.includes('udd.ref-docs.');
+    btn.style.display = hasEmbedded ? '' : 'none';
+    const isEmbed = this.contentSource === 'embedded';
+    btn.textContent = '来源:' + (isEmbed ? '嵌入' : '仓库');
+    btn.style.color = isEmbed ? 'var(--primary)' : 'var(--gray-500)';
+    btn.style.borderColor = isEmbed ? 'var(--blue-200)' : 'var(--gray-200)';
+    btn.style.background = isEmbed ? 'var(--blue-50)' : 'none';
   }
 
   _saveBackPosition(viewInstance) {
@@ -908,7 +974,21 @@ class App {
   }
 
   resolveMediaSrc(src) {
-    if (this._mediaBlobUrls && this._mediaBlobUrls[src]) return this._mediaBlobUrls[src];
+    if (!src) return src;
+    // udd.media/ prefix: embedded content stored per-session
+    if (src.startsWith('udd.media/')) {
+      const useEmbedded = this.contentSource !== 'repo';
+      const session = this._activeSession;
+      const media = session && session.embeddedMedia;
+      if (useEmbedded && media && media[src]) {
+        if (!session.embeddedMediaUrls) session.embeddedMediaUrls = {};
+        if (!session.embeddedMediaUrls[src]) {
+          session.embeddedMediaUrls[src] = URL.createObjectURL(media[src]);
+        }
+        return session.embeddedMediaUrls[src];
+      }
+      return '';
+    }
     if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('file:')) return src;
     // Use server proxy for local absolute paths
     if (/^[A-Za-z]:[\\/]/.test(src) && this.repoServerUrl) {
@@ -1044,15 +1124,23 @@ class App {
       if (!file) return;
 
       let data;
+      let embeddedMedia = {}, embeddedRefDocs = {};
       if (file.name.endsWith('.json')) {
         const text = await file.text();
         data = JSON.parse(text);
       } else {
-        data = await parseUDDBlob(file);
+        ({ data, embeddedMedia, embeddedRefDocs } = await parseUDDBlob(file));
       }
 
       const name = file.name.replace(/\.(udd|json)$/i, '') || data.meta?.title || '未命名文档';
-      this._addSessionAndSwitch(name, data, handle, null);
+      // Browser security: full path unavailable for local picker; use filename only
+      this._addSessionAndSwitch(name, data, handle, null, file.name);
+      if (this._activeSession) {
+        this._activeSession.embeddedMedia = embeddedMedia;
+        this._activeSession.embeddedRefDocs = embeddedRefDocs;
+        this._activeSession.embeddedMediaUrls = {};
+      }
+      this._updateSourceBtn();
       toast('已打开: ' + file.name);
     } catch (e) {
       if (e.name !== 'AbortError') toast('打开失败: ' + e.message);
@@ -1101,9 +1189,18 @@ class App {
       toast('正在保存...');
       const blob = await createUDDBlob(this.data, opts);
       if (this.fileHandle) {
-        const writable = await this.fileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
+        try {
+          // Re-request permission if needed (handle may have gone stale)
+          if (this.fileHandle.requestPermission) {
+            const perm = await this.fileHandle.requestPermission({ mode: 'readwrite' });
+            if (perm !== 'granted') throw new Error('未获得写入权限');
+          }
+          const writable = await this.fileHandle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        } catch (handleErr) {
+          throw new Error('文件写入失败: ' + handleErr.message);
+        }
       } else if (this._activeSession && this._activeSession.filePath && this.repoServerUrl) {
         const resp = await fetch(this.repoServerUrl + '/api/writefile?path=' + encodeURIComponent(this._activeSession.filePath), {
           method: 'POST', body: blob
@@ -1378,16 +1475,22 @@ class App {
       try {
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(item.path));
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        let data;
+        let data, embeddedMedia = {}, embeddedRefDocs = {};
         if (item.ext === '.json') {
           const text = await resp.text();
           data = JSON.parse(text);
         } else {
           const blob = await resp.blob();
-          data = await parseUDDBlob(blob);
+          ({ data, embeddedMedia, embeddedRefDocs } = await parseUDDBlob(blob));
         }
         const name = item.name.replace(/\.(udd|json)$/, '');
-        this._addSessionAndSwitch(name, data, null, item.path);
+        this._addSessionAndSwitch(name, data, null, item.path, item.path);
+        if (this._activeSession) {
+          this._activeSession.embeddedMedia = embeddedMedia || {};
+          this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
+          this._activeSession.embeddedMediaUrls = {};
+        }
+        this._updateSourceBtn();
         toast('已打开: ' + item.name);
       } catch (e) {
         toast('打开失败: ' + e.message);
@@ -1404,7 +1507,7 @@ class App {
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(item.path));
         if (!resp.ok) continue;
         const blob = await resp.blob();
-        const docData = await parseUDDBlob(blob);
+        const { data: docData } = await parseUDDBlob(blob);
         _refDocCache[docName] = docData;
         // Also cache with full path as key
         _refDocCache[item.path] = docData;
