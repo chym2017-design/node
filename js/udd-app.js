@@ -37,9 +37,7 @@ class App {
     this.renderMode = true;
     this.sidebarMode = 'raw'; // 'raw' or 'values'
     this.contentSource = 'embedded'; // 'embedded' | 'repo'
-    this._embeddedMedia = {};    // { 'udd.media/media_0.jpg': Blob }
-    this._embeddedMediaUrls = {}; // blob URL cache
-    this._embeddedRefDocs = {};  // { 'docName': data }
+    // Embedded data stored per-session (session.embeddedMedia, session.embeddedRefDocs)
 
     this.outlineView = new OutlineView(document.getElementById('outline-view'));
     this.mindmapView = new MindmapView(document.getElementById('mindmap-view'));
@@ -333,7 +331,6 @@ class App {
   }
 
   renderCurrentView() {
-    this._normalizeEmbeddedTagsInData(this.data);
     if (this.currentView === 'outline') {
       this.outlineView.render(this.data);
       this._resolveAsyncRefs(this.outlineView.el);
@@ -347,6 +344,8 @@ class App {
       this.documentView.render(this.data);
       this._resolveAsyncRefs(this.documentView.el);
     }
+    // Lazy-load embedded blobs if needed (non-blocking)
+    this._ensureEmbeddedMediaLoaded();
   }
 
   async editSourceField(path, field) {
@@ -414,13 +413,28 @@ class App {
     }
   }
 
-  _resolveAsyncRefs(viewEl) {
-    viewEl.querySelectorAll('[data-ref-async]').forEach(async el => {
+  async _resolveAsyncRefs(viewEl) {
+    if (this._asyncRefsResolving) return;
+    this._asyncRefsResolving = true;
+    const elements = [...viewEl.querySelectorAll('[data-ref-async]')];
+    let needsRerender = false;
+    for (const el of elements) {
+      if (!el.isConnected) continue;
       const refStr = el.dataset.refAsync;
-      const resolved = await resolveRefAsync(this.data, refStr);
-      el.textContent = resolved;
-      el.classList.toggle('ref-error', resolved.startsWith('#'));
-    });
+      try {
+        const resolved = await resolveRefAsync(this.data, refStr);
+        if (!el.isConnected) continue;
+        el.classList.toggle('ref-error', resolved.startsWith('#'));
+        el.textContent = resolved;
+        // If resolved contains media, flag for a single deferred re-render
+        if (hasMediaTag(resolved)) needsRerender = true;
+      } catch (e) { /* skip */ }
+    }
+    this._asyncRefsResolving = false;
+    // Single deferred re-render after all async refs resolved (not per-element)
+    if (needsRerender) {
+      requestAnimationFrame(() => this.renderCurrentView());
+    }
   }
 
   switchView(view) {
@@ -488,42 +502,35 @@ class App {
 
   toggleContentSource() {
     this.contentSource = this.contentSource === 'embedded' ? 'repo' : 'embedded';
-    this._embeddedMediaUrls = {}; // clear blob URL cache on source switch
+    // source switch — media served via server, no blob cache to clear
     this._updateSourceBtn();
     this.renderCurrentView();
   }
 
   // Lazy-load embedded media/refs from the .udd file if data has udd. paths but blobs are missing
+  // 懒加载嵌入的 ref-docs（跨文档引用数据）。媒体文件通过服务器实时提取，不再需要 blob。
   async _ensureEmbeddedMediaLoaded() {
     const session = this._activeSession;
     if (!session || session._embeddedLoading) return;
     const dataStr = JSON.stringify(session.data || {});
-    const needsMedia = dataStr.includes('udd.media/');
     const needsRefs = dataStr.includes('udd.ref-docs.');
-    if (!needsMedia && !needsRefs) return;
-    const hasMedia = session.embeddedMedia && Object.keys(session.embeddedMedia).length > 0;
+    if (!needsRefs) return;
     const hasRefs = session.embeddedRefDocs && Object.keys(session.embeddedRefDocs).length > 0;
-    if ((needsMedia && hasMedia) && (!needsRefs || hasRefs)) return;
+    if (hasRefs) return;
     session._embeddedLoading = true;
     try {
       let blob = null;
-      // Try fileHandle first (for local picker-opened files)
       if (session.fileHandle) {
-        try {
-          const file = await session.fileHandle.getFile();
-          blob = file;
-        } catch (e) { /* handle may be stale */ }
+        try { blob = await session.fileHandle.getFile(); } catch (e) { /* stale handle */ }
       }
-      // Fallback: try repo server
       if (!blob && session.filePath && this.repoServerUrl) {
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(session.filePath));
         if (resp.ok) blob = await resp.blob();
       }
       if (!blob) return;
       const { embeddedMedia, embeddedRefDocs } = await parseUDDBlob(blob);
-      session.embeddedMedia = embeddedMedia || {};
+      if (embeddedMedia) session.embeddedMedia = embeddedMedia; // keep for fileHandle fallback
       session.embeddedRefDocs = embeddedRefDocs || {};
-      session.embeddedMediaUrls = {};
       this.renderCurrentView();
     } catch (e) { /* skip */ }
     finally { session._embeddedLoading = false; }
@@ -973,28 +980,40 @@ class App {
     loadDir(currentDir);
   }
 
+  // ================================================================
+  // 媒体路径解析 — 纯路径→URL映射，无缓存
+  // 识别规则:
+  //   udd.media/ → 本文件嵌入的内容（从 .udd zip 中提取）
+  //   D:\xxx     → 本机路径（通过服务器代理读取）
+  //   http/data: → 已是可用URL，直接返回
+  // ================================================================
   resolveMediaSrc(src) {
     if (!src) return src;
-    // udd.media/ prefix: embedded content stored per-session
+
+    // udd.media/ — 从当前 .udd 文件的 zip 中提取
     if (src.startsWith('udd.media/')) {
-      const useEmbedded = this.contentSource !== 'repo';
       const session = this._activeSession;
-      const media = session && session.embeddedMedia;
-      if (useEmbedded && media && media[src]) {
-        if (!session.embeddedMediaUrls) session.embeddedMediaUrls = {};
-        if (!session.embeddedMediaUrls[src]) {
-          session.embeddedMediaUrls[src] = URL.createObjectURL(media[src]);
-        }
-        return session.embeddedMediaUrls[src];
+      const entry = src.slice(4); // "udd.media/xxx" → "media/xxx"
+      if (session && session.filePath && this.repoServerUrl) {
+        return this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(session.filePath) + '&entry=' + encodeURIComponent(entry);
+      }
+      // fileHandle 打开（无 filePath）：用打开时解析的 blob
+      if (session && session.embeddedMedia && session.embeddedMedia[src]) {
+        if (!session._blobUrls) session._blobUrls = {};
+        if (!session._blobUrls[src]) session._blobUrls[src] = URL.createObjectURL(session.embeddedMedia[src]);
+        return session._blobUrls[src];
       }
       return '';
     }
-    if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('file:')) return src;
-    // Use server proxy for local absolute paths
+
+    // 已是可用 URL
+    if (src.startsWith('http') || src.startsWith('data:')) return src;
+
+    // 本机绝对路径 D:\xxx — 通过服务器代理
     if (/^[A-Za-z]:[\\/]/.test(src) && this.repoServerUrl) {
       return this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(src);
     }
-    if (/^[A-Za-z]:[\\/]/.test(src)) return 'file:///' + src.replace(/\\/g, '/');
+
     return src;
   }
 
@@ -1138,7 +1157,6 @@ class App {
       if (this._activeSession) {
         this._activeSession.embeddedMedia = embeddedMedia;
         this._activeSession.embeddedRefDocs = embeddedRefDocs;
-        this._activeSession.embeddedMediaUrls = {};
       }
       this._updateSourceBtn();
       toast('已打开: ' + file.name);
@@ -1488,7 +1506,6 @@ class App {
         if (this._activeSession) {
           this._activeSession.embeddedMedia = embeddedMedia || {};
           this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
-          this._activeSession.embeddedMediaUrls = {};
         }
         this._updateSourceBtn();
         toast('已打开: ' + item.name);

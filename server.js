@@ -6,6 +6,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const zlib = require('zlib');
 
 const PORT = parseInt(process.argv[2]) || 8080;
 const ROOT_DIR = process.argv[3] || __dirname;
@@ -17,10 +18,19 @@ const MIME_TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogg': 'video/ogg',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
   '.udd': 'application/octet-stream',
   '.md': 'text/markdown; charset=utf-8',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
 
 function sendJSON(res, data, status = 200) {
@@ -70,14 +80,51 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // === API: Read file (raw binary) ===
+  // === API: Read file (raw binary), optionally extract entry from .udd zip ===
   if (pathname === '/api/readfile') {
     const filePath = parsed.query.path;
+    const entryPath = parsed.query.entry; // e.g. "media/media_0.png" inside a .udd
     if (!filePath) { sendError(res, 'Missing path', 400); return; }
     try {
       const resolved = path.resolve(filePath);
       const stat = fs.statSync(resolved);
       if (!stat.isFile()) { sendError(res, 'Not a file', 400); return; }
+
+      // If entry requested, extract from .udd zip (ZIP local file record)
+      if (entryPath) {
+        const zipBuf = fs.readFileSync(resolved);
+        const entry = _extractZipEntry(zipBuf, entryPath);
+        if (!entry) { sendError(res, 'Entry not found: ' + entryPath, 404); return; }
+        const ext = path.extname(entryPath).toLowerCase();
+        const mime = MIME_TYPES[ext] || 'application/octet-stream';
+        const total = entry.length;
+
+        // Support Range requests (required for video/audio seeking)
+        const rangeHeader = req.headers.range;
+        if (rangeHeader) {
+          const parts = rangeHeader.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+          res.writeHead(206, {
+            'Content-Type': mime,
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': end - start + 1,
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(entry.slice(start, end + 1));
+        } else {
+          res.writeHead(200, {
+            'Content-Type': mime,
+            'Content-Length': total,
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(entry);
+        }
+        return;
+      }
+
       const ext = path.extname(resolved).toLowerCase();
       res.writeHead(200, {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
@@ -89,6 +136,33 @@ const server = http.createServer(async (req, res) => {
       sendError(res, e.message, 404);
     }
     return;
+  }
+
+  // Extract a named entry from a ZIP buffer (no external deps, handles deflate + stored)
+  function _extractZipEntry(buf, entryName) {
+    // Scan local file headers (PK\x03\x04)
+    let i = 0;
+    while (i < buf.length - 4) {
+      if (buf[i] === 0x50 && buf[i+1] === 0x4b && buf[i+2] === 0x03 && buf[i+3] === 0x04) {
+        const compression = buf.readUInt16LE(i + 8);
+        const compSize    = buf.readUInt32LE(i + 18);
+        const uncompSize  = buf.readUInt32LE(i + 22);
+        const nameLen     = buf.readUInt16LE(i + 26);
+        const extraLen    = buf.readUInt16LE(i + 28);
+        const name        = buf.slice(i + 30, i + 30 + nameLen).toString('utf8');
+        const dataStart   = i + 30 + nameLen + extraLen;
+        if (name === entryName) {
+          const compData = buf.slice(dataStart, dataStart + compSize);
+          if (compression === 0) return compData; // stored
+          if (compression === 8) return zlib.inflateRawSync(compData); // deflate
+          return null; // unsupported compression
+        }
+        i = dataStart + compSize;
+      } else {
+        i++;
+      }
+    }
+    return null;
   }
 
   // === API: Read .udd file and return decompressed JSON ===

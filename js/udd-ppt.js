@@ -223,6 +223,10 @@ class PptView {
       const media = parseMediaTag(m[1]);
       if (media && media.image) {
         mediaItems.push({ type: 'image', src: media.image });
+      } else if (media && media.video) {
+        mediaItems.push({ type: 'video', src: media.video });
+      } else if (media && media.audio) {
+        mediaItems.push({ type: 'audio', src: media.audio });
       } else if (typeof parseTableRef === 'function') {
         const tableRef = parseTableRef(m[1]);
         if (tableRef) {
@@ -396,6 +400,12 @@ class PptView {
       if (m.type === 'image') {
         const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
         return `<img class="slide-img" src="${this._esc(resolved)}" />`;
+      } else if (m.type === 'video') {
+        const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
+        return `<video class="slide-video" controls style="max-width:100%;max-height:60vh" src="${this._esc(resolved)}"></video>`;
+      } else if (m.type === 'audio') {
+        const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
+        return `<audio controls src="${this._esc(resolved)}"></audio>`;
       } else {
         return `<table class="slide-table">${(m.rows || []).map((row, ri) => `<tr>${row.map(cell => ri === 0 ? `<th>${this._esc(cell)}</th>` : `<td>${this._esc(cell)}</td>`).join('')}</tr>`).join('')}</table>`;
       }

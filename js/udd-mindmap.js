@@ -190,47 +190,28 @@ class MindmapView {
 
   _buildNode(node, path, level) {
     const desc = resolveNodeForRender(this.data, node, path, level);
-    const hasOwnChildren = getChildTKeys(node, level + 1).length > 0;
-    const hasChildren = hasOwnChildren || (desc.sourceChildren && desc.sourceChildren.length > 0);
-    const isHidden = node && node.hide === 1; // node's OWN hide
+    const ownChildKeys = getChildTKeys(node, level + 1);
+    const srcChildKeys = desc.sourceNode ? getAllTKeys(desc.sourceNode) : [];
+    const hasChildren = ownChildKeys.length > 0 || srcChildKeys.length > 0;
+    const isHidden = node && node.hide === 1;
 
     const item = {
       path, label: desc.displayContent, level, w: 0, h: 0, x: 0, y: 0,
       children: [], node,
       hasBody: desc.hasBody,
-      bodyOpen: desc.hasBody && !desc.hide_body,  // node's OWN hide_body
+      bodyOpen: desc.hasBody && !desc.hide_body,
       _sourceNode: desc.sourceNode,
       _isRef: desc.isRef
     };
 
     if (hasChildren && !isHidden) {
-      if (desc.sourceChildren) {
-        for (const sc of desc.sourceChildren) {
-          item.children.push(this._buildRefCloneNode(sc.node, path + '.__ref__.' + sc.key, sc.level));
-        }
-      } else {
-        const childKeys = getChildTKeys(node, level + 1);
-        for (const ck of childKeys) {
-          item.children.push(this._buildNode(node[ck], path + '.' + ck, level + 1));
-        }
-      }
-    }
-    item.folded = isHidden && hasChildren;
-    item.hasChildren = hasChildren;
-    return item;
-  }
-
-  // Build a tree item for a cloned child (from full-node ref source) for mindmap
-  _buildRefCloneNode(node, path, level) {
-    const rawLabel = (node && node.content) || '';
-    const label = isRef(rawLabel) ? getDisplayValue(this.data, node, 'content') : rawLabel;
-    const hasChildren = getAllTKeys(node).length > 0;
-    const isHidden = node && node.hide === 1;
-    const item = { path, label, level, w: 0, h: 0, x: 0, y: 0, children: [], node, hasBody: !!(node && node.body), bodyOpen: !!(node && node.body && !node.hide_body) };
-    if (hasChildren && !isHidden) {
-      const childKeys = getAllTKeys(node);
-      for (const ck of childKeys) {
-        item.children.push(this._buildRefCloneNode(node[ck], path + '.' + ck, getLevel(ck)));
+      const renderSrc = desc.sourceNode || node;
+      const renderKeys = desc.sourceNode ? srcChildKeys : ownChildKeys;
+      for (const ck of renderKeys) {
+        const childNode = renderSrc[ck];
+        if (!childNode || typeof childNode !== 'object') continue;
+        const childPath = desc.sourceNode ? path + '.__ref__.' + ck : path + '.' + ck;
+        item.children.push(this._buildNode(childNode, childPath, getLevel(ck)));
       }
     }
     item.folded = isHidden && hasChildren;

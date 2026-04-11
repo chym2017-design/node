@@ -30,16 +30,25 @@ function parseTableRef(tagContent) {
 function renderInlineTable(container, ref) {
   const table = document.createElement('table');
   table.className = 'inline-table';
-  // Get cell data from sheetView
+  // Get cell data from sheetView workbook
   let ws = null;
   if (typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook) {
     ws = app.sheetView.workbook.Sheets[ref.sheetName];
   }
   if (!ws) {
-    const err = document.createElement('span');
-    err.className = 'ref-error';
-    err.textContent = '#TABLE! (' + ref.sheetName + ')';
-    container.appendChild(err);
+    // Workbook not yet loaded — show placeholder and trigger sheet tab init if possible
+    const placeholder = document.createElement('span');
+    placeholder.className = 'ref-error';
+    placeholder.style.cursor = 'pointer';
+    placeholder.title = '点击加载表格数据';
+    placeholder.textContent = '表格未加载 (' + ref.sheetName + ')';
+    placeholder.onclick = () => {
+      if (typeof app !== 'undefined') {
+        app.switchView('sheet');
+        setTimeout(() => app.switchView(app.currentView === 'sheet' ? 'outline' : app.currentView), 100);
+      }
+    };
+    container.appendChild(placeholder);
     return;
   }
   const startR = parseInt(ref.startAddr.match(/\d+/)[0]) - 1;

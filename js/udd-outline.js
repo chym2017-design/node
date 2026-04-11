@@ -40,9 +40,14 @@ class OutlineView {
     this.updateStatus();
   }
 
-  renderNode(node, path, level, container) {
+  renderNode(node, path, level, container, readOnly) {
     if (!node || typeof node !== 'object') return;
     const desc = resolveNodeForRender(this.data, node, path, level);
+    // readOnly: 来自引用的子节点，禁止编辑
+    if (readOnly) {
+      desc.contentEditable = false;
+      desc.bodyEditable = false;
+    }
 
     const div = document.createElement('div');
     div.className = 'outline-node';
@@ -57,10 +62,11 @@ class OutlineView {
     indent.style.width = (Math.max(0, level - 1) * 24) + 'px';
     row.appendChild(indent);
 
-    // fold arrow — uses node's own hide (render field), but checks source children
+    // fold arrow
     const childLevel = level + 1;
     const ownChildKeys = getChildTKeys(node, childLevel);
-    const hasVisibleChildren = ownChildKeys.length > 0 || (desc.sourceChildren && desc.sourceChildren.length > 0);
+    const srcChildKeys = desc.sourceNode ? getAllTKeys(desc.sourceNode) : [];
+    const hasVisibleChildren = ownChildKeys.length > 0 || srcChildKeys.length > 0;
     const arrow = document.createElement('span');
     arrow.className = 'outline-arrow' + (!hasVisibleChildren ? ' leaf' : '');
     arrow.textContent = !hasVisibleChildren ? '•' : (desc.hide ? '▶' : '▼');
@@ -88,7 +94,7 @@ class OutlineView {
         numSpan.className = 'outline-num';
         numSpan.draggable = true;
         numSpan.dataset.dragPath = path;
-        numSpan.textContent = this.getNumber(path, numStyle);
+        numSpan.textContent = readOnly ? this._getRefChildNumber(path, numStyle) : this.getNumber(path, numStyle);
         this.applyStyle(numSpan, style);
         contentWrap.appendChild(numSpan);
       }
@@ -120,11 +126,13 @@ class OutlineView {
       const contentText = stripMediaTags(desc.displayContent);
       renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
       content.contentEditable = 'false';
-      content.classList.add('ref-display');
-      content.dataset.ref = desc.refStr;
-      if (!isSheetRef(desc.refStr) && parseRef(desc.refStr).docName) content.dataset.refAsync = desc.refStr;
-      const refIcon = createRefIcon(this.data, desc.refStr, this);
-      content.appendChild(refIcon);
+      if (desc.refStr) {
+        content.classList.add('ref-display');
+        content.dataset.ref = desc.refStr;
+        if (!isSheetRef(desc.refStr) && parseRef(desc.refStr).docName) content.dataset.refAsync = desc.refStr;
+        const refIcon = createRefIcon(this.data, desc.refStr, this);
+        content.appendChild(refIcon);
+      }
     }
     this.applyStyle(content, style);
     const fmt = app && app.outlineFmt ? app.outlineFmt : {};
@@ -235,28 +243,22 @@ class OutlineView {
 
     // children — node's OWN hide controls visibility
     if (!desc.hide) {
-      if (desc.sourceChildren && desc.sourceChildren.length > 0) {
-        // Full-node ref: render source children as read-only clones
+      // 统一渲染: 全节点引用时遍历源节点的子节点，否则遍历自身子节点
+      const renderSource = desc.sourceNode || node;
+      const renderChildKeys = desc.sourceNode ? getAllTKeys(desc.sourceNode) : ownChildKeys;
+      if (renderChildKeys.length > 0) {
         const childContainer = document.createElement('div');
         childContainer.className = 'outline-children';
         if (fmt.tree_lines && level >= 1) {
           childContainer.classList.add('tree-lines');
           childContainer.style.setProperty('--tree-x', ((level - 1) * 24 + 30) + 'px');
         }
-        for (const sc of desc.sourceChildren) {
-          this._renderRefCloneNode(sc.node, path, sc.key, sc.level, childContainer, desc.refStr);
-        }
-        div.appendChild(childContainer);
-      } else if (ownChildKeys.length > 0) {
-        // Normal children
-        const childContainer = document.createElement('div');
-        childContainer.className = 'outline-children';
-        if (fmt.tree_lines && level >= 1) {
-          childContainer.classList.add('tree-lines');
-          childContainer.style.setProperty('--tree-x', ((level - 1) * 24 + 30) + 'px');
-        }
-        for (const ck of ownChildKeys) {
-          this.renderNode(node[ck], path + '.' + ck, childLevel, childContainer);
+        for (const ck of renderChildKeys) {
+          const childNode = renderSource[ck];
+          if (!childNode || typeof childNode !== 'object') continue;
+          // 引用子节点: 用合成路径 + readOnly 标记，走统一 renderNode
+          const childPath = desc.sourceNode ? path + '.__ref__.' + ck : path + '.' + ck;
+          this.renderNode(childNode, childPath, getLevel(ck), childContainer, !!desc.sourceNode);
         }
         div.appendChild(childContainer);
       }
@@ -265,169 +267,22 @@ class OutlineView {
     container.appendChild(div);
   }
 
-  // Render a cloned child node from a full-node reference (read-only, recursively)
-  _renderRefCloneNode(node, refHostPath, sourceChildKey, level, container, refStr) {
-    if (!node || typeof node !== 'object') return;
-    const div = document.createElement('div');
-    div.className = 'outline-node';
-    // Use a synthetic path for display (not editable)
-    const syntheticPath = refHostPath + '.__ref__.' + sourceChildKey;
-    div.dataset.path = syntheticPath;
-
-    const row = document.createElement('div');
-    row.className = 'outline-row';
-
-    // indent
-    const indent = document.createElement('span');
-    indent.className = 'indent';
-    indent.style.width = (Math.max(0, level - 1) * 24) + 'px';
-    row.appendChild(indent);
-
-    // fold arrow
-    const childLevel = level + 1;
-    const refChildKeys = getChildTKeys(node, childLevel);
-    const arrow = document.createElement('span');
-    arrow.className = 'outline-arrow' + (refChildKeys.length === 0 ? ' leaf' : '');
-    arrow.textContent = refChildKeys.length === 0 ? '•' : (node.hide ? '▶' : '▼');
-    if (refChildKeys.length > 0) {
-      arrow.onclick = () => {
-        node.hide = node.hide ? 0 : 1;
-        app.renderCurrentView();
-      };
-    }
-    row.appendChild(arrow);
-
-    // contentWrap
-    const contentWrap = document.createElement('div');
-    contentWrap.className = 'outline-content-wrap';
-
-    const style = buildNodeStyle(this.data, refHostPath, level, { isBody: false });
-
-    // numbering
-    if (level !== 0) {
-      const tg = this.data.type_global || {};
-      const numStyle = tg.numbering_style || '1.1.1';
-      if (numStyle !== 'none') {
-        const numSpan = document.createElement('span');
-        numSpan.className = 'outline-num';
-        // Compute numbering based on position among siblings in source
-        const sourceParent = this._findRefCloneParent(node, sourceChildKey, refStr);
-        numSpan.textContent = this._getRefCloneNumber(sourceChildKey, sourceParent, numStyle);
-        this.applyStyle(numSpan, style);
-        contentWrap.appendChild(numSpan);
-      }
-    }
-
-    // content (read-only clone)
-    const content = document.createElement('div');
-    content.className = 'outline-content';
-    content.contentEditable = 'false';
-    const rawContent = node.content || '';
-    const contentText = stripMediaTags(rawContent);
-    content.textContent = contentText;
-    this.applyStyle(content, style);
-    contentWrap.appendChild(content);
-
-    // body button (fold/unfold)
-    const hasBody = node.body !== undefined && node.body !== '';
-    if (hasBody) {
-      const bodyBtn = document.createElement('span');
-      bodyBtn.className = 'body-btn';
-      bodyBtn.textContent = node.hide_body ? '▸' : '▾';
-      bodyBtn.title = node.hide_body ? '展开正文' : '折叠正文';
-      bodyBtn.onclick = (e) => {
-        e.stopPropagation();
-        node.hide_body = node.hide_body ? 0 : 1;
-        app.renderCurrentView();
-      };
-      contentWrap.appendChild(bodyBtn);
-    }
-
-    row.appendChild(contentWrap);
-    div.appendChild(row);
-
-    // media from content
-    if (hasMediaTag(rawContent)) {
-      const mediaDiv = document.createElement('div');
-      mediaDiv.className = 'outline-media';
-      mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-      renderTextWithMedia(rawContent, mediaDiv, {path: refHostPath, field: 'content'}, {suppressAlign: true});
-      div.appendChild(mediaDiv);
-    }
-
-    // body
-    if (!node.hide_body && hasBody) {
-      const bodyEl = document.createElement('div');
-      bodyEl.className = 'outline-body';
-      if (app && app.outlineFmt && app.outlineFmt.body_border) bodyEl.classList.add('show-border');
-      bodyEl.contentEditable = 'false';
-      const bodyStyle = buildNodeStyle(this.data, refHostPath, level, { isBody: true });
-      const rawBody = node.body || '';
-      const bodyText = stripMediaTags(rawBody);
-      bodyEl.textContent = bodyText;
-      bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-      this.applyStyle(bodyEl, bodyStyle);
-      div.appendChild(bodyEl);
-      // media from body
-      if (hasMediaTag(rawBody)) {
-        const bodyMediaDiv = document.createElement('div');
-        bodyMediaDiv.className = 'outline-media';
-        bodyMediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-        renderTextWithMedia(rawBody, bodyMediaDiv, {path: refHostPath, field: 'body'}, {suppressAlign: true});
-        div.appendChild(bodyMediaDiv);
-      }
-    }
-
-    // recurse children
-    if (!node.hide && refChildKeys.length > 0) {
-      const childContainer = document.createElement('div');
-      childContainer.className = 'outline-children';
-      const fmt = app && app.outlineFmt ? app.outlineFmt : {};
-      if (fmt.tree_lines && level >= 1) {
-        childContainer.classList.add('tree-lines');
-        childContainer.style.setProperty('--tree-x', ((level - 1) * 24 + 30) + 'px');
-      }
-      for (const ck of refChildKeys) {
-        this._renderRefCloneNode(node[ck], refHostPath, sourceChildKey + '.' + ck, getLevel(ck), childContainer, refStr);
-      }
-      div.appendChild(childContainer);
-    }
-
-    container.appendChild(div);
-  }
-
-  _findRefCloneParent(node, sourceChildKey, refStr) {
-    // Get the source node from refStr to find siblings
-    const srcNode = getFullRefNode(this.data, refStr);
-    if (!srcNode) return null;
-    // sourceChildKey might be like "t2-1" or "t2-1.t3-1" etc.
-    const parts = sourceChildKey.split('.');
-    if (parts.length === 1) return srcNode;
-    // Walk to parent
-    let current = srcNode;
-    for (let i = 0; i < parts.length - 1; i++) {
-      current = current[parts[i]];
-      if (!current) return null;
-    }
-    return current;
-  }
-
-  _getRefCloneNumber(sourceChildKey, parentNode, numStyle) {
-    if (!parentNode) return '';
-    const parts = sourceChildKey.split('.');
-    const lastKey = parts[parts.length - 1];
-    const level = getLevel(lastKey);
-    const siblings = getChildTKeys(parentNode, level);
-    const idx = siblings.indexOf(lastKey);
-    if (idx < 0) return '';
-    const num = idx + 1;
-    // Simple numbering for cloned nodes
+  // 引用子节点的简单编号（path 含 __ref__，无法走正常 getNumber）
+  _getRefChildNumber(path, numStyle) {
     if (numStyle === 'bullet') {
       const bullets = ['●','○','■','▪'];
-      return bullets[Math.min(parts.length - 1, bullets.length - 1)];
+      const refIdx = path.indexOf('.__ref__.');
+      const refPart = refIdx >= 0 ? path.slice(refIdx + 9) : path;
+      const depth = refPart.split('.').length - 1;
+      return bullets[Math.min(depth, bullets.length - 1)];
     }
     if (numStyle === 'bullet-uniform') return '●';
-    return String(num);
+    // Extract the last tNode key and find its sibling index
+    const parts = path.split('.');
+    const lastKey = parts[parts.length - 1];
+    // Simple fallback: just use the number from the key (t2-3 → 3)
+    const m = lastKey.match(/^t\d+-(\d+)$/);
+    return m ? m[1] : '';
   }
 
   isBodyEditing(path) { return this.focusPath === path && this.focusField === 'body'; }
@@ -472,11 +327,14 @@ class OutlineView {
   }
 
   getStyle(path, level) {
-    return buildNodeStyle(this.data, path, level, { isBody: false });
+    // 引用子节点: 用宿主路径查找样式
+    const stylePath = path.includes('.__ref__.') ? path.split('.__ref__.')[0] : path;
+    return buildNodeStyle(this.data, stylePath, level, { isBody: false });
   }
 
   getBodyStyle(path) {
-    return buildNodeStyle(this.data, path, undefined, { isBody: true });
+    const stylePath = path.includes('.__ref__.') ? path.split('.__ref__.')[0] : path;
+    return buildNodeStyle(this.data, stylePath, undefined, { isBody: true });
   }
 
   applyStyle(el, style) {
@@ -493,6 +351,10 @@ class OutlineView {
       const field = el.dataset.field;
       node[field] = mergeEditableTextAndMedia(node[field], el.textContent);
     });
+    // Normalize duplicate media tags after sync (done here, not on every render)
+    if (typeof app !== 'undefined' && app._normalizeEmbeddedTagsInData) {
+      app._normalizeEmbeddedTagsInData(this.data);
+    }
   }
 
   onInput(e) {

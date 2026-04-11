@@ -155,45 +155,53 @@ function nodeToText(node) {
   return text;
 }
 
+// ================================================================
+// FUNCTION 1: resolveRef — synchronous resolution for =refStr
+// Lookup order: 1.本文档 → 2.嵌入(udd.ref-docs) → 3.跨文档(#LOADING... for async)
+// ================================================================
 function resolveRef(data, refStr) {
   if (!isRef(refStr)) return refStr;
 
-  // Sheet reference: =Sheet1.B2 format — detect by splitting on '.'
-  const dotIdx = refStr.indexOf('.');
-  if (dotIdx > 1) {
-    const maybeSheet = refStr.slice(1, dotIdx);
-    const maybeAddr = refStr.slice(dotIdx + 1);
-    if (/^[A-Za-z][A-Za-z0-9_]*$/.test(maybeSheet) && /^[A-Z]{1,3}\d{1,7}$/.test(maybeAddr) && !/^t\d+$/.test(maybeSheet)) {
-      if (typeof app !== 'undefined' && app.sheetView) {
-        return String(app.sheetView.getCellValue(maybeSheet, maybeAddr) ?? '');
-      }
-      return '';
+  // Sheet reference: =Sheet1.B2
+  if (isSheetRef(refStr)) {
+    if (typeof app !== 'undefined' && app.sheetView) {
+      const dotIdx = refStr.indexOf('.');
+      return String(app.sheetView.getCellValue(refStr.slice(1, dotIdx), refStr.slice(dotIdx + 1)) ?? '');
     }
+    return '';
   }
 
   const ref = parseRef(refStr);
   if (!ref.nodePath) return '#REF!';
 
-  // udd.ref-docs. embedded refs: resolve from session embeddedRefDocs or _refDocCache
+  // --- Lookup order ---
+
+  // 1. 嵌入引用 (udd.ref-docs.xxx): 从当前文件的 ref-docs.json 读取
   if (ref.isUddEmbed && ref.docName) {
-    const useEmbed = !app || app.contentSource !== 'repo';
-    const sessionRefDocs = app && app._activeSession && app._activeSession.embeddedRefDocs;
-    const embedDoc = useEmbed && sessionRefDocs && sessionRefDocs[ref.docName];
-    const cacheDoc = _refDocCache[ref.docName];
-    const srcData = embedDoc || cacheDoc;
-    if (!srcData) return '#REF!';
-    const localRef = '=' + ref.nodePath + (ref.field ? '.' + ref.field : '');
-    return resolveRef(srcData, localRef);
+    const sessionRefDocs = typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedRefDocs;
+    const srcData = sessionRefDocs && sessionRefDocs[ref.docName];
+    if (!srcData) return '#LOADING...';
+    return _resolveLocalRef(srcData, ref);
   }
 
-  // Cross-file refs need async — return placeholder
-  if (ref.docName) return '#LOADING...';
+  // 2. 跨文档引用 (=docName.xxx): 需要异步加载
+  if (ref.docName) {
+    // Try _refDocCache (populated from actual server reads, not browser cache)
+    if (_refDocCache[ref.docName]) {
+      return _resolveLocalRef(_refDocCache[ref.docName], ref);
+    }
+    return '#LOADING...';
+  }
 
-  // Find the node — could be a root key or nested path
+  // 3. 本文档引用: 直接从 data 树查找
+  return _resolveLocalRef(data, ref);
+}
+
+// Internal: resolve a parsed ref against a specific data tree
+function _resolveLocalRef(data, ref) {
   const node = findRefNode(data, ref.nodePath);
   if (!node) return '#REF!';
 
-  // Get value
   let value;
   if (ref.field) {
     value = typeof node === 'object' ? (node[ref.field] ?? '') : '';
@@ -202,20 +210,12 @@ function resolveRef(data, refStr) {
   }
   value = String(value);
 
-  // Apply match expression
   if (ref.matchExpr) {
     const m = value.match(ref.matchExpr.pattern);
-    if (m && m[ref.matchExpr.index] !== undefined) {
-      value = m[ref.matchExpr.index];
-    } else {
-      return '#MATCH!';
-    }
+    if (m && m[ref.matchExpr.index] !== undefined) value = m[ref.matchExpr.index];
+    else return '#MATCH!';
   }
-
-  // Apply slice
-  if (ref.slice) {
-    value = value.slice(ref.slice[0], ref.slice[1]);
-  }
+  if (ref.slice) value = value.slice(ref.slice[0], ref.slice[1]);
 
   return value;
 }
@@ -271,59 +271,41 @@ function isSheetRef(refStr) {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(maybeSheet) && /^[A-Z]{1,3}\d{1,7}$/.test(maybeAddr) && !/^t\d+$/.test(maybeSheet);
 }
 
+// ================================================================
+// resolveRefAsync — async resolution for refs that returned #LOADING...
+// Lookup order: 1.嵌入(懒加载) → 2.仓库服务器 → 3.本机路径
+// ================================================================
 async function resolveRefAsync(data, refStr) {
   if (!isRef(refStr)) return refStr;
   if (isSheetRef(refStr)) return resolveRef(data, refStr);
   const ref = parseRef(refStr);
   if (!ref.nodePath) return '#REF!';
-
   if (!ref.docName) return resolveRef(data, refStr);
 
-  // udd.ref-docs. embedded refs: resolve from session embeddedRefDocs (no async needed)
+  // 1. 嵌入引用: 触发懒加载从实际文件读取 ref-docs.json
   if (ref.isUddEmbed) {
-    const useEmbed = !app || app.contentSource !== 'repo';
-    const sessionRefDocs = app && app._activeSession && app._activeSession.embeddedRefDocs;
-    const embedDoc = useEmbed && sessionRefDocs && sessionRefDocs[ref.docName];
-    const cacheDoc = _refDocCache[ref.docName];
-    const srcData = embedDoc || cacheDoc;
+    const sessionRefDocs = typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedRefDocs;
+    let srcData = sessionRefDocs && sessionRefDocs[ref.docName];
+    if (!srcData && typeof app !== 'undefined' && app._ensureEmbeddedMediaLoaded) {
+      await app._ensureEmbeddedMediaLoaded();
+      const reloaded = app._activeSession && app._activeSession.embeddedRefDocs;
+      srcData = reloaded && reloaded[ref.docName];
+    }
     if (!srcData) return '#REF!';
-    const localRef = '=' + ref.nodePath + (ref.field ? '.' + ref.field : '');
-    return resolveRef(srcData, localRef);
+    return _resolveLocalRef(srcData, ref);
   }
 
-  // Cross-file: load from cache, IndexedDB, or local server
+  // 2. 跨文档: 从仓库服务器实际读取文件
   let docData = _refDocCache[ref.docName];
   if (!docData) {
-    // Try IndexedDB first
     try {
-      const saved = await dbLoad(ref.docName);
-      if (saved && saved.data) {
-        docData = saved.data;
-        _refDocCache[ref.docName] = docData;
-      }
+      docData = await _loadDocFromServer(ref.docName);
+      if (docData) _refDocCache[ref.docName] = docData;
     } catch (e) { /* skip */ }
-
-    // If not in IndexedDB, try loading from local server
-    if (!docData) {
-      try {
-        docData = await _loadDocFromServer(ref.docName);
-        if (docData) _refDocCache[ref.docName] = docData;
-      } catch (e) { /* skip */ }
-    }
-
-    if (!docData) return '#DOC!';
   }
+  if (!docData) return '#DOC!';
 
-  // Rebuild refStr without docName for local resolution
-  let localRef = '=' + ref.nodePath;
-  if (ref.field) localRef += '.' + ref.field;
-  if (ref.matchExpr) {
-    localRef += '.match(/' + ref.matchExpr.pattern.source + '/' +
-      ref.matchExpr.pattern.flags + ').[' + ref.matchExpr.index + ']';
-  }
-  if (ref.slice) localRef += '(' + ref.slice[0] + ',' + ref.slice[1] + ')';
-
-  return resolveRef(docData, localRef);
+  return _resolveLocalRef(docData, ref);
 }
 
 // Try to load a document from the local server by name or path
@@ -357,7 +339,8 @@ async function _loadDocFromServer(docName) {
         return JSON.parse(text);
       } else {
         const blob = await resp.blob();
-        return await parseUDDBlob(blob);
+        const result = await parseUDDBlob(blob);
+        return result && result.data ? result.data : result;
       }
     } catch (e) { continue; }
   }
@@ -372,9 +355,9 @@ function getDisplayValue(data, node, field) {
 
 // ================================================================
 //  UNIFIED NODE RENDER DESCRIPTOR
-//  Resolves what a node should display, separating content from rendering.
-//  Content fields (from source when ref): content, body, children
-//  Render fields (always owned by node itself): hide, hide_body, styles
+//  核心思路: 原始数据 → 多种渲染
+//  遇到 "=" 引用时，先读取源数据，再用统一方式渲染。
+//  sourceNode 不为 null 时，渲染函数直接遍历 sourceNode 的内容和子节点。
 // ================================================================
 function resolveNodeForRender(data, node, path, level) {
   const raw = node.content || '';
@@ -385,10 +368,11 @@ function resolveNodeForRender(data, node, path, level) {
   const sourceNode = fullRef ? getFullRefNode(data, raw) : null;
 
   const desc = {
+    // 渲染用的显示内容（文本部分，去掉 media tag 后由渲染函数处理）
     displayContent: '',
     displayBody: '',
     hasBody: false,
-    sourceChildren: null,
+    // 全节点引用: sourceNode 是源节点对象，渲染函数直接遍历它
     sourceNode: sourceNode,
     isRef: isContentRef,
     isFullRef: fullRef,
@@ -397,15 +381,14 @@ function resolveNodeForRender(data, node, path, level) {
     inlineSegments: null,
     contentEditable: !isContentRef && !hasInline,
     bodyEditable: true,
+    // hide/hide_body 始终取自当前节点（引用宿主控制折叠）
     hide: node.hide || 0,
     hide_body: node.hide_body || 0,
-    renderOn: _renderOn,   // false = show raw text as-is
+    renderOn: _renderOn,
   };
 
   if (hasInline) {
-    // Mixed content: text + {{=ref}} inline references
     desc.inlineSegments = resolveInlineRefs(data, raw);
-    // Build plain display text for search/export
     desc.displayContent = desc.inlineSegments.map(s => s.type === 'ref' ? s.resolved : s.value).join('');
     desc.displayBody = node.body || '';
     desc.hasBody = !!(node.body);
@@ -419,14 +402,11 @@ function resolveNodeForRender(data, node, path, level) {
       desc.displayBody = resolveRef(data, rawBody);
     }
   } else if (fullRef && sourceNode) {
+    // 全节点引用成功: 用源节点的 content/body 渲染，子节点也用源节点的
     desc.displayContent = sourceNode.content || '';
     desc.displayBody = sourceNode.body || '';
     desc.hasBody = !!(sourceNode.body);
     desc.bodyEditable = false;
-    const srcChildKeys = getAllTKeys(sourceNode);
-    if (srcChildKeys.length > 0) {
-      desc.sourceChildren = srcChildKeys.map(k => ({ key: k, node: sourceNode[k], level: getLevel(k) }));
-    }
   } else if (fullRef && !sourceNode) {
     desc.displayContent = '#LOADING...';
     desc.displayBody = '';
@@ -465,9 +445,9 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
       refSpan.className = 'inline-ref';
       refSpan.dataset.ref = seg.raw;
       refSpan.title = seg.raw;
-      // Check if cross-doc async needed
+      // Mark for async resolution: cross-doc or embedded refs that need loading
       const ref = parseRef(seg.raw);
-      if (ref.docName && !isSheetRef(seg.raw)) {
+      if ((ref.docName || ref.isUddEmbed) && !isSheetRef(seg.raw)) {
         refSpan.dataset.refAsync = seg.raw;
       }
       refSpan.textContent = seg.resolved;
