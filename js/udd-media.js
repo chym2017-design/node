@@ -92,19 +92,29 @@ function resolveMediaSrc(src) {
   if (typeof app !== 'undefined' && app.resolveMediaSrc) return app.resolveMediaSrc(src);
   return src;
 }
+
+// ================================================================
+// 统一的媒体渲染入口:
+// 1) 先用公共 collector 深入展开所有 =ref / {{=ref}}，拿到 mediaItems 列表
+// 2) 按顺序渲染为 DOM（image/video/audio/table）
+// text-between-media 只在 outline/document 的"媒体区"里用到，不在此渲染
+// （节点正文本身由 content span / body div 渲染）。
+// ================================================================
 function renderTextWithMedia(text, container, mediaInfo, opts) {
   if (!text) return;
   const noAlign = opts && opts.suppressAlign;
-  const parts = text.split(MEDIA_RE);
-  for (let i = 1; i < parts.length; i += 2) {
-    const media = parseMediaTag(parts[i]);
-    if (!media) {
-      // Not JSON media — try inline table ref
-      const tableRef = parseTableRef(parts[i]);
-      if (tableRef) renderInlineTable(container, tableRef);
+  const data = (typeof app !== 'undefined' && app.data) ? app.data : null;
+  const items = (typeof collectMediaItemsFromText === 'function')
+    ? collectMediaItemsFromText(data, text)
+    : _legacyCollect(text);
+
+  for (const it of items) {
+    if (it.type === 'table') {
+      renderInlineTable(container, it.tableRef);
       continue;
     }
-    if (media.image) {
+    const media = it.meta || {};
+    if (it.type === 'image') {
       const alignBox = document.createElement('div');
       if (!noAlign && media['image.align']) alignBox.style.textAlign = media['image.align'];
       const wrapper = document.createElement('div');
@@ -112,7 +122,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       const imgW = media['image.width'] || '';
       if (imgW) wrapper.style.width = imgW;
       const img = document.createElement('img');
-      img.src = resolveMediaSrc(media.image);
+      _bindMediaSrcWithFallback(img, it.src);
       img.className = 'media-img';
       img.style.width = '100%';
       const imgH = media['image.height'] || '';
@@ -135,7 +145,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       }
       alignBox.appendChild(wrapper);
       container.appendChild(alignBox);
-    } else if (media.video) {
+    } else if (it.type === 'video') {
       const alignBox = document.createElement('div');
       if (!noAlign && media['video.align']) alignBox.style.textAlign = media['video.align'];
       const wrapper = document.createElement('div');
@@ -144,7 +154,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       const vidH = media['video.height'] || '';
       if (vidW) wrapper.style.width = vidW;
       const vid = document.createElement('video');
-      vid.src = resolveMediaSrc(media.video);
+      _bindMediaSrcWithFallback(vid, it.src);
       vid.className = 'media-video';
       vid.controls = true;
       vid.style.width = '100%';
@@ -160,15 +170,52 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       wrapper.appendChild(handle);
       alignBox.appendChild(wrapper);
       container.appendChild(alignBox);
-    } else if (media.audio) {
+    } else if (it.type === 'audio') {
       const aud = document.createElement('audio');
-      aud.src = resolveMediaSrc(media.audio);
+      _bindMediaSrcWithFallback(aud, it.src);
       aud.controls = true;
       aud.className = 'media-audio';
       aud.onclick = (e) => { e.stopPropagation(); showMediaEditor(aud, mediaInfo); };
       container.appendChild(aud);
     }
   }
+}
+
+// 回退：仅在 collector 不可用时用；保持和旧行为兼容（不深入 ref）
+function _legacyCollect(text) {
+  const out = [];
+  const parts = text.split(MEDIA_RE);
+  for (let i = 1; i < parts.length; i += 2) {
+    const media = parseMediaTag(parts[i]);
+    if (media && media.image) out.push({ type: 'image', src: media.image, meta: media });
+    else if (media && media.video) out.push({ type: 'video', src: media.video, meta: media });
+    else if (media && media.audio) out.push({ type: 'audio', src: media.audio, meta: media });
+    else {
+      const tr = parseTableRef(parts[i]);
+      if (tr) out.push({ type: 'table', tableRef: tr });
+    }
+  }
+  return out;
+}
+
+// 为 <img> / <video> / <audio> 绑定 src，并在失败时按候选列表顺序回退。
+// 读取优先级（固定，和是否开 server 无关）：
+//   1) 嵌入 blob（udd.media/）
+//   2) 仓库服务器（需 server + filePath）
+//   3) 本机绝对路径代理（需 server）
+//   4) 原样
+function _bindMediaSrcWithFallback(el, src) {
+  const candidates = (typeof app !== 'undefined' && app.resolveMediaSrcCandidates)
+    ? app.resolveMediaSrcCandidates(src)
+    : [resolveMediaSrc(src)];
+  if (!candidates || candidates.length === 0) { el.src = ''; return; }
+  let idx = 0;
+  const tryNext = () => {
+    if (idx >= candidates.length) return;
+    el.src = candidates[idx++];
+  };
+  el.onerror = () => { if (idx < candidates.length) tryNext(); };
+  tryNext();
 }
 // Drag-to-resize
 function startMediaResize(e, el, wrapper, mediaInfo) {

@@ -132,6 +132,8 @@ class PptView {
         if (!child) continue;
         await this._collectBullets(child, 0, depth - 2, bullets, mediaItems);
       }
+      if (node.content) await this._collectMediaAsync(node.content, mediaItems);
+      if (node.body) await this._collectMediaAsync(node.body, mediaItems);
       slides.push({
         type: 'content', title: await this._resolveContent(node.content),
         notes: node.body ? await this._resolveContent(node.body) : '',
@@ -148,7 +150,9 @@ class PptView {
       if (!child) continue;
       await this._collectBullets(child, 0, depth - baseLevel - 1, bullets, mediaItems);
     }
-    if (node.body) this._collectMediaItems(node.body, mediaItems);
+    // 主节点自己的 content / body 里的媒体（含 =ref 深入解析）
+    if (node.content) await this._collectMediaAsync(node.content, mediaItems);
+    if (node.body) await this._collectMediaAsync(node.body, mediaItems);
     // Title: for full node refs, use the source node's content as title
     let title = await this._resolveContent(node.content);
     let notes = node.body ? await this._resolveContent(node.body) : '';
@@ -158,6 +162,9 @@ class PptView {
       if (sourceNode) {
         title = await this._resolveContent(sourceNode.content);
         if (sourceNode.body) notes = await this._resolveContent(sourceNode.body);
+        // 源节点自身 content/body 媒体也要收集
+        if (sourceNode.content) await this._collectMediaAsync(sourceNode.content, mediaItems);
+        if (sourceNode.body) await this._collectMediaAsync(sourceNode.body, mediaItems);
         const srcChildKeys = Object.keys(sourceNode).filter(k => isTNode(k)).sort();
         for (const ck of srcChildKeys) {
           await this._collectBullets(sourceNode[ck], 0, depth - baseLevel - 1, bullets, mediaItems);
@@ -182,12 +189,12 @@ class PptView {
 
     const content = await this._resolveContent(raw);
     if (content) bullets.push({ text: content, level });
-    this._collectMediaItems(raw, mediaItems);
+    await this._collectMediaAsync(raw, mediaItems);
     if (node.body) {
       const bodyText = await this._resolveContent(node.body);
       const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
       if (bodyDisplay) bullets.push({ text: bodyDisplay, level, isBody: true });
-      this._collectMediaItems(node.body, mediaItems);
+      await this._collectMediaAsync(node.body, mediaItems);
     }
     if (level < maxDepth) {
       const childKeys = Object.keys(node).filter(k => isTNode(k)).sort();
@@ -195,6 +202,25 @@ class PptView {
         await this._collectBullets(node[ck], level + 1, maxDepth, bullets, mediaItems);
       }
     }
+  }
+
+  // 公共 collector 的异步包装：深入 =ref / {{=ref}} 展开所有媒体
+  async _collectMediaAsync(text, mediaItems) {
+    if (!text) return;
+    if (typeof collectMediaItemsFromTextAsync === 'function') {
+      const items = await collectMediaItemsFromTextAsync(this.data, text);
+      for (const it of items) {
+        if (it.type === 'table' && it.tableRef) {
+          const rows = this._readTableRows(it.tableRef);
+          if (rows && rows.length) mediaItems.push({ type: 'table', rows });
+        } else {
+          mediaItems.push({ type: it.type, src: it.src });
+        }
+      }
+      return;
+    }
+    // 回退：旧行为
+    this._collectMediaItems(text, mediaItems);
   }
 
   // Resolve a full node ref (=t1-1 or =doc.t1-1) and return the source node object
@@ -317,6 +343,7 @@ class PptView {
       inner.className = 'ppt-thumb-inner';
       inner.style.background = slide.theme.bg;
       inner.innerHTML = this._renderSlideHTML(slide, true);
+      this._bindMediaElements(inner);
       thumb.appendChild(inner);
       const num = document.createElement('span');
       num.className = 'ppt-thumb-num';
@@ -338,6 +365,7 @@ class PptView {
       slideEl.style.background = s.theme.bg;
       slideEl.style.color = s.theme.text;
       slideEl.innerHTML = this._renderSlideHTML(s, false);
+      this._bindMediaElements(slideEl);
       if (s.type === 'cover') slideEl.classList.add('slide-cover');
       else if (s.type === 'ending') slideEl.classList.add('slide-ending');
       else if (s.layout === 'title_only') slideEl.classList.add('slide-title-only');
@@ -396,16 +424,14 @@ class PptView {
     const hasMedia = mediaItems.length > 0;
 
     // Build ordered media HTML (images and tables in appearance order)
+    // 用 data-mediasrc 占位，innerHTML 后统一绑定候选 URL + onerror 回退
     const buildMediaHTML = (items) => items.map(m => {
       if (m.type === 'image') {
-        const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
-        return `<img class="slide-img" src="${this._esc(resolved)}" />`;
+        return `<img class="slide-img" data-mediasrc="${this._esc(m.src)}" />`;
       } else if (m.type === 'video') {
-        const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
-        return `<video class="slide-video" controls style="max-width:100%;max-height:60vh" src="${this._esc(resolved)}"></video>`;
+        return `<video class="slide-video" controls style="max-width:100%;max-height:60vh" data-mediasrc="${this._esc(m.src)}"></video>`;
       } else if (m.type === 'audio') {
-        const resolved = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
-        return `<audio controls src="${this._esc(resolved)}"></audio>`;
+        return `<audio controls data-mediasrc="${this._esc(m.src)}"></audio>`;
       } else {
         return `<table class="slide-table">${(m.rows || []).map((row, ri) => `<tr>${row.map(cell => ri === 0 ? `<th>${this._esc(cell)}</th>` : `<td>${this._esc(cell)}</td>`).join('')}</tr>`).join('')}</table>`;
       }
@@ -432,8 +458,7 @@ class PptView {
       }
       html += '</div>';
     } else if (layout === 'image_full' && hasMedia && mediaItems[0].type === 'image') {
-      const imgSrc0 = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(mediaItems[0].src) : mediaItems[0].src;
-      html = `<img class="slide-img" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.3" src="${this._esc(imgSrc0)}" />
+      html = `<img class="slide-img" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.3" data-mediasrc="${this._esc(mediaItems[0].src)}" />
               <div style="position:relative;z-index:1">${html}<div class="slide-body"><div class="slide-col">${bulletHTML}</div></div></div>`;
     } else {
       // one_col default — media goes in right column (max-width:40%)
@@ -442,6 +467,17 @@ class PptView {
       html += '</div>';
     }
     return html;
+  }
+
+  // 把 innerHTML 里所有 [data-mediasrc] 的 <img>/<video>/<audio>
+  // 通过公共 _bindMediaSrcWithFallback 绑定候选 URL + onerror 回退。
+  _bindMediaElements(rootEl) {
+    if (!rootEl || typeof _bindMediaSrcWithFallback !== 'function') return;
+    rootEl.querySelectorAll('[data-mediasrc]').forEach(el => {
+      const src = el.getAttribute('data-mediasrc');
+      el.removeAttribute('data-mediasrc');
+      _bindMediaSrcWithFallback(el, src);
+    });
   }
 
   _esc(str) { if (!str) return ''; const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }

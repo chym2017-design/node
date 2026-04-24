@@ -171,13 +171,14 @@ class OutlineView {
     row.appendChild(contentWrap);
     div.appendChild(row);
 
-    // Media from content (render ON only)
-    if (desc.renderOn && hasMediaTag(desc.displayContent)) {
+    // Media from content (render ON only) — 统一 collector 深入展开 =ref / {{=ref}}
+    const contentMediaSrc = desc.sourceNode ? (desc.sourceNode.content || '') : (node.content || '');
+    if (desc.renderOn && (hasMediaTag(contentMediaSrc) || isRef(contentMediaSrc) || hasInlineRefs(contentMediaSrc))) {
       const mediaDiv = document.createElement('div');
       mediaDiv.className = 'outline-media';
       mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-      renderTextWithMedia(desc.displayContent, mediaDiv, {path, field:'content'}, {suppressAlign: !fmt.text_align});
-      div.appendChild(mediaDiv);
+      renderTextWithMedia(contentMediaSrc, mediaDiv, {path, field:'content'}, {suppressAlign: !fmt.text_align});
+      if (mediaDiv.childNodes.length > 0) div.appendChild(mediaDiv);
     }
 
     // body — controlled by node's OWN hide_body
@@ -229,14 +230,14 @@ class OutlineView {
       this.applyStyle(bodyEl, bodyStyle);
       div.appendChild(bodyEl);
 
-      // Media from body (render ON only)
-      const bodyMediaSrc = desc.isFullRef ? desc.displayBody : (node.body || '');
-      if (hasMediaTag(bodyMediaSrc)) {
+      // Media from body (render ON only) — 原始 raw + collector 深入展开
+      const bodyMediaSrc = desc.isFullRef ? (desc.sourceNode ? (desc.sourceNode.body || '') : desc.displayBody) : (node.body || '');
+      if (hasMediaTag(bodyMediaSrc) || isRef(bodyMediaSrc) || hasInlineRefs(bodyMediaSrc)) {
         const bodyMediaDiv = document.createElement('div');
         bodyMediaDiv.className = 'outline-media';
         bodyMediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
         renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'}, {suppressAlign: !fmt.text_align});
-        div.appendChild(bodyMediaDiv);
+        if (bodyMediaDiv.childNodes.length > 0) div.appendChild(bodyMediaDiv);
       }
       } // end render ON body block
     }
@@ -345,6 +346,7 @@ class OutlineView {
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
       if (el.dataset.ref || el.dataset.hasRef) return; // skip reference cells
+      if (el.dataset.refEditing !== undefined) return; // 处于"编辑原始 ref 源码"态，待失焦决定
       if (!el.isContentEditable) return;
       const node = getNodeByPath(this.data, el.dataset.path);
       if (!node) return;
@@ -361,24 +363,56 @@ class OutlineView {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
     if (el.dataset.ref || el.dataset.hasRef) return; // skip reference cells
+    if (el.dataset.refEditing !== undefined) return;  // 编辑原始 ref 源码期间不写回
     if (!el.isContentEditable) return;
     const node = getNodeByPath(this.data, el.dataset.path);
-    if (node) {
-      node[el.dataset.field] = mergeEditableTextAndMedia(node[el.dataset.field], el.textContent);
-      app.markDirty();
+    if (!node) return;
+    const field = el.dataset.field;
+    const cur = node[field] || '';
+    const edited = el.textContent;
+    // 原值是 =ref 或 {{=ref}} 时，只有真的被改动（去空白/换行后内容变了）才写回；
+    // 避免 contentEditable 的 IME/选区/零宽字符等副作用污染原始数据。
+    if (isRef(cur) || hasInlineRefs(cur)) {
+      if (edited.replace(/[\s​-‏﻿]+/g, '') === cur.replace(/[\s​-‏﻿]+/g, '')) {
+        return;
+      }
     }
+    node[field] = mergeEditableTextAndMedia(cur, edited);
+    app.markDirty();
     this.updateStatus();
   }
 
   onFocusOut(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    // 处理"编辑原始 ref 源码"结束：比较当前文本与标记的原值，决定是否提交
+    if (el.dataset.refEditing !== undefined) {
+      const orig = el.dataset.refEditing;
+      const node = getNodeByPath(this.data, el.dataset.path);
+      if (node) {
+        const edited = el.textContent;
+        const normOrig = orig.replace(/[\s​-‏﻿]+/g, '');
+        const normEdited = edited.replace(/[\s​-‏﻿]+/g, '');
+        if (normEdited === normOrig) {
+          // 没改动：不动 node，恢复渲染
+        } else {
+          // 真有改动：按原始字符串提交（保留用户敲进去的纯文本）
+          node[el.dataset.field] = edited;
+          app.markDirty();
+        }
+      }
+      delete el.dataset.refEditing;
+      this.focusPath = null;
+      this.render(this.data);
+      app._resolveAsyncRefs(this.el);
+      return;
+    }
     if (el.dataset.ref || el.dataset.hasRef) return;
     const node = getNodeByPath(this.data, el.dataset.path);
     if (!node) return;
     const val = node[el.dataset.field];
-    if (isRef(val)) {
-      // Value became a reference — re-render to show resolved value
+    if (isRef(val) || hasInlineRefs(val)) {
+      // Value is (or became) a reference — re-render to show resolved value
       this.focusPath = null;
       this.render(this.data);
       app._resolveAsyncRefs(this.el);
@@ -400,6 +434,7 @@ class OutlineView {
     delete refEl.dataset.ref;
     delete refEl.dataset.hasRef;
     delete refEl.dataset.refAsync;
+    refEl.dataset.refEditing = raw; // 记录原始值，失焦时比对决定是否提交
     refEl.textContent = raw;
     refEl.contentEditable = 'plaintext-only';
     if (!refEl.contentEditable || refEl.contentEditable === 'inherit') refEl.contentEditable = 'true';

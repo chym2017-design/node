@@ -981,40 +981,58 @@ class App {
   }
 
   // ================================================================
-  // 媒体路径解析 — 纯路径→URL映射，无缓存
-  // 识别规则:
-  //   udd.media/ → 本文件嵌入的内容（从 .udd zip 中提取）
-  //   D:\xxx     → 本机路径（通过服务器代理读取）
-  //   http/data: → 已是可用URL，直接返回
+  // 媒体路径解析 — 返回候选 URL 列表（按固定优先级），不因是否开 server 改变逻辑。
+  // 优先级（严格顺序，失败则由 <img>/<video> 的 onerror 回退到下一个）:
+  //   1) 本文档嵌入  udd.media/* → session.embeddedMedia blob
+  //   2) 仓库服务器  udd.media/* → server /api/readfile?path=filePath&entry=...
+  //                D:\xxx       → server /api/readfile?path=D:\xxx
+  //   3) 本机路径    直接原样（浏览器通常无法加载，留给用户自行处理）
+  //   4) http/data:  原样返回
+  // 是否开 server 只是让其中某些候选能/不能成功读取，读取顺序固定不变。
   // ================================================================
-  resolveMediaSrc(src) {
-    if (!src) return src;
+  resolveMediaSrcCandidates(src) {
+    if (!src) return [];
+    const candidates = [];
+    const session = this._activeSession;
 
-    // udd.media/ — 从当前 .udd 文件的 zip 中提取
+    // http / data: 已可用，直接返回
+    if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:')) {
+      return [src];
+    }
+
+    // udd.media/* — 嵌入媒体
     if (src.startsWith('udd.media/')) {
-      const session = this._activeSession;
-      const entry = src.slice(4); // "udd.media/xxx" → "media/xxx"
-      if (session && session.filePath && this.repoServerUrl) {
-        return this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(session.filePath) + '&entry=' + encodeURIComponent(entry);
-      }
-      // fileHandle 打开（无 filePath）：用打开时解析的 blob
+      // 1) 本文档嵌入（blob）
       if (session && session.embeddedMedia && session.embeddedMedia[src]) {
         if (!session._blobUrls) session._blobUrls = {};
         if (!session._blobUrls[src]) session._blobUrls[src] = URL.createObjectURL(session.embeddedMedia[src]);
-        return session._blobUrls[src];
+        candidates.push(session._blobUrls[src]);
       }
-      return '';
+      // 2) 仓库：从 .udd zip 提取 entry
+      if (session && session.filePath && this.repoServerUrl) {
+        const entry = src.slice(4); // "udd.media/xxx" → "media/xxx"
+        candidates.push(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(session.filePath) + '&entry=' + encodeURIComponent(entry));
+      }
+      return candidates;
     }
 
-    // 已是可用 URL
-    if (src.startsWith('http') || src.startsWith('data:')) return src;
-
-    // 本机绝对路径 D:\xxx — 通过服务器代理
-    if (/^[A-Za-z]:[\\/]/.test(src) && this.repoServerUrl) {
-      return this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(src);
+    // 本机绝对路径 D:\xxx — 仅能通过服务器代理
+    if (/^[A-Za-z]:[\\/]/.test(src)) {
+      if (this.repoServerUrl) {
+        candidates.push(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(src));
+      }
+      candidates.push(src); // 兜底原样（通常浏览器不支持，但保留给未来协议处理器）
+      return candidates;
     }
 
-    return src;
+    // 其它（相对路径 / 未知）原样返回
+    return [src];
+  }
+
+  // 兼容接口：返回首选候选（或空串）
+  resolveMediaSrc(src) {
+    const list = this.resolveMediaSrcCandidates(src);
+    return list.length > 0 ? list[0] : '';
   }
 
   setNumbering(style) {

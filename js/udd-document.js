@@ -170,12 +170,13 @@ class DocumentView {
 
       nodeDiv.appendChild(heading);
 
-      // Media from content (render ON only)
-      if (desc.renderOn && hasMediaTag(desc.displayContent)) {
+      // Media from content (render ON only) — 统一 collector 深入展开 =ref / {{=ref}}
+      const contentMediaSrc = desc.sourceNode ? (desc.sourceNode.content || '') : (node.content || '');
+      if (desc.renderOn && (hasMediaTag(contentMediaSrc) || isRef(contentMediaSrc) || hasInlineRefs(contentMediaSrc))) {
         const mediaDiv = document.createElement('div');
         mediaDiv.className = 'media-inline';
-        renderTextWithMedia(desc.displayContent, mediaDiv, {path, field:'content'});
-        nodeDiv.appendChild(mediaDiv);
+        renderTextWithMedia(contentMediaSrc, mediaDiv, {path, field:'content'});
+        if (mediaDiv.childNodes.length > 0) nodeDiv.appendChild(mediaDiv);
       }
 
       // Body — controlled by node's OWN hide_body
@@ -220,12 +221,12 @@ class DocumentView {
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
 
-        const bodyMediaSrc = desc.isFullRef ? desc.displayBody : (node.body || '');
-        if (hasMediaTag(bodyMediaSrc)) {
+        const bodyMediaSrc = desc.isFullRef ? (desc.sourceNode ? (desc.sourceNode.body || '') : desc.displayBody) : (node.body || '');
+        if (hasMediaTag(bodyMediaSrc) || isRef(bodyMediaSrc) || hasInlineRefs(bodyMediaSrc)) {
           const bodyMediaDiv = document.createElement('div');
           bodyMediaDiv.className = 'media-inline';
           renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'});
-          nodeDiv.appendChild(bodyMediaDiv);
+          if (bodyMediaDiv.childNodes.length > 0) nodeDiv.appendChild(bodyMediaDiv);
         }
         } // end render ON body block
       }
@@ -352,12 +353,13 @@ class DocumentView {
     }
     nodeDiv.appendChild(heading);
 
-    // Media from content
-    if (desc.renderOn && hasMediaTag(rawContent)) {
+    // Media from content — 统一 collector
+    const rcMediaSrc = desc.sourceNode ? (desc.sourceNode.content || '') : (node.content || '');
+    if (desc.renderOn && (hasMediaTag(rcMediaSrc) || isRef(rcMediaSrc) || hasInlineRefs(rcMediaSrc))) {
       const mediaDiv = document.createElement('div');
       mediaDiv.className = 'media-inline';
-      renderTextWithMedia(rawContent, mediaDiv, {path, field:'content'});
-      nodeDiv.appendChild(mediaDiv);
+      renderTextWithMedia(rcMediaSrc, mediaDiv, {path, field:'content'});
+      if (mediaDiv.childNodes.length > 0) nodeDiv.appendChild(mediaDiv);
     }
 
     // Body
@@ -377,12 +379,12 @@ class DocumentView {
       this.applyInlineStyle(bodyDiv, bodyStyle);
       nodeDiv.appendChild(bodyDiv);
 
-      const bodyMediaSrc = desc.sourceNode ? desc.displayBody : (node.body || '');
-      if (hasMediaTag(bodyMediaSrc)) {
+      const bodyMediaSrc = desc.sourceNode ? (desc.sourceNode.body || '') : (node.body || '');
+      if (hasMediaTag(bodyMediaSrc) || isRef(bodyMediaSrc) || hasInlineRefs(bodyMediaSrc)) {
         const bodyMediaDiv = document.createElement('div');
         bodyMediaDiv.className = 'media-inline';
         renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'});
-        nodeDiv.appendChild(bodyMediaDiv);
+        if (bodyMediaDiv.childNodes.length > 0) nodeDiv.appendChild(bodyMediaDiv);
       }
     }
 
@@ -451,6 +453,7 @@ class DocumentView {
   syncAll() {
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
       if (el.dataset.ref || el.dataset.hasRef) return;
+      if (el.dataset.refEditing !== undefined) return; // 编辑原始 ref 源码期间不写回
       if (!el.isContentEditable) return;
       const node = getNodeByPath(this.data, el.dataset.path);
       if (!node) return;
@@ -466,12 +469,21 @@ class DocumentView {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
     if (el.dataset.ref || el.dataset.hasRef) return;
+    if (el.dataset.refEditing !== undefined) return;
     if (!el.isContentEditable) return;
     const node = getNodeByPath(this.data, el.dataset.path);
-    if (node) {
-      node[el.dataset.field] = mergeEditableTextAndMedia(node[el.dataset.field], el.textContent);
-      app.markDirty();
+    if (!node) return;
+    const field = el.dataset.field;
+    const cur = node[field] || '';
+    const edited = el.textContent;
+    // 原值是 =ref 或 {{=ref}} 时，只有真的被改动才写回；避免编辑器副作用污染
+    if (isRef(cur) || hasInlineRefs(cur)) {
+      if (edited.replace(/[\s​-‏﻿]+/g, '') === cur.replace(/[\s​-‏﻿]+/g, '')) {
+        return;
+      }
     }
+    node[field] = mergeEditableTextAndMedia(cur, edited);
+    app.markDirty();
   }
 
   onRefDblClick(e) {
@@ -489,6 +501,7 @@ class DocumentView {
     delete refEl.dataset.ref;
     delete refEl.dataset.hasRef;
     delete refEl.dataset.refAsync;
+    refEl.dataset.refEditing = raw;
     refEl.textContent = raw;
     refEl.contentEditable = 'plaintext-only';
     if (!refEl.contentEditable || refEl.contentEditable === 'inherit') refEl.contentEditable = 'true';
@@ -503,6 +516,24 @@ class DocumentView {
   onFocusOut(e) {
     const el = e.target;
     if (!el.dataset || !el.dataset.path || !el.dataset.field) return;
+    if (el.dataset.refEditing !== undefined) {
+      const orig = el.dataset.refEditing;
+      const node = getNodeByPath(this.data, el.dataset.path);
+      if (node) {
+        const edited = el.textContent;
+        const normOrig = orig.replace(/[\s​-‏﻿]+/g, '');
+        const normEdited = edited.replace(/[\s​-‏﻿]+/g, '');
+        if (normEdited !== normOrig) {
+          node[el.dataset.field] = edited;
+          app.markDirty();
+        }
+      }
+      delete el.dataset.refEditing;
+      this.focusPath = null;
+      this.render(this.data);
+      app._resolveAsyncRefs(this.el);
+      return;
+    }
     if (el.dataset.ref || el.dataset.hasRef) return;
     const node = getNodeByPath(this.data, el.dataset.path);
     if (!node) return;

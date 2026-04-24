@@ -7,8 +7,29 @@
 
 //  CONTENT REFERENCE SYSTEM
 // ================================================================
+// 严格 ref 判定：必须是 "=" + 合法首字符开头（避免尾部空白、零宽字符、IME 残留
+// 把普通文本误判为引用）。首字符允许: t-node 前缀 "t"、字母、下划线、中文、
+// 以及 udd. 嵌入前缀的 "u"。
 function isRef(value) {
-  return typeof value === 'string' && value.startsWith('=') && value.length > 1;
+  if (typeof value !== 'string' || value.length < 2 || value[0] !== '=') return false;
+  const c = value.charCodeAt(1);
+  // A-Z a-z 0-9 _ 中文
+  const isAscii = (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39) || c === 0x5f;
+  const isCJK = c >= 0x4e00 && c <= 0x9fff;
+  if (!isAscii && !isCJK) return false;
+  // 结构校验（内联 SheetRef / parseRef，避免与 isSheetRef 互相递归）
+  const dotIdx = value.indexOf('.');
+  if (dotIdx > 1) {
+    const maybeSheet = value.slice(1, dotIdx);
+    const maybeAddr = value.slice(dotIdx + 1);
+    if (/^[A-Za-z][A-Za-z0-9_]*$/.test(maybeSheet) && /^[A-Z]{1,3}\d{1,7}$/.test(maybeAddr) && !/^t\d+$/.test(maybeSheet)) {
+      return true;
+    }
+  }
+  try {
+    const r = parseRef(value);
+    return !!r.nodePath;
+  } catch (e) { return false; }
 }
 
 // Check if content has inline {{=ref}} patterns
@@ -246,6 +267,140 @@ function findRefNode(data, nodePath) {
   // Single segment: try direct key first, then recursive search
   if (data[nodePath]) return data[nodePath];
   return findNodeRecursive(data, nodePath);
+}
+
+// ================================================================
+//  UNIFIED MEDIA ITEM COLLECTOR
+//  原始数据 → 多种渲染 的公共底座：
+//  扫描一段文本，深入解析所有 =ref / {{=ref}}，
+//  按出现顺序产出 mediaItems（image/video/audio/table）。
+//  所有视图（outline、document、mindmap、ppt、sheet）共用。
+//  查找顺序严格遵循 resolveRef / resolveRefAsync 的规则，不读浏览器缓存。
+// ================================================================
+function collectMediaItemsFromText(data, text, visited) {
+  const out = [];
+  _collectMediaItemsSync(data, text, out, visited || new Set());
+  return out;
+}
+
+async function collectMediaItemsFromTextAsync(data, text, visited) {
+  const out = [];
+  await _collectMediaItemsAsyncImpl(data, text, out, visited || new Set());
+  return out;
+}
+
+function _emitMediaTag(inner, out) {
+  const media = typeof parseMediaTag === 'function' ? parseMediaTag(inner) : null;
+  if (media && media.image) { out.push({ type: 'image', src: media.image, meta: media }); return true; }
+  if (media && media.video) { out.push({ type: 'video', src: media.video, meta: media }); return true; }
+  if (media && media.audio) { out.push({ type: 'audio', src: media.audio, meta: media }); return true; }
+  if (typeof parseTableRef === 'function') {
+    const tr = parseTableRef(inner);
+    if (tr) { out.push({ type: 'table', tableRef: tr }); return true; }
+  }
+  return false;
+}
+
+function _collectMediaItemsSync(data, text, out, visited) {
+  if (!text || typeof text !== 'string') return;
+  // 整段是 =ref（无 {{}}）→ 深入源节点 content + body
+  if (isRef(text) && !text.includes('{{')) {
+    if (visited.has(text)) return;
+    visited.add(text);
+    if (isFullNodeRef(text)) {
+      const src = getFullRefNode(data, text);
+      if (src && typeof src === 'object') {
+        _collectMediaItemsSync(data, src.content || '', out, visited);
+        _collectMediaItemsSync(data, src.body || '', out, visited);
+      }
+      return;
+    }
+    const resolved = resolveRef(data, text);
+    if (typeof resolved === 'string' && !resolved.startsWith('#')) {
+      _collectMediaItemsSync(data, resolved, out, visited);
+    }
+    return;
+  }
+  // 扫描所有 {{...}}
+  const re = /\{\{(.*?)\}\}/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const inner = m[1];
+    if (inner.startsWith('=')) {
+      const key = '=' + inner.slice(1);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      // {{=fullNodeRef}}：按全节点展开，媒体来自源节点的 content+body
+      if (isFullNodeRef('=' + inner.slice(1))) {
+        const src = getFullRefNode(data, '=' + inner.slice(1));
+        if (src && typeof src === 'object') {
+          _collectMediaItemsSync(data, src.content || '', out, visited);
+          _collectMediaItemsSync(data, src.body || '', out, visited);
+        }
+        continue;
+      }
+      const resolved = resolveRef(data, inner);
+      if (typeof resolved === 'string' && !resolved.startsWith('#')) {
+        _collectMediaItemsSync(data, resolved, out, visited);
+      }
+      continue;
+    }
+    _emitMediaTag(inner, out);
+  }
+}
+
+async function _collectMediaItemsAsyncImpl(data, text, out, visited) {
+  if (!text || typeof text !== 'string') return;
+  if (isRef(text) && !text.includes('{{')) {
+    if (visited.has(text)) return;
+    visited.add(text);
+    if (isFullNodeRef(text)) {
+      let src = getFullRefNode(data, text);
+      if (!src) {
+        // 触发异步加载跨文档 / 嵌入，再重试
+        await resolveRefAsync(data, text);
+        src = getFullRefNode(data, text);
+      }
+      if (src && typeof src === 'object') {
+        await _collectMediaItemsAsyncImpl(data, src.content || '', out, visited);
+        await _collectMediaItemsAsyncImpl(data, src.body || '', out, visited);
+      }
+      return;
+    }
+    const resolved = await resolveRefAsync(data, text);
+    if (typeof resolved === 'string' && !resolved.startsWith('#')) {
+      await _collectMediaItemsAsyncImpl(data, resolved, out, visited);
+    }
+    return;
+  }
+  const re = /\{\{(.*?)\}\}/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const inner = m[1];
+    if (inner.startsWith('=')) {
+      const key = '=' + inner.slice(1);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      if (isFullNodeRef('=' + inner.slice(1))) {
+        let src = getFullRefNode(data, '=' + inner.slice(1));
+        if (!src) {
+          await resolveRefAsync(data, '=' + inner.slice(1));
+          src = getFullRefNode(data, '=' + inner.slice(1));
+        }
+        if (src && typeof src === 'object') {
+          await _collectMediaItemsAsyncImpl(data, src.content || '', out, visited);
+          await _collectMediaItemsAsyncImpl(data, src.body || '', out, visited);
+        }
+        continue;
+      }
+      const resolved = await resolveRefAsync(data, inner);
+      if (typeof resolved === 'string' && !resolved.startsWith('#')) {
+        await _collectMediaItemsAsyncImpl(data, resolved, out, visited);
+      }
+      continue;
+    }
+    _emitMediaTag(inner, out);
+  }
 }
 
 function findNodeRecursive(obj, targetKey) {
