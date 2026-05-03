@@ -8,6 +8,10 @@
 //  DEFAULT DATA
 // ================================================================
 function createDefaultData() {
+  // 示例媒体路径（当前目录下的 example 文件夹）
+  const IMG_PATH = "d:\\\\projects\\\\node\\\\node\\\\example\\\\庄周梦蝶.png";
+  const VID_PATH = "d:\\\\projects\\\\node\\\\node\\\\example\\\\逍遥游样例.mp4";
+
   return {
     meta: {
       title: "未命名文档", author: "", created: new Date().toISOString(),
@@ -15,9 +19,9 @@ function createDefaultData() {
     },
     type_global: {
       "t*-*.font_size": 12,
-      "t0-*.font": "微软雅黑", "t0-*.font_size": 16, 
+      "t0-*.font": "微软雅黑", "t0-*.font_size": 16,
       "t0-*.bold": 1,
-      "t1-*.font": "微软雅黑", "t1-*.font_size": 14, 
+      "t1-*.font": "微软雅黑", "t1-*.font_size": 14,
       "t1-*.bold": 1, "t1-*.paragraph_before": 1, "t1-*.paragraph_after": 0.5,
       "t2-*.font": "微软雅黑", "t2-*.font_size": 12,
       "t2-*.bold": 1, "t2-*.paragraph_before": 0.5, "t2-*.paragraph_after": 0.3,
@@ -27,22 +31,24 @@ function createDefaultData() {
       "body.paragraph_line": 1.8, "body.paragraph_first_indent": 2,
       hide_t: "t>3", numbering_style: "1.1.1"
     },
-    // 表格→大纲引用
+    // 表格 → 大纲引用（表格 A 列单元格取自大纲节点）
     "_sheetRefs": {
       "Sheet1!A2": "=t1-5.t2-1.content",
       "Sheet1!A3": "=t1-5.t2-2.content",
-      "Sheet1!A4": "=t1-5.t2-3.content"
+      "Sheet1!A4": "=t1-5.t2-3.content",
+      "Sheet1!A5": "=t1-5.t2-4.content",
+      "Sheet1!A6": "=t1-5.t2-5.content"
     },
 
     // ── 根节点 ──
     "t0-1": {
-      content: "UDD 统一数据文档", hide: 0, hide_body: 0,
-      body: "UDD 的核心理念：一份数据，多种视图。大纲、思维导图、文档、表格共享同一棵数据树，通过引用实现数据联动。",
+      content: "UDD 统一数据文档 · 功能总览", hide: 0, hide_body: 0,
+      body: "UDD 的核心理念：一份数据，多种视图。大纲、思维导图、文档、表格、演示共享同一棵数据树，通过引用实现数据联动。本文档演示了引用系统、跨文档联动、表格互引、多媒体嵌入、编号控制等核心能力。",
 
       // ── 1. 引用基础 ──
       "t1-1": {
         content: "引用基础", hide: 0, hide_body: 0,
-        body: "UDD 中所有引用使用 {{=引用}} 语法。引用可放在内容任意位置，前后可自由添加文字。",
+        body: "UDD 中所有引用使用 {{=引用}} 语法。引用可放在内容任意位置，前后可自由添加文字；点击右侧 ↗ 可跳转到引用源。",
         "t2-1": { content: "原始数据节点", hide: 0, hide_body: 0, body: "这是一段会被其他节点引用的正文。修改这里，所有引用处同步更新。" },
         "t2-2": { content: "=t1-1.t2-1", hide: 0, hide_body: 0 },
         "t2-3": { content: "内容引用：{{=t1-1.t2-1.content}}", hide: 0, hide_body: 0 },
@@ -53,47 +59,92 @@ function createDefaultData() {
       "t1-2": {
         content: "引用进阶", hide: 0, hide_body: 0,
         body: "引用支持截取和正则提取，可从源数据中精确提取所需片段。",
-        "t2-1": { content: "截取前6字：{{=t1-1.t2-1.content(0,6)}}", hide: 0, hide_body: 0 },
+        "t2-1": { content: "截取前 6 字：{{=t1-1.t2-1.content(0,6)}}", hide: 0, hide_body: 0 },
         "t2-2": { content: "正则提取：{{=t1-1.t2-1.body.match(/修改(.+?)，/).[1]}}", hide: 0, hide_body: 0 }
       },
 
       // ── 3. 混合内容演示 ──
       "t1-3": {
         content: "混合内容演示", hide: 0, hide_body: 0,
-        body: "在同一行中混合手敲文字和多个引用，实现灵活的数据拼接。",
-        "t2-1": { content: "产品「{{=t1-5.t2-1.content}}」库存 {{=Sheet1.B2}} 件，单价 {{=Sheet1.C2}} 元", hide: 0, hide_body: 0 },
+        body: "在同一行中混合手敲文字与多个引用，实现灵活的数据拼接。",
+        "t2-1": { content: "产品「{{=t1-5.t2-1.content}}」库存 {{=Sheet1.B2}} 件，单价 {{=Sheet1.C2}} 元，金额 {{=Sheet1.D2}} 元", hide: 0, hide_body: 0 },
         "t2-2": { content: "源节点：{{=t1-1.t2-1.content}}，正文片段：{{=t1-1.t2-1.body(0,10)}}", hide: 0, hide_body: 0 }
       },
 
       // ── 4. 跨文档引用 ──
       "t1-4": {
         content: "跨文档引用", hide: 0, hide_body: 0,
-        body: "引用其他 .udd 文件数据。格式：{{=文档名.节点.字段}}。需在同一仓库目录中。",
+        body: "引用其他 .udd 文件数据。格式：{{=文档名.节点.字段}}。需在同一仓库目录中打开，点击 ↗ 可自动打开目标文档并定位。",
         "t2-1": { content: "跨文档数据：{{=测试文档1.t1-1.content}}", hide: 0, hide_body: 0 }
       },
 
       // ── 5. 表格↔大纲互引 ──
       "t1-5": {
         content: "表格与大纲互引", hide: 0, hide_body: 0,
-        body: "大纲用 {{=Sheet1.B2}} 引用表格单元格，表格用 _sheetRefs 引用大纲节点。切换到「表格」视图查看。",
+        body: "大纲用 {{=Sheet1.B2}} 引用表格单元格，表格用 _sheetRefs 引用大纲节点。切换到「表格」视图，A 列会显示大纲的产品名；修改产品名或数量，另一侧立刻同步。",
         "t2-1": { content: "苹果", hide: 0, hide_body: 0,
-          "t3-1": { content: "数量：{{=Sheet1.B2}}，单价：{{=Sheet1.C2}}", hide: 0, hide_body: 0 }
+          "t3-1": { content: "数量：{{=Sheet1.B2}}，单价：{{=Sheet1.C2}}，金额：{{=Sheet1.D2}}", hide: 0, hide_body: 0 }
         },
         "t2-2": { content: "香蕉", hide: 0, hide_body: 0,
-          "t3-1": { content: "数量：{{=Sheet1.B3}}，单价：{{=Sheet1.C3}}", hide: 0, hide_body: 0 }
+          "t3-1": { content: "数量：{{=Sheet1.B3}}，单价：{{=Sheet1.C3}}，金额：{{=Sheet1.D3}}", hide: 0, hide_body: 0 }
         },
         "t2-3": { content: "橙子", hide: 0, hide_body: 0,
-          "t3-1": { content: "数量：{{=Sheet1.B4}}，单价：{{=Sheet1.C4}}", hide: 0, hide_body: 0 }
+          "t3-1": { content: "数量：{{=Sheet1.B4}}，单价：{{=Sheet1.C4}}，金额：{{=Sheet1.D4}}", hide: 0, hide_body: 0 }
+        },
+        "t2-4": { content: "葡萄", hide: 0, hide_body: 0,
+          "t3-1": { content: "数量：{{=Sheet1.B5}}，单价：{{=Sheet1.C5}}，金额：{{=Sheet1.D5}}", hide: 0, hide_body: 0 }
+        },
+        "t2-5": { content: "西瓜", hide: 0, hide_body: 0,
+          "t3-1": { content: "数量：{{=Sheet1.B6}}，单价：{{=Sheet1.C6}}，金额：{{=Sheet1.D6}}", hide: 0, hide_body: 0 }
         }
       },
 
-      // ── 6. 设计理念 ──
+      // ── 6. 多媒体嵌入 ──
       "t1-6": {
+        content: "多媒体嵌入", hide: 0, hide_body: 0,
+        body: "正文中可通过 {{\"image\":\"路径\"}} / {{\"video\":\"路径\"}} / {{\"audio\":\"路径\"}} 插入媒体。支持宽高、对齐、旋转、说明等属性；点击图片可编辑，双击可全屏预览。",
+        "t2-1": {
+          content: "图片：庄周梦蝶", hide: 0, hide_body: 0,
+          body: "下方图片来自 example 文件夹。{{\"image\":\"" + IMG_PATH + "\",\"image.width\":\"60%\",\"image.align\":\"center\",\"image.caption\":\"庄周梦蝶 · 逍遥之境\",\"image.border\":1}}"
+        },
+        "t2-2": {
+          content: "视频：逍遥游样例", hide: 0, hide_body: 0,
+          body: "下方视频可直接在文档中播放。{{\"video\":\"" + VID_PATH + "\",\"video.width\":\"70%\",\"video.align\":\"center\"}}"
+        },
+        "t2-3": {
+          content: "媒体引用联动", hide: 0, hide_body: 0,
+          body: "媒体节点可被其他节点引用——本段正文引用上面的图片节点正文，图片也会跟着出现：{{=t1-6.t2-1.body}}"
+        }
+      },
+
+      // ── 7. 内嵌表格 ──
+      "t1-7": {
+        content: "内嵌表格", hide: 0, hide_body: 0,
+        body: "使用 {{Sheet1.A1:D6}} 语法可将表格区域直接嵌入正文。下方即为工作表 Sheet1 的完整产品清单：{{Sheet1.A1:D6}}",
+        "t2-1": {
+          content: "局部区域引用", hide: 0, hide_body: 0,
+          body: "也可以只嵌入部分区域，例如仅表头与前两行：{{Sheet1.A1:D3}}"
+        }
+      },
+
+      // ── 8. 编号控制（Word 式）──
+      "t1-8": {
+        content: "编号控制", hide: 0, hide_body: 0,
+        body: "通过节点属性 no_number（此节点不显示编号且不占位，后续兄弟跳过该号）与 restart_number（从本节点起在同级重新从 1 开始计数）实现 Word 式编号控制。工具栏的 ⊘ 与 ↺1 按钮可一键切换。",
+        "t2-1": { content: "正常节点 A", hide: 0, hide_body: 0 },
+        "t2-2": { content: "不显示编号（Word 跳过）", hide: 0, hide_body: 0, no_number: 1, body: "该节点没有编号，且后续兄弟节点不会因它而占位——下一个节点仍是 2。" },
+        "t2-3": { content: "正常节点 B", hide: 0, hide_body: 0 },
+        "t2-4": { content: "从此处重新编号", hide: 0, hide_body: 0, restart_number: 1, body: "该节点是同级的 1；此后的兄弟在此基础上递增。" },
+        "t2-5": { content: "重新编号后的 2", hide: 0, hide_body: 0 }
+      },
+
+      // ── 9. 设计理念 ──
+      "t1-9": {
         content: "UDD 设计特点", hide: 0, hide_body: 0,
-        "t2-1": { content: "一份数据，四种视图", hide: 0, hide_body: 0, body: "大纲、思维导图、文档、表格共享同一棵 JSON 数据树，无需重复录入。" },
-        "t2-2": { content: "引用即联动", hide: 0, hide_body: 0, body: "修改源节点，所有引用处自动同步。支持节点级、字段级、跨文档、跨表格引用。" },
+        "t2-1": { content: "一份数据，五种视图", hide: 0, hide_body: 0, body: "大纲、思维导图、文档、表格、演示共享同一棵 JSON 数据树，无需重复录入。" },
+        "t2-2": { content: "引用即联动", hide: 0, hide_body: 0, body: "修改源节点，所有引用处自动同步。支持节点级、字段级、切片、正则、跨文档、跨表格引用。" },
         "t2-3": { content: "离线优先", hide: 0, hide_body: 0, body: "所有资源本地加载，IndexedDB 自动保存，.udd 文件基于 ZIP 格式自包含。" },
-        "t2-4": { content: "结构化存储", hide: 0, hide_body: 0, body: "数据以树形 JSON 存储，支持样式继承、层级折叠、编号系统。" }
+        "t2-4": { content: "结构化存储", hide: 0, hide_body: 0, body: "数据以树形 JSON 存储，支持样式继承、层级折叠、编号控制、多媒体嵌入。" }
       }
     }
   };

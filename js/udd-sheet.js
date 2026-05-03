@@ -65,17 +65,17 @@ class SheetView {
     if (typeof XLSX === 'undefined') return;
     this.workbook = XLSX.utils.book_new();
     const ws = {
-      '!ref': 'A1:C4',
+      '!ref': 'A1:D6',
       'A1': { v: '产品名称', t: 's' },
       'B1': { v: '数量（件）', t: 's' },
       'C1': { v: '单价（元）', t: 's' },
-      // A2/A3/A4 由 _sheetRefs 提供（UDD 引用大纲），workbook 中留空
-      'B2': { v: 100, t: 'n' },
-      'C2': { v: 5.5, t: 'n' },
-      'B3': { v: 200, t: 'n' },
-      'C3': { v: 3.8, t: 'n' },
-      'B4': { v: 150, t: 'n' },
-      'C4': { v: 4.2, t: 'n' }
+      'D1': { v: '金额（元）', t: 's' },
+      // A2~A6 由 _sheetRefs 提供（UDD 引用大纲），workbook 中留空
+      'B2': { v: 100, t: 'n' }, 'C2': { v: 5.5, t: 'n' }, 'D2': { v: 550, t: 'n' },
+      'B3': { v: 200, t: 'n' }, 'C3': { v: 3.8, t: 'n' }, 'D3': { v: 760, t: 'n' },
+      'B4': { v: 150, t: 'n' }, 'C4': { v: 4.2, t: 'n' }, 'D4': { v: 630, t: 'n' },
+      'B5': { v: 80,  t: 'n' }, 'C5': { v: 12.0, t: 'n' }, 'D5': { v: 960, t: 'n' },
+      'B6': { v: 30,  t: 'n' }, 'C6': { v: 25.0, t: 'n' }, 'D6': { v: 750, t: 'n' }
     };
     XLSX.utils.book_append_sheet(this.workbook, ws, 'Sheet1');
     this.activeSheet = 'Sheet1';
