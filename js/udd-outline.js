@@ -13,6 +13,12 @@ class OutlineView {
     this.focusPath = null;
     this.focusField = 'content';
     this.focusCursorEnd = true;
+    // Plan D 性能优化：
+    //   _rendered —— 视图缓存标记。render 末尾置 true；切换到别的视图时若此 flag 仍为 true 可跳过 render。
+    //   _inputDirty —— 仅在 contentEditable 真的触发 input 事件时置 true；
+    //                syncAll 发现为 false 时直接 return，避免每次切视图都做一遍全树 querySelectorAll。
+    this._rendered = false;
+    this._inputDirty = false;
     this.el.addEventListener('keydown', e => this.onKeyDown(e));
     this.el.addEventListener('input', e => this.onInput(e));
     this.el.addEventListener('focusin', e => this.onFocusIn(e));
@@ -38,6 +44,9 @@ class OutlineView {
       requestAnimationFrame(() => this.restoreFocus());
     }
     this.updateStatus();
+    // 渲染后 DOM 与 data 一致；缓存命中标记打开、脏标复位
+    this._rendered = true;
+    this._inputDirty = false;
   }
 
   renderNode(node, path, level, container, readOnly) {
@@ -89,12 +98,13 @@ class OutlineView {
     if (level !== 0) {
       const tg = this.data.type_global || {};
       const numStyle = tg.numbering_style || '1.1.1';
-      if (numStyle !== 'none') {
+      const numText = computeNumberForRender(this.data, path, numStyle);
+      if (numText !== null) {
         const numSpan = document.createElement('span');
         numSpan.className = 'outline-num';
         numSpan.draggable = true;
         numSpan.dataset.dragPath = path;
-        numSpan.textContent = readOnly ? this._getRefChildNumber(path, numStyle) : this.getNumber(path, numStyle);
+        numSpan.textContent = numText;
         this.applyStyle(numSpan, style);
         contentWrap.appendChild(numSpan);
       }
@@ -268,64 +278,7 @@ class OutlineView {
     container.appendChild(div);
   }
 
-  // 引用子节点的简单编号（path 含 __ref__，无法走正常 getNumber）
-  _getRefChildNumber(path, numStyle) {
-    if (numStyle === 'bullet') {
-      const bullets = ['●','○','■','▪'];
-      const refIdx = path.indexOf('.__ref__.');
-      const refPart = refIdx >= 0 ? path.slice(refIdx + 9) : path;
-      const depth = refPart.split('.').length - 1;
-      return bullets[Math.min(depth, bullets.length - 1)];
-    }
-    if (numStyle === 'bullet-uniform') return '●';
-    // Extract the last tNode key and find its sibling index
-    const parts = path.split('.');
-    const lastKey = parts[parts.length - 1];
-    // Simple fallback: just use the number from the key (t2-3 → 3)
-    const m = lastKey.match(/^t\d+-(\d+)$/);
-    return m ? m[1] : '';
-  }
-
   isBodyEditing(path) { return this.focusPath === path && this.focusField === 'body'; }
-
-  getNumber(path, numStyle) {
-    const parts = path.split('.');
-    const nums = [];
-    let obj = this.data;
-    for (const part of parts) {
-      const level = getLevel(part);
-      if (level === 0) { obj = obj[part]; continue; }
-      const siblings = getChildTKeys(obj, level);
-      const idx = siblings.indexOf(part);
-      nums.push(idx + 1);
-      obj = obj[part];
-    }
-    if (nums.length === 0) return '';
-    if (numStyle === '1.1.1') return nums.join('.');
-    if (numStyle === '一.1.1') {
-      const cn = ['零','一','二','三','四','五','六','七','八','九','十',
-                   '十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
-      const first = cn[nums[0]] || nums[0];
-      return nums.length === 1 ? first : first + '.' + nums.slice(1).join('.');
-    }
-    if (numStyle === 'I.A.1') {
-      const roman = ['','I','II','III','IV','V','VI','VII','VIII','IX','X'];
-      const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-      let result = '';
-      if (nums[0]) result = roman[nums[0]] || nums[0];
-      if (nums[1]) result += '.' + (alpha[nums[1]-1] || nums[1]);
-      if (nums[2]) result += '.' + nums[2];
-      for (let i = 3; i < nums.length; i++) result += '.' + nums[i];
-      return result;
-    }
-    if (numStyle === 'bullet') {
-      const bullets = ['●','○','■','▪'];
-      const depth = nums.length - 1;
-      return bullets[Math.min(depth, bullets.length - 1)];
-    }
-    if (numStyle === 'bullet-uniform') return '●';
-    return nums.join('.');
-  }
 
   getStyle(path, level) {
     // 引用子节点: 用宿主路径查找样式
@@ -344,6 +297,8 @@ class OutlineView {
 
   // Sync all editable elements to data
   syncAll() {
+    // Plan D 早退：期间没有任何 contentEditable input 事件发生，就不必再扫一遍 DOM。
+    if (!this._inputDirty) return;
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
       if (el.dataset.ref || el.dataset.hasRef) return; // skip reference cells
       if (el.dataset.refEditing !== undefined) return; // 处于"编辑原始 ref 源码"态，待失焦决定
@@ -357,6 +312,7 @@ class OutlineView {
     if (typeof app !== 'undefined' && app._normalizeEmbeddedTagsInData) {
       app._normalizeEmbeddedTagsInData(this.data);
     }
+    this._inputDirty = false;
   }
 
   onInput(e) {
@@ -378,6 +334,7 @@ class OutlineView {
       }
     }
     node[field] = mergeEditableTextAndMedia(cur, edited);
+    this._inputDirty = true; // Plan D：真的改了数据才标脏，syncAll 才会真正扫 DOM
     app.markDirty();
     this.updateStatus();
   }

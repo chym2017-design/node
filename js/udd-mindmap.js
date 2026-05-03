@@ -9,6 +9,10 @@ class MindmapView {
     this.data = null;
     this.focusPath = null;
     this.focusField = 'content';
+    // Plan D：mindmap 是只读渲染，没有 contentEditable 输入；
+    //   _rendered 仍然有用（视图缓存命中），_inputDirty 永远为 false。
+    this._rendered = false;
+    this._inputDirty = false;
     this.selectedPath = null;
     this.pan = { x: 0, y: 0 };
     this.zoom = 1;
@@ -94,7 +98,7 @@ class MindmapView {
     this.data = data;
     this._nodes = [];
     const rootKeys = getAllTKeys(data);
-    if (!rootKeys.length) { this.el.innerHTML = ''; return; }
+    if (!rootKeys.length) { this.el.innerHTML = ''; this._rendered = true; return; }
 
     // Build tree structure
     const tree = this._tree = this._buildTree(data, rootKeys);
@@ -177,6 +181,7 @@ class MindmapView {
       this.zoom = 1;
     }
     this._applyTransform();
+    this._rendered = true; // Plan D：视图缓存命中标记
   }
 
   _buildTree(data, keys) {

@@ -20,6 +20,9 @@ class SheetView {
     this.focusField = 'content';
     this._fillDrag = null; // { startAddr, startR, c, table }
     this._visibleRange = { maxR: 49, maxC: 25 };
+    // Plan D：sheet 视图缓存标记
+    this._rendered = false;
+    this._inputDirty = false;
 
     this._initDefaultWorkbook();
   }
@@ -92,6 +95,7 @@ class SheetView {
     if (!this.workbook) this._initDefaultWorkbook();
     if (!this.workbook) {
       this.el.innerHTML = '<div style="padding:20px;color:var(--gray-400)">SheetJS 未加载</div>';
+      this._rendered = true;
       return;
     }
 
@@ -271,6 +275,7 @@ class SheetView {
 
     this._updateFormulaBar();
     requestAnimationFrame(() => gridWrap.focus());
+    this._rendered = true; // Plan D：视图缓存命中标记
   }
 
   // ---- Sheet range ----

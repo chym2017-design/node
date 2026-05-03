@@ -24,6 +24,7 @@ const ESCAPE_TABLE = {
   hide:"h",hide_t:"ht",hide_body:"hb",visible:"vis",
   locked:"loc",read_only:"ro",collapsed_default:"cd",
   numbering_style:"ns",numbering_format:"nf",numbering_start:"nst",list_style:"lst",
+  no_number:"nn",restart_number:"rst",
   background_color:"bgc",background_opacity:"bgo",
   border:"bdr",border_style:"bdrs",border_color:"bdrc",
   border_width:"bdrw",border_radius:"bdrr",shadow:"shd",opacity:"op",rotation:"rot"
@@ -359,3 +360,65 @@ function nextSeq(node, level) {
   return keys.reduce((mx, k) => Math.max(mx, getSeq(k)), 0) + 1;
 }
 function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+// ================================================================
+// 节点编号：纯数据版（path 必须是 rootData 内的 t-key 路径，不含 __ref__）
+// 支持 node.no_number（自身不编号且不占编号位，Word 行为）和
+// node.restart_number（从该节点起在同级重新计数）。
+// 返回字符串编号；命中 no_number 或异常时返回 null —— 调用方据此决定不渲染编号 span。
+// ================================================================
+function computeNumber(rootData, path, numStyle) {
+  if (numStyle === 'none') return null;
+  const parts = path.split('.');
+  const nums = [];
+  let obj = rootData;
+  for (const part of parts) {
+    const level = getLevel(part);
+    if (level === 0) { obj = obj && obj[part]; continue; }
+    if (!obj) return null;
+    const siblings = getChildTKeys(obj, level);
+    const partIdx = siblings.indexOf(part);
+    if (partIdx < 0) return null;
+    const partNode = obj[part];
+    if (partNode && partNode.no_number) return null;
+    // 找最近的 restart 锚点（含自己，往前扫）
+    let anchor = 0;
+    for (let i = partIdx; i >= 0; i--) {
+      const sib = obj[siblings[i]];
+      if (sib && sib.restart_number) { anchor = i; break; }
+    }
+    // 计数：从 anchor 起，跳过 no_number 的兄弟
+    let seq = 0;
+    for (let i = anchor; i <= partIdx; i++) {
+      const sib = obj[siblings[i]];
+      if (!sib || !sib.no_number) seq++;
+    }
+    nums.push(seq);
+    obj = partNode;
+  }
+  if (nums.length === 0) return '';
+  if (numStyle === '1.1.1') return nums.join('.');
+  if (numStyle === '一.1.1') {
+    const cn = ['零','一','二','三','四','五','六','七','八','九','十',
+                 '十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
+    const first = cn[nums[0]] || nums[0];
+    return nums.length === 1 ? first : first + '.' + nums.slice(1).join('.');
+  }
+  if (numStyle === 'I.A.1') {
+    const roman = ['','I','II','III','IV','V','VI','VII','VIII','IX','X'];
+    const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let result = '';
+    if (nums[0]) result = roman[nums[0]] || nums[0];
+    if (nums[1]) result += '.' + (alpha[nums[1]-1] || nums[1]);
+    if (nums[2]) result += '.' + nums[2];
+    for (let i = 3; i < nums.length; i++) result += '.' + nums[i];
+    return result;
+  }
+  if (numStyle === 'bullet') {
+    const bullets = ['●','○','■','▪'];
+    const depth = nums.length - 1;
+    return bullets[Math.min(depth, bullets.length - 1)];
+  }
+  if (numStyle === 'bullet-uniform') return '●';
+  return nums.join('.');
+}

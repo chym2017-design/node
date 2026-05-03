@@ -76,6 +76,8 @@
         <option value="bullet-uniform">统一无序</option>
         <option value="none">无编号</option>
       </select>
+      <button id="tool-no-number" class="tool-btn" onclick="app.toggleNoNumber()" title="此节点不显示编号（且不占编号位）">⊘</button>
+      <button id="tool-restart-number" class="tool-btn" onclick="app.toggleRestartNumber()" title="从此节点起在同级重新编号">↺1</button>
       <div class="tool-sep"></div>
       <button class="tool-btn" onclick="app.insertMedia()" title="插入媒体">🖼</button>
       <button class="tool-btn" onclick="app.insertTableRef()" title="插入表格引用">☐</button>
@@ -104,6 +106,7 @@
       <button id="back-btn" onclick="app.goBack()" style="display:none;background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">← 返回</button>
       <div class="spacer"></div>
       <button id="render-toggle" onclick="app.toggleRenderMode()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染 on</button>
+      <button id="refresh-view" onclick="app.refreshCurrentView()" title="刷新当前视图（强制重新渲染，引用/媒体重新读取）" style="background:none;border:1px solid var(--gray-200);padding:3px 8px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius);margin-left:4px">🔄 刷新</button>
       <button id="source-toggle" onclick="app.toggleContentSource()" style="display:none;background:var(--blue-50);border:1px solid var(--blue-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">来源:嵌入</button>
       <input id="tool-fold-n" type="number" value="5" min="1" max="20" title="展开层数">
       <button id="fold-level-btn" onclick="app.expandToLevel()">展开n层</button>

@@ -403,6 +403,27 @@ async function _collectMediaItemsAsyncImpl(data, text, out, visited) {
   }
 }
 
+// ================================================================
+// 节点编号（渲染用）：处理引用子节点 path 中的 __ref__
+// 引用子节点 path 形如 "host.__ref__.t2-1.t3-1"，需要基于源根 + sub-path 计算，
+// 这样源节点的 no_number / restart_number 才能被引用出来的子节点继承。
+// 普通 path 直接转给 computeNumber（在 udd-data.js）。
+// 返回字符串编号；null 表示不渲染编号 span。
+// ================================================================
+function computeNumberForRender(rootData, path, numStyle) {
+  const refIdx = path.indexOf('.__ref__.');
+  if (refIdx < 0) return computeNumber(rootData, path, numStyle);
+  const hostPath = path.slice(0, refIdx);
+  const subPath = path.slice(refIdx + '.__ref__.'.length);
+  const hostNode = getNodeByPath(rootData, hostPath);
+  if (!hostNode) return null;
+  const raw = (hostNode.content || '').trim();
+  if (!isFullNodeRef(raw)) return null;
+  const sourceRoot = getFullRefNode(rootData, raw);
+  if (!sourceRoot) return null; // 跨文档源未加载等
+  return computeNumber(sourceRoot, subPath, numStyle);
+}
+
 function findNodeRecursive(obj, targetKey) {
   if (!obj || typeof obj !== 'object') return null;
   if (obj[targetKey]) return obj[targetKey];
@@ -630,6 +651,9 @@ function createRefIcon(data, refStr, viewInstance) {
   if (isError) {
     icon.classList.add('ref-icon-error');
     icon.title = '引用错误: ' + resolved;
+  } else if (isSheetRef(refStr)) {
+    const dotIdx = refStr.indexOf('.');
+    icon.title = '跳转到表格: ' + refStr.slice(1, dotIdx) + '!' + refStr.slice(dotIdx + 1);
   } else if (ref.docName) {
     icon.title = '跳转到: ' + ref.docName + '.' + (ref.nodePath || '');
   } else {
@@ -639,15 +663,33 @@ function createRefIcon(data, refStr, viewInstance) {
   icon.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
+    // 表格引用：最高优先级（与 resolveRef 一致，isSheetRef 先判）
+    if (isSheetRef(refStr)) {
+      const dotIdx = refStr.indexOf('.');
+      const sheetName = refStr.slice(1, dotIdx);
+      const addr = refStr.slice(dotIdx + 1);
+      if (typeof app !== 'undefined' && app.gotoSheetCell) {
+        app.gotoSheetCell(sheetName, addr, viewInstance);
+      }
+      return;
+    }
+    // 跨文档引用：找到对应的 .udd 文件并打开它，跳转到目标节点
+    if (ref.docName && !isError) {
+      if (typeof app !== 'undefined' && app.openCrossDocRef) {
+        app.openCrossDocRef(ref.docName, ref.nodePath, viewInstance);
+      }
+      return;
+    }
     if (!targetPath) {
       if (ref.docName) {
-        toast('跨文档跳转暂不支持');
+        // 引用解析失败（如未连接仓库）— 这种情况不跳转，仅提示
+        toast('引用未成功解析，无法跳转：' + (resolved || ref.docName));
       } else {
         toast('找不到引用目标');
       }
       return;
     }
-    // Jump to the source node
+    // Jump to the source node in current document
     jumpToNode(targetPath, viewInstance);
   });
 

@@ -347,7 +347,9 @@ async function _embedMediaFiles(data, zip, serverUrl) {
   rewritePaths(data);
 }
 
-// Returns { data, embeddedMedia, embeddedRefDocs } — caller stores per-session
+// Returns { data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } — caller stores per-session.
+// 不再直接 side-effect 修改 app.sheetView.workbook —— 工作簿应当跟会话挂钩，
+// 由调用方在创建/切换 session 时把 xlsxBin 写到 session.xlsxBin 并按需 loadFromBinary。
 async function parseUDDBlob(blob) {
   const zip = await JSZip.loadAsync(blob);
   const dataFile = zip.file('data.json');
@@ -356,18 +358,19 @@ async function parseUDDBlob(blob) {
   const bottom = JSON.parse(json);
   const data = decompressData(bottom);
 
-  // Load embedded sheets.xlsx if present
+  // Load embedded sheets.xlsx if present —— 仅返回二进制，由调用方决定是否注入到当前 sheetView
+  let xlsxBin = null;
   const sheetsFile = zip.file('sheets.xlsx');
-  if (sheetsFile && typeof app !== 'undefined' && app.sheetView) {
-    const xlsxBin = await sheetsFile.async('uint8array');
-    app.sheetView.loadFromBinary(xlsxBin);
+  if (sheetsFile) {
+    xlsxBin = await sheetsFile.async('uint8array');
   }
-  // Load embedded ppt-format.json if present
+  // Load embedded ppt-format.json if present —— 仅返回，由调用方按需 setFormat
+  let pptFormat = null;
   const pptFile = zip.file('ppt-format.json');
-  if (pptFile && typeof app !== 'undefined' && app.pptView) {
+  if (pptFile) {
     try {
       const pptJson = await pptFile.async('string');
-      app.pptView.setFormat(JSON.parse(pptJson));
+      pptFormat = JSON.parse(pptJson);
     } catch (e) {}
   }
 
@@ -392,5 +395,5 @@ async function parseUDDBlob(blob) {
     } catch (e) {}
   }
 
-  return { data, embeddedMedia, embeddedRefDocs };
+  return { data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat };
 }

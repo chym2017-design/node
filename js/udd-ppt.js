@@ -14,6 +14,7 @@ const PPT_THEMES = {
 
 const PPT_LAYOUTS = {
   one_col:       '单栏',
+  two_col:       '双栏',
   two_col_left:  '左文右图',
   two_col_right: '左图右文',
   three_col:     '三栏',
@@ -36,16 +37,24 @@ class PptView {
     this.format = getDefaultPptFormat();
     this.slides = [];
     this.currentSlide = 0;
+    // Plan D：PPT 是只读演示渲染，不接受 contentEditable 输入；
+    //   _rendered 用于视图缓存命中（避免每次切到 PPT 都重新构建 slides 和媒体异步收集）
+    this._rendered = false;
+    this._inputDirty = false;
   }
 
   setFormat(fmt) { this.format = fmt || getDefaultPptFormat(); }
   getFormat() { return this.format; }
+
+  // PPT 没有 contentEditable，syncAll 是 no-op。保留方法签名让 app.switchView 可以无差别调用。
+  syncAll() { /* no-op: ppt is read-only render */ }
 
   async render(data) {
     this.data = data;
     this.slides = await this._buildSlides(data, this.format);
     if (this.currentSlide >= this.slides.length) this.currentSlide = Math.max(0, this.slides.length - 1);
     this._renderUI();
+    this._rendered = true; // Plan D：视图缓存命中标记
   }
 
   // ---- Build slides from data tree (async for cross-doc refs) ----
@@ -126,33 +135,33 @@ class PptView {
         layout = group.layout || override.layout || defaultLayout;
         depth = group.depth || override.depth || defaultDepth;
       }
-      const bullets = [], mediaItems = [];
+      const bullets = [], mediaItems = [], orderedItems = [];
       for (const itemKey of items) {
         const child = node[itemKey];
         if (!child) continue;
-        await this._collectBullets(child, 0, depth - 2, bullets, mediaItems);
+        await this._collectBullets(child, 0, depth - 2, bullets, mediaItems, orderedItems);
       }
-      if (node.content) await this._collectMediaAsync(node.content, mediaItems);
-      if (node.body) await this._collectMediaAsync(node.body, mediaItems);
+      if (node.content) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
+      if (node.body) await this._collectMediaAsync(node.body, mediaItems, orderedItems);
       slides.push({
         type: 'content', title: await this._resolveContent(node.content),
         notes: node.body ? await this._resolveContent(node.body) : '',
-        bullets, mediaItems, theme, layout, nodePath: path, splitIndex: i
+        bullets, mediaItems, orderedItems, theme, layout, nodePath: path, splitIndex: i
       });
     }
   }
 
   async _buildContentSlide(node, path, depth, layout, theme, baseLevel) {
-    const bullets = [], mediaItems = [];
+    const bullets = [], mediaItems = [], orderedItems = [];
     const childKeys = getChildTKeys(node, baseLevel + 1);
     for (const ck of childKeys) {
       const child = node[ck];
       if (!child) continue;
-      await this._collectBullets(child, 0, depth - baseLevel - 1, bullets, mediaItems);
+      await this._collectBullets(child, 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
     }
     // 主节点自己的 content / body 里的媒体（含 =ref 深入解析）
-    if (node.content) await this._collectMediaAsync(node.content, mediaItems);
-    if (node.body) await this._collectMediaAsync(node.body, mediaItems);
+    if (node.content) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
+    if (node.body) await this._collectMediaAsync(node.body, mediaItems, orderedItems);
     // Title: for full node refs, use the source node's content as title
     let title = await this._resolveContent(node.content);
     let notes = node.body ? await this._resolveContent(node.body) : '';
@@ -163,18 +172,22 @@ class PptView {
         title = await this._resolveContent(sourceNode.content);
         if (sourceNode.body) notes = await this._resolveContent(sourceNode.body);
         // 源节点自身 content/body 媒体也要收集
-        if (sourceNode.content) await this._collectMediaAsync(sourceNode.content, mediaItems);
-        if (sourceNode.body) await this._collectMediaAsync(sourceNode.body, mediaItems);
+        if (sourceNode.content) await this._collectMediaAsync(sourceNode.content, mediaItems, orderedItems);
+        if (sourceNode.body) await this._collectMediaAsync(sourceNode.body, mediaItems, orderedItems);
         const srcChildKeys = Object.keys(sourceNode).filter(k => isTNode(k)).sort();
         for (const ck of srcChildKeys) {
-          await this._collectBullets(sourceNode[ck], 0, depth - baseLevel - 1, bullets, mediaItems);
+          await this._collectBullets(sourceNode[ck], 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
         }
       }
     }
-    return { type: 'content', title, notes, bullets, mediaItems, theme, layout, nodePath: path };
+    return { type: 'content', title, notes, bullets, mediaItems, orderedItems, theme, layout, nodePath: path };
   }
 
-  async _collectBullets(node, level, maxDepth, bullets, mediaItems) {
+  // 收集节点及其子节点的文本/媒体，按出现顺序产出三份视图：
+  //   bullets      —— 纯文本条目（兼容旧布局 two_col_left/right、three_col、image_full 及 PPTX 导出）
+  //   mediaItems   —— 纯媒体条目（同上）
+  //   orderedItems —— 文本 + 媒体按出现顺序混排（新的 one_col / two_col 纯顺序布局使用）
+  async _collectBullets(node, level, maxDepth, bullets, mediaItems, orderedItems) {
     if (!node || typeof node !== 'object') return;
     const raw = node.content || '';
 
@@ -182,45 +195,58 @@ class PptView {
     if (isRef(raw) && isFullNodeRef(raw)) {
       const sourceNode = await this._resolveFullNodeAsync(raw);
       if (sourceNode && typeof sourceNode === 'object') {
-        await this._collectBullets(sourceNode, level, maxDepth, bullets, mediaItems);
+        await this._collectBullets(sourceNode, level, maxDepth, bullets, mediaItems, orderedItems);
         return;
       }
     }
 
     const content = await this._resolveContent(raw);
-    if (content) bullets.push({ text: content, level });
-    await this._collectMediaAsync(raw, mediaItems);
+    if (content) {
+      const b = { text: content, level };
+      bullets.push(b);
+      if (orderedItems) orderedItems.push({ kind: 'bullet', ...b });
+    }
+    await this._collectMediaAsync(raw, mediaItems, orderedItems);
     if (node.body) {
       const bodyText = await this._resolveContent(node.body);
       const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
-      if (bodyDisplay) bullets.push({ text: bodyDisplay, level, isBody: true });
-      await this._collectMediaAsync(node.body, mediaItems);
+      if (bodyDisplay) {
+        const b = { text: bodyDisplay, level, isBody: true };
+        bullets.push(b);
+        if (orderedItems) orderedItems.push({ kind: 'bullet', ...b });
+      }
+      await this._collectMediaAsync(node.body, mediaItems, orderedItems);
     }
     if (level < maxDepth) {
       const childKeys = Object.keys(node).filter(k => isTNode(k)).sort();
       for (const ck of childKeys) {
-        await this._collectBullets(node[ck], level + 1, maxDepth, bullets, mediaItems);
+        await this._collectBullets(node[ck], level + 1, maxDepth, bullets, mediaItems, orderedItems);
       }
     }
   }
 
   // 公共 collector 的异步包装：深入 =ref / {{=ref}} 展开所有媒体
-  async _collectMediaAsync(text, mediaItems) {
+  // orderedItems 可选，若传入则同步往里 push {kind:'media', ...}
+  async _collectMediaAsync(text, mediaItems, orderedItems) {
     if (!text) return;
     if (typeof collectMediaItemsFromTextAsync === 'function') {
       const items = await collectMediaItemsFromTextAsync(this.data, text);
       for (const it of items) {
         if (it.type === 'table' && it.tableRef) {
           const rows = this._readTableRows(it.tableRef);
-          if (rows && rows.length) mediaItems.push({ type: 'table', rows });
+          if (rows && rows.length) {
+            mediaItems.push({ type: 'table', rows });
+            if (orderedItems) orderedItems.push({ kind: 'media', type: 'table', rows });
+          }
         } else {
           mediaItems.push({ type: it.type, src: it.src });
+          if (orderedItems) orderedItems.push({ kind: 'media', type: it.type, src: it.src });
         }
       }
       return;
     }
     // 回退：旧行为
-    this._collectMediaItems(text, mediaItems);
+    this._collectMediaItems(text, mediaItems, orderedItems);
   }
 
   // Resolve a full node ref (=t1-1 or =doc.t1-1) and return the source node object
@@ -241,23 +267,27 @@ class PptView {
   }
 
   // Collect images and tables in order of appearance into mediaItems array
-  _collectMediaItems(text, mediaItems) {
+  _collectMediaItems(text, mediaItems, orderedItems) {
     if (!text) return;
     const re = /\{\{(?!=)(.*?)\}\}/g;
     let m;
+    const push = (obj) => {
+      mediaItems.push(obj);
+      if (orderedItems) orderedItems.push({ kind: 'media', ...obj });
+    };
     while ((m = re.exec(text)) !== null) {
       const media = parseMediaTag(m[1]);
       if (media && media.image) {
-        mediaItems.push({ type: 'image', src: media.image });
+        push({ type: 'image', src: media.image });
       } else if (media && media.video) {
-        mediaItems.push({ type: 'video', src: media.video });
+        push({ type: 'video', src: media.video });
       } else if (media && media.audio) {
-        mediaItems.push({ type: 'audio', src: media.audio });
+        push({ type: 'audio', src: media.audio });
       } else if (typeof parseTableRef === 'function') {
         const tableRef = parseTableRef(m[1]);
         if (tableRef) {
           const rows = this._readTableRows(tableRef);
-          if (rows && rows.length) mediaItems.push({ type: 'table', rows });
+          if (rows && rows.length) push({ type: 'table', rows });
         }
       }
     }
@@ -437,10 +467,27 @@ class PptView {
       }
     }).join('');
 
+    // 把 orderedItems（混排的 bullet/media）渲染成 HTML
+    // 单栏 / 双栏 都用这个，区别只是外层容器是单栏还是 column-count:2
+    const buildOrderedHTML = (items) => (items || []).map(it => {
+      if (it.kind === 'bullet') {
+        const opacity = it.isBody ? 'opacity:.6;font-style:italic' : '';
+        return `<div class="slide-bullet" data-level="${it.level}" style="${opacity};${scale}">${this._esc(it.text)}</div>`;
+      }
+      // media
+      return buildMediaHTML([it]);
+    }).join('');
+
     const mediaHTML = buildMediaHTML(mediaItems);
+    const orderedHTML = buildOrderedHTML(slide.orderedItems);
 
     if (layout === 'title_only') {
       return html;
+    } else if (layout === 'two_col') {
+      // 新双栏：左栏从上往下排，溢出后继续到右栏。文本/媒体不区分，按出现顺序混排。
+      // CSS columns 自然实现：column-count:2 + column-fill:auto + 固定高度容器
+      // break-inside:avoid 防止单条媒体被纵向截断
+      html += `<div class="slide-body slide-two-col">${orderedHTML}</div>`;
     } else if (layout === 'two_col_left') {
       html += `<div class="slide-body"><div class="slide-col">${bulletHTML}</div><div class="slide-col" style="overflow:auto">${mediaHTML}</div></div>`;
     } else if (layout === 'two_col_right') {
@@ -461,10 +508,8 @@ class PptView {
       html = `<img class="slide-img" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.3" data-mediasrc="${this._esc(mediaItems[0].src)}" />
               <div style="position:relative;z-index:1">${html}<div class="slide-body"><div class="slide-col">${bulletHTML}</div></div></div>`;
     } else {
-      // one_col default — media goes in right column (max-width:40%)
-      html += `<div class="slide-body"><div class="slide-col">${bulletHTML}</div>`;
-      if (hasMedia) html += `<div class="slide-col" style="max-width:40%;overflow:auto">${mediaHTML}</div>`;
-      html += '</div>';
+      // one_col：纯顺序展示，不区分图文，从上到下混排
+      html += `<div class="slide-body slide-one-col">${orderedHTML}</div>`;
     }
     return html;
   }
@@ -692,11 +737,18 @@ class PptView {
             if (src && src.startsWith('data:')) s.addImage({ data: src, x: 0, y: 0, w: 13.33, h: 7.5 });
           } catch (e) {}
           s.addText(bulletTexts, { x: 0.6, y: 1.4, w: 12, h: 5.5, valign: 'top' });
+        } else if (layout === 'two_col') {
+          // 双栏：按 orderedItems 顺序左到右、上到下；左栏满后右栏继续。
+          // 简单实现：按 orderedItems 等分到两栏（按数量），每栏内部按出现顺序顺序排版。
+          const ord = slide.orderedItems || [];
+          const half = Math.ceil(ord.length / 2);
+          const leftItems = ord.slice(0, half);
+          const rightItems = ord.slice(half);
+          this._addOrderedColumn(s, leftItems, 0.6, 1.4, 5.8, t, addMediaItems);
+          this._addOrderedColumn(s, rightItems, 7,   1.4, 5.8, t, addMediaItems);
         } else {
-          // one_col — bullets left, media right
-          const textW = hasMedia ? 7.5 : 12;
-          s.addText(bulletTexts, { x: 0.6, y: 1.4, w: textW, h: 5.5, valign: 'top' });
-          if (hasMedia) addMediaItems(mediaItems, 8.3, 1.4, 4.5);
+          // one_col：纯顺序展示，文本和媒体按 orderedItems 顺序混排（不再左文右图）
+          this._addOrderedColumn(s, slide.orderedItems || [], 0.6, 1.4, 12, t, addMediaItems);
         }
 
         // Speaker notes
@@ -710,5 +762,38 @@ class PptView {
     }).catch(e => {
       toast('导出失败: ' + e.message);
     });
+  }
+
+  // 把 orderedItems 顺序排版到 PPTX 的一个矩形区域里（用于 one_col / two_col 的每一栏）。
+  // 文本块按 bullet text 集中累积后调一次 addText，遇到媒体再 flush 文本。
+  _addOrderedColumn(slide, items, x, y, w, theme, addMediaItems) {
+    if (!items || !items.length) return;
+    let curY = y;
+    let pendingText = [];
+    const flushText = () => {
+      if (!pendingText.length) return;
+      // 估算文本高度：每条 ~0.3 inch
+      const h = Math.min(7.5 - curY, pendingText.length * 0.3 + 0.2);
+      slide.addText(pendingText, { x, y: curY, w, h, valign: 'top' });
+      curY += h;
+      pendingText = [];
+    };
+    for (const it of items) {
+      if (it.kind === 'bullet') {
+        pendingText.push({
+          text: '  '.repeat(it.level) + (it.level === 0 ? '• ' : it.level === 1 ? '◦ ' : '▪ ') + it.text,
+          options: { fontSize: 14 - it.level, color: theme.text.replace('#', ''), breakLine: true, italic: !!it.isBody }
+        });
+      } else {
+        flushText();
+        addMediaItems([it], x, curY, w);
+        // addMediaItems 内部按 image=2.6 / table=rows*0.3+0.2 推进。
+        // 这里不重复推进 curY；改为重新参考其副作用：addMediaItems 写到 curY 但不返回新位置，
+        // 简化处理：估算图片 2.6、表格 rows*0.3+0.2，与 addMediaItems 内部保持一致。
+        if (it.type === 'image') curY += 2.6;
+        else if (it.type === 'table' && it.rows) curY += it.rows.length * 0.3 + 0.2;
+      }
+    }
+    flushText();
   }
 }

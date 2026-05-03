@@ -11,6 +11,9 @@ class DocumentView {
     this.el = container;
     this.focusPath = null;
     this.focusField = 'content';
+    // Plan D：_rendered 做视图缓存，_inputDirty 让 syncAll 在未输入时早退
+    this._rendered = false;
+    this._inputDirty = false;
     this.el.addEventListener('click', e => this.onClick(e));
     this.el.addEventListener('input', e => this.onInput(e));
     this.el.addEventListener('focusin', e => this.onFocusIn(e));
@@ -32,6 +35,9 @@ class DocumentView {
     if (this.focusPath) {
       requestAnimationFrame(() => this.restoreFocus());
     }
+    // 渲染后 DOM 与 data 一致；打上缓存命中标记，清脏
+    this._rendered = true;
+    this._inputDirty = false;
   }
 
   renderChildren(parentObj, parentPath, parentLevel, container, numStyle) {
@@ -47,7 +53,7 @@ class DocumentView {
         this.counters[counterKey] = (this.counters[counterKey] || 0) + 1;
       }
 
-      const num = this.getNumber(path, numStyle);
+      const num = level !== 0 ? computeNumberForRender(this.data, path, numStyle) : null;
       const style = this.getStyle(level, path);
 
       // Node wrapper
@@ -79,28 +85,13 @@ class DocumentView {
       heading.className = hClass;
       this.applyInlineStyle(heading, style);
 
-      // Numbering (skip for t0 and 'none')
-      if (level !== 0 && numStyle !== 'none') {
-        if (numStyle === 'bullet') {
-          const bullet = document.createElement('span');
-          bullet.className = 'doc-num';
-          const bullets = ['●','○','■','▪'];
-          bullet.textContent = bullets[Math.min(level - 1, bullets.length - 1)] + ' ';
-          this.applyInlineStyle(bullet, style);
-          heading.appendChild(bullet);
-        } else if (numStyle === 'bullet-uniform') {
-          const bullet = document.createElement('span');
-          bullet.className = 'doc-num';
-          bullet.textContent = '● ';
-          this.applyInlineStyle(bullet, style);
-          heading.appendChild(bullet);
-        } else {
-          const numSpan = document.createElement('span');
-          numSpan.className = 'doc-num';
-          numSpan.textContent = num;
-          this.applyInlineStyle(numSpan, style);
-          heading.appendChild(numSpan);
-        }
+      // Numbering (skip t0 / 'none' / no_number)
+      if (level !== 0 && num !== null) {
+        const numSpan = document.createElement('span');
+        numSpan.className = 'doc-num';
+        numSpan.textContent = num + (numStyle === 'bullet' || numStyle === 'bullet-uniform' ? ' ' : '');
+        this.applyInlineStyle(numSpan, style);
+        heading.appendChild(numSpan);
       }
 
       // === Content, body, children use desc from fold toggle above ===
@@ -257,22 +248,9 @@ class DocumentView {
         this.counters[counterKey] = (this.counters[counterKey] || 0) + 1;
       }
 
-      const num = readOnly ? this._getSimpleNum(parentObj, key, numStyle) : this.getNumber(childPath, numStyle);
+      const num = childLevel !== 0 ? computeNumberForRender(this.data, childPath, numStyle) : null;
       this._renderSingleNode(childNode, childPath, childLevel, container, numStyle, num, readOnly);
     }
-  }
-
-  _getSimpleNum(parentObj, key, numStyle) {
-    if (numStyle === 'none') return '';
-    if (numStyle === 'bullet') {
-      const lvl = getLevel(key);
-      const bullets = ['●','○','■','▪'];
-      return bullets[Math.min(lvl - 1, bullets.length - 1)] + ' ';
-    }
-    if (numStyle === 'bullet-uniform') return '● ';
-    const lvl = getLevel(key);
-    const siblings = getChildTKeys(parentObj, lvl);
-    return String(siblings.indexOf(key) + 1);
   }
 
   // 渲染单个节点（正常 + 引用共用）
@@ -306,10 +284,10 @@ class DocumentView {
     this.applyInlineStyle(heading, style);
 
     // Numbering
-    if (level !== 0 && numStyle !== 'none') {
+    if (level !== 0 && num !== null) {
       const numSpan = document.createElement('span');
       numSpan.className = 'doc-num';
-      numSpan.textContent = num;
+      numSpan.textContent = num + (numStyle === 'bullet' || numStyle === 'bullet-uniform' ? ' ' : '');
       this.applyInlineStyle(numSpan, style);
       heading.appendChild(numSpan);
     }
@@ -402,39 +380,6 @@ class DocumentView {
 
   // _renderRefCloneChildren / _renderRefCloneNode 已移除，统一使用 _renderChildNodes + _renderSingleNode
 
-  getNumber(path, numStyle) {
-    const parts = path.split('.');
-    const nums = [];
-    let obj = this.data;
-    for (const part of parts) {
-      const level = getLevel(part);
-      if (level === 0) { obj = obj[part]; continue; }
-      const siblings = getChildTKeys(obj, level);
-      const idx = siblings.indexOf(part);
-      nums.push(idx + 1);
-      obj = obj[part];
-    }
-    if (nums.length === 0) return '';
-    if (numStyle === '1.1.1') return nums.join('.');
-    if (numStyle === '一.1.1') {
-      const cn = ['零','一','二','三','四','五','六','七','八','九','十',
-                   '十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
-      const first = cn[nums[0]] || nums[0];
-      return nums.length === 1 ? first : first + '.' + nums.slice(1).join('.');
-    }
-    if (numStyle === 'I.A.1') {
-      const roman = ['','I','II','III','IV','V','VI','VII','VIII','IX','X'];
-      const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-      let result = '';
-      if (nums[0]) result = roman[nums[0]] || nums[0];
-      if (nums[1]) result += '.' + (alpha[nums[1]-1] || nums[1]);
-      if (nums[2]) result += '.' + nums[2];
-      for (let i = 3; i < nums.length; i++) result += '.' + nums[i];
-      return result;
-    }
-    return nums.join('.');
-  }
-
   getStyle(level, path) {
     const stylePath = path.includes('.__ref__.') ? path.split('.__ref__.')[0] : path;
     return buildNodeStyle(this.data, stylePath, level, { isBody: false });
@@ -451,6 +396,8 @@ class DocumentView {
 
   // Sync all editable elements to data
   syncAll() {
+    // Plan D 早退：期间没有真正发生 input，就跳过全树 querySelectorAll
+    if (!this._inputDirty) return;
     this.el.querySelectorAll('[data-path][data-field]').forEach(el => {
       if (el.dataset.ref || el.dataset.hasRef) return;
       if (el.dataset.refEditing !== undefined) return; // 编辑原始 ref 源码期间不写回
@@ -463,6 +410,7 @@ class DocumentView {
     if (typeof app !== 'undefined' && app._normalizeEmbeddedTagsInData) {
       app._normalizeEmbeddedTagsInData(this.data);
     }
+    this._inputDirty = false;
   }
 
   onInput(e) {
@@ -483,6 +431,7 @@ class DocumentView {
       }
     }
     node[field] = mergeEditableTextAndMedia(cur, edited);
+    this._inputDirty = true; // Plan D：真改了才标脏
     app.markDirty();
   }
 

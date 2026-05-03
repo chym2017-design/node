@@ -26,9 +26,19 @@ class App {
     this.sessions = [];
     this.activeSessionId = null;
 
-    // Create initial session
+    this.outlineView = new OutlineView(document.getElementById('outline-view'));
+    this.mindmapView = new MindmapView(document.getElementById('mindmap-view'));
+    this.documentView = new DocumentView(document.getElementById('document-view'));
+    this.sheetView = new SheetView(document.getElementById('sheet-view'));
+    this.sheetView.resetWithDefaultData();
+    this.pptView = new PptView(document.getElementById('ppt-view'));
+
+    // Create initial session（捕获默认表格簿的二进制写到 session.xlsxBin，
+    // 让该会话拥有"自己的"工作簿，避免与后续打开的文档共用同一对象。）
     const initData = createDefaultData();
-    const initSession = this._createSessionObj('未命名文档', initData, null, null);
+    let initXlsxBin = null;
+    try { initXlsxBin = this.sheetView.toBinary(); } catch (e) {}
+    const initSession = this._createSessionObj('未命名文档', initData, null, null, { xlsxBin: initXlsxBin });
     this.sessions.push(initSession);
     this.activeSessionId = initSession.id;
 
@@ -39,12 +49,6 @@ class App {
     this.contentSource = 'embedded'; // 'embedded' | 'repo'
     // Embedded data stored per-session (session.embeddedMedia, session.embeddedRefDocs)
 
-    this.outlineView = new OutlineView(document.getElementById('outline-view'));
-    this.mindmapView = new MindmapView(document.getElementById('mindmap-view'));
-    this.documentView = new DocumentView(document.getElementById('document-view'));
-    this.sheetView = new SheetView(document.getElementById('sheet-view'));
-    this.sheetView.resetWithDefaultData();
-    this.pptView = new PptView(document.getElementById('ppt-view'));
     this.lastFgColor = '#1e293b';
     this.lastBgColor = '#ffffff';
     this.savedSelection = null;
@@ -105,14 +109,66 @@ class App {
   get undoMgr() { const s = this._activeSession; return s ? s.undoMgr : null; }
   set undoMgr(v) { const s = this._activeSession; if (s) s.undoMgr = v; }
 
-  _createSessionObj(fileName, data, fileHandle, filePath) {
+  _createSessionObj(fileName, data, fileHandle, filePath, opts) {
     const undoMgr = new UndoManager();
+    const o = opts || {};
     return {
       id: String(Date.now()) + '_' + Math.random().toString(36).slice(2, 6),
       fileName, data: deepClone(data), fileHandle, filePath,
       undoMgr, dirty: false,
-      focusPath: null, scrollTop: 0
+      focusPath: null, scrollTop: 0,
+      // 性能优化（Plan B）：开打文件时一次性算出"是否需要懒加载嵌入引用"，
+      // 避免 _ensureEmbeddedMediaLoaded 每次 renderCurrentView 都做全量 JSON.stringify。
+      _needsRefDocsLoad: JSON.stringify(data || {}).includes('udd.ref-docs.'),
+      // 表格按会话隔离：每个 session 持有自己的 xlsx 二进制，切换会话时把它注入到
+      // 共享的 sheetView.workbook。null 表示该会话尚无表格数据（启用默认空白簿）。
+      xlsxBin: o.xlsxBin || null,
+      sheetActiveSheet: o.sheetActiveSheet || null,
+      // PPT 格式同理按会话隔离
+      pptFormat: o.pptFormat || null
     };
+  }
+
+  // 把 active session 当前 sheetView.workbook 序列化回 session.xlsxBin。
+  // 用于：会话切换前 / 关闭前 / autoSave / 保存文件前。
+  _captureActiveSessionSheetState() {
+    const s = this._activeSession;
+    if (!s) return;
+    if (this.sheetView && this.sheetView.workbook) {
+      try {
+        const bin = this.sheetView.toBinary();
+        if (bin) s.xlsxBin = bin;
+      } catch (e) { /* skip */ }
+      s.sheetActiveSheet = this.sheetView.activeSheet || null;
+    }
+    if (this.pptView && this.pptView.getFormat) {
+      try { s.pptFormat = deepClone(this.pptView.getFormat()); } catch (e) {}
+    }
+  }
+
+  // 把 session 持有的 xlsxBin 注入到 sheetView，让该会话拿到自己的工作簿。
+  // 没有 xlsxBin 的会话（例如全新文档 / 从 JSON 导入 / 老格式恢复）→ 装入空白工作簿，
+  // 并立刻把这份空白簿的 toBinary() 写回 session.xlsxBin，让会话之间真正隔离，
+  // 之后用户对这份会话的编辑不会污染到下一个被切换进来的会话。
+  _applySessionSheetState(session) {
+    if (!session) return;
+    if (this.sheetView) {
+      if (session.xlsxBin) {
+        this.sheetView.loadFromBinary(session.xlsxBin);
+      } else {
+        this.sheetView._initDefaultWorkbook();
+        try { session.xlsxBin = this.sheetView.toBinary(); } catch (e) {}
+      }
+      if (session.sheetActiveSheet && this.sheetView.workbook && this.sheetView.workbook.Sheets[session.sheetActiveSheet]) {
+        this.sheetView.activeSheet = session.sheetActiveSheet;
+      }
+      // 失效 sheet 视图缓存，强制下次切到表格时按新工作簿重渲
+      this.sheetView._rendered = false;
+    }
+    if (this.pptView && session.pptFormat) {
+      try { this.pptView.setFormat(deepClone(session.pptFormat)); } catch (e) {}
+      this.pptView._rendered = false;
+    }
   }
 
   _saveCurrentSessionState() {
@@ -133,10 +189,15 @@ class App {
     if (sessionId === this.activeSessionId) return;
     const target = this.sessions.find(s => s.id === sessionId);
     if (!target) return;
-    // Save current session state
+    // Save current session state（包含表格工作簿二进制）
+    this._captureActiveSessionSheetState();
     this._saveCurrentSessionState();
+    // 会话切换=数据完全换了一份，所有视图缓存都必须清空
+    this._invalidateAllViews();
     // Switch
     this.activeSessionId = sessionId;
+    // 把目标会话的工作簿装入共享 sheetView
+    this._applySessionSheetState(target);
     // Restore UI
     document.getElementById('doc-title').value = target.fileName;
     document.title = 'UDD - ' + target.fileName;
@@ -169,6 +230,10 @@ class App {
     const session = this.sessions.find(s => s.id === sessionId);
     if (!session) return;
     if (session.dirty && !confirm(`"${session.fileName}" 未保存，确定关闭？`)) return;
+    // 关闭会话前先把 active session 当前的工作簿 / PPT 格式落盘到会话上
+    this._captureActiveSessionSheetState();
+    // 关闭会话后很可能切到另一个 session，所有视图缓存都要作废
+    this._invalidateAllViews();
     const idx = this.sessions.indexOf(session);
     this.sessions.splice(idx, 1);
     // Remove from IndexedDB
@@ -191,6 +256,8 @@ class App {
     this.outlineView.focusPath = s.focusPath;
     this.documentView.focusPath = s.focusPath;
     this.mindmapView.focusPath = s.focusPath;
+    // 把新激活会话的工作簿装回 sheetView
+    this._applySessionSheetState(s);
     this.renderCurrentView();
     this._renderOpenDocs();
   }
@@ -203,7 +270,7 @@ class App {
     } catch (e) { /* ignore */ }
   }
 
-  _addSessionAndSwitch(fileName, data, fileHandle, filePath, originPath) {
+  _addSessionAndSwitch(fileName, data, fileHandle, filePath, originPath, opts) {
     // Check if file is already open (by filePath)
     if (filePath) {
       const existing = this.sessions.find(s => s.filePath === filePath);
@@ -228,12 +295,18 @@ class App {
         name = fileName + ' ' + n;
       }
     }
+    // 切走前把当前 active session 的工作簿存回它自己（避免被新会话覆盖）
+    this._captureActiveSessionSheetState();
     this._saveCurrentSessionState();
-    const session = this._createSessionObj(name, data, fileHandle, filePath);
+    const session = this._createSessionObj(name, data, fileHandle, filePath, opts);
     if (originPath) session.originPath = originPath;
     session.undoMgr.push(data);
     this.sessions.push(session);
     this.activeSessionId = session.id;
+    // 新打开了一个文档：原有会话的视图缓存在新数据下没意义，全部清空
+    this._invalidateAllViews();
+    // 把新会话的工作簿 / PPT 格式应用到共享 view
+    this._applySessionSheetState(session);
     document.getElementById('doc-title').value = name;
     document.title = 'UDD - ' + name;
     this.outlineView.focusPath = null;
@@ -296,10 +369,30 @@ class App {
           try {
             const saved = await dbLoad('session_' + meta.id);
             if (saved && saved.data) {
-              const s = this._createSessionObj(meta.fileName, saved.data, null, meta.filePath);
+              // saved.data 兼容两种历史格式：
+              //   1) 老版本：直接是 data 对象
+              //   2) 新版本：{ data, xlsxBin, pptFormat, sheetActiveSheet }
+              let realData, xlsxBin = null, pptFormat = null, sheetActiveSheet = null;
+              if (saved.data && (saved.data.meta || saved.data.type_global || saved.data.t0)) {
+                // 老格式：整个 saved.data 就是文档数据
+                realData = saved.data;
+              } else if (saved.data.data) {
+                realData = saved.data.data;
+                xlsxBin = saved.data.xlsxBin || null;
+                pptFormat = saved.data.pptFormat || null;
+                sheetActiveSheet = saved.data.sheetActiveSheet || null;
+              } else {
+                realData = saved.data;
+              }
+              const s = this._createSessionObj(meta.fileName, realData, null, meta.filePath, { xlsxBin, pptFormat, sheetActiveSheet });
               s.id = meta.id;
               s.dirty = meta.dirty || false;
-              s.undoMgr.push(saved.data);
+              s.undoMgr.push(realData);
+              // 老格式没有 xlsxBin：用当前默认 sample workbook 给它一个独立副本，
+              // 否则会话之间会"看起来共享一个工作簿"，编辑一个污染另一个。
+              if (!s.xlsxBin && this.sheetView) {
+                try { s.xlsxBin = this.sheetView.toBinary(); } catch (e) {}
+              }
               restoredSessions.push(s);
             }
           } catch (e) { /* skip */ }
@@ -311,6 +404,8 @@ class App {
           const s = this._activeSession;
           document.getElementById('doc-title').value = s.fileName;
           document.title = 'UDD - ' + s.fileName;
+          // 把激活会话的工作簿装入 sheetView
+          this._applySessionSheetState(s);
           toast('已恢复 ' + restoredSessions.length + ' 个文档');
         }
       } else {
@@ -330,7 +425,46 @@ class App {
     this._renderOpenDocs();
   }
 
+  // 视图实例按名字映射（便于复用 invalidate/render 逻辑）
+  _getViewByName(name) {
+    if (name === 'outline') return this.outlineView;
+    if (name === 'mindmap') return this.mindmapView;
+    if (name === 'document') return this.documentView;
+    if (name === 'sheet') return this.sheetView;
+    if (name === 'ppt') return this.pptView;
+    return null;
+  }
+
+  // 把所有视图的缓存标记清空 → 下次切到哪个视图就会重新 render。
+  // 用于：数据级变动（撤销/重做/sidebar 应用/格式开关/渲染开关/来源切换/编号样式/会话切换等）。
+  _invalidateAllViews() {
+    for (const name of ['outline', 'mindmap', 'document', 'sheet', 'ppt']) {
+      const v = this._getViewByName(name);
+      if (v) { v._rendered = false; v._inputDirty = false; }
+    }
+  }
+
+  // 只把"非当前视图"的缓存标记清空。
+  // 用于：当前视图内用户敲字（contentEditable 已经在 DOM 上即时更新），
+  //   当前视图不需要重渲，但其它视图下次进入必须重渲以拿到新数据。
+  _invalidateOtherViews() {
+    for (const name of ['outline', 'mindmap', 'document', 'sheet', 'ppt']) {
+      if (name === this.currentView) continue;
+      const v = this._getViewByName(name);
+      if (v) { v._rendered = false; v._inputDirty = false; }
+    }
+  }
+
+  // 手动刷新按钮入口：强制重渲当前视图（无视缓存），用于引用源文件在外部改动后拉最新。
+  refreshCurrentView() {
+    const v = this._getViewByName(this.currentView);
+    if (v) v._rendered = false;
+    this.renderCurrentView();
+    toast('已刷新');
+  }
+
   renderCurrentView() {
+    const cur = this._getViewByName(this.currentView);
     if (this.currentView === 'outline') {
       this.outlineView.render(this.data);
       this._resolveAsyncRefs(this.outlineView.el);
@@ -344,6 +478,8 @@ class App {
       this.documentView.render(this.data);
       this._resolveAsyncRefs(this.documentView.el);
     }
+    // 渲染完成后打上缓存标记，下次 switchView 进入时若仍然有效可直接复用
+    if (cur) { cur._rendered = true; cur._inputDirty = false; }
     // Lazy-load embedded blobs if needed (non-blocking)
     this._ensureEmbeddedMediaLoaded();
   }
@@ -415,6 +551,9 @@ class App {
 
   async _resolveAsyncRefs(viewEl) {
     if (this._asyncRefsResolving) return;
+    // 性能优化（Plan C）：没有任何跨文档/嵌入引用需要异步解析时直接早退，
+    // 避免 querySelectorAll 之后再走一遍空循环 + 状态机开销。
+    if (!viewEl || !viewEl.querySelector('[data-ref-async]')) return;
     this._asyncRefsResolving = true;
     const elements = [...viewEl.querySelectorAll('[data-ref-async]')];
     let needsRerender = false;
@@ -425,7 +564,15 @@ class App {
         const resolved = await resolveRefAsync(this.data, refStr);
         if (!el.isConnected) continue;
         el.classList.toggle('ref-error', resolved.startsWith('#'));
-        el.textContent = resolved;
+        // 保留已挂载的 ref-icon（↗ 跳转箭头），只替换文本节点。
+        // 直接 el.textContent = resolved 会连同子 .ref-icon 一并被擦掉。
+        const existingIcon = el.querySelector('.ref-icon');
+        if (existingIcon) {
+          Array.from(el.childNodes).forEach(c => { if (c !== existingIcon) el.removeChild(c); });
+          el.insertBefore(document.createTextNode(resolved), existingIcon);
+        } else {
+          el.textContent = resolved;
+        }
         // If resolved contains media, flag for a single deferred re-render
         if (hasMediaTag(resolved)) needsRerender = true;
       } catch (e) { /* skip */ }
@@ -438,6 +585,8 @@ class App {
   }
 
   switchView(view) {
+    // syncAll 里会读当前视图的 contentEditable 文本回写到 node[field]。
+    // 配合 Plan D：各视图内部会在 _inputDirty=false 时直接 return，避免无用扫描。
     if (this.currentView === 'outline') this.outlineView.syncAll();
     else if (this.currentView === 'document') this.documentView.syncAll();
     else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
@@ -450,6 +599,15 @@ class App {
     document.getElementById('sheet-view').classList.toggle('active', view === 'sheet');
     document.getElementById('ppt-view').classList.toggle('active', view === 'ppt');
     this.syncFmtCheckboxes();
+    // 视图缓存：若目标视图已 rendered 且数据未失效，仅跑一次轻量的 async refs 补齐即可，
+    // 不再重新 render（这是切换页面卡顿的主因）。
+    const target = this._getViewByName(view);
+    if (target && target._rendered) {
+      if (view === 'outline') this._resolveAsyncRefs(this.outlineView.el);
+      else if (view === 'document') this._resolveAsyncRefs(this.documentView.el);
+      this._ensureEmbeddedMediaLoaded();
+      return;
+    }
     this.renderCurrentView();
   }
 
@@ -497,24 +655,29 @@ class App {
       btn.style.borderColor = this.renderMode ? 'var(--gray-200)' : 'var(--blue-200)';
       btn.style.background = this.renderMode ? 'none' : 'var(--blue-50)';
     }
+    // 渲染模式切换影响所有视图（每个视图对 renderMode 的处理方式不同），全部失效
+    this._invalidateAllViews();
     this.renderCurrentView();
   }
 
   toggleContentSource() {
     this.contentSource = this.contentSource === 'embedded' ? 'repo' : 'embedded';
     // source switch — media served via server, no blob cache to clear
+    // 内容来源切换（嵌入 vs 仓库）会让媒体 URL 全部变化，所有视图都失效
+    this._invalidateAllViews();
     this._updateSourceBtn();
     this.renderCurrentView();
   }
 
   // Lazy-load embedded media/refs from the .udd file if data has udd. paths but blobs are missing
   // 懒加载嵌入的 ref-docs（跨文档引用数据）。媒体文件通过服务器实时提取，不再需要 blob。
+  // 性能优化（Plan B）：不再每次调用都跑 JSON.stringify 全量扫描，
+  // 改用打开文件时在 _createSessionObj 里一次性算好的 session._needsRefDocsLoad 标记。
+  // 没有嵌入 ref-docs 的文档（绝大多数场景）走 O(1) 早退。
   async _ensureEmbeddedMediaLoaded() {
     const session = this._activeSession;
     if (!session || session._embeddedLoading) return;
-    const dataStr = JSON.stringify(session.data || {});
-    const needsRefs = dataStr.includes('udd.ref-docs.');
-    if (!needsRefs) return;
+    if (!session._needsRefDocsLoad) return;
     const hasRefs = session.embeddedRefDocs && Object.keys(session.embeddedRefDocs).length > 0;
     if (hasRefs) return;
     session._embeddedLoading = true;
@@ -553,12 +716,27 @@ class App {
   _saveBackPosition(viewInstance) {
     const editorEl = document.getElementById('editor');
     this._backStack = this._backStack || [];
-    this._backStack.push({
+    const entry = {
+      sessionId: this.activeSessionId,
       view: this.currentView,
       focusPath: viewInstance.focusPath,
       focusField: viewInstance.focusField || 'content',
       scrollTop: editorEl ? editorEl.scrollTop : 0
-    });
+    };
+    // 去重：同 session+view+path+field 与栈顶一致就不再压栈，避免连点 ↗ 把栈撑爆。
+    // 注意 scrollTop 不参与比较（同节点上稍微滚一下不应视为新位置）。
+    const top = this._backStack[this._backStack.length - 1];
+    if (top
+        && top.sessionId === entry.sessionId
+        && top.view === entry.view
+        && top.focusPath === entry.focusPath
+        && top.focusField === entry.focusField) {
+      document.getElementById('back-btn').style.display = '';
+      return;
+    }
+    this._backStack.push(entry);
+    // 栈深度限制：超出 50 丢弃最早一条，防御性，正常用户不会触达。
+    if (this._backStack.length > 50) this._backStack.shift();
     document.getElementById('back-btn').style.display = '';
   }
 
@@ -568,15 +746,28 @@ class App {
     if (this._backStack.length === 0) {
       document.getElementById('back-btn').style.display = 'none';
     }
+    // 跨文档跳转后栈里记录的是源 sessionId；先切回原会话，否则会在错误的 data 上找节点。
+    if (pos.sessionId && pos.sessionId !== this.activeSessionId) {
+      const target = this.sessions.find(s => s.id === pos.sessionId);
+      if (!target) {
+        // 该会话已被关闭，跳过这条尝试下一条
+        return this.goBack();
+      }
+      this.switchSession(pos.sessionId);
+    }
     // Switch view if needed
     if (pos.view !== this.currentView) {
       this.switchView(pos.view);
     }
-    const viewInstance = pos.view === 'outline' ? this.outlineView : pos.view === 'document' ? this.documentView : this.mindmapView;
+    const viewInstance = this._getViewByName(pos.view);
+    if (!viewInstance) return;
     viewInstance.focusPath = pos.focusPath;
     viewInstance.focusField = pos.focusField;
     viewInstance.focusCursorEnd = false;
-    viewInstance.render(viewInstance.data);
+    if (typeof ensureNodeVisible === 'function' && pos.focusPath) {
+      ensureNodeVisible(this.data, pos.focusPath);
+    }
+    viewInstance.render(this.data);
     // Restore scroll
     requestAnimationFrame(() => {
       const editorEl = document.getElementById('editor');
@@ -585,6 +776,116 @@ class App {
         const el = viewInstance.el.querySelector(`[data-path="${pos.focusPath}"][data-field="${pos.focusField}"]`);
         if (el) el.focus();
       }
+    });
+  }
+
+  // 跨文档引用跳转：找到 docName 对应的 .udd 文件并打开它，跳转到 nodePath。
+  // 查找顺序：
+  //   1) 已打开的 session（按 fileName / filePath 匹配）→ switchSession
+  //   2) 仓库（开了 server）→ 在 _refDocCache / 当前 repoDir 中找文件路径 → 打开
+  // 引用解析失败的不会调到这里（createRefIcon 已在 isError 分支提前返回）。
+  async openCrossDocRef(docName, nodePath, srcViewInstance) {
+    if (!docName) return;
+    // 保存返回点（在源视图）
+    if (srcViewInstance) this._saveBackPosition(srcViewInstance);
+
+    // 1) 已打开的 session
+    const matchOpen = this.sessions.find(s => {
+      if (s.fileName === docName) return true;
+      const fp = s.filePath || s.originPath || '';
+      return fp.endsWith('/' + docName + '.udd') || fp.endsWith('\\' + docName + '.udd') || fp.endsWith('/' + docName + '.json') || fp.endsWith('\\' + docName + '.json');
+    });
+    if (matchOpen) {
+      if (matchOpen.id !== this.activeSessionId) this.switchSession(matchOpen.id);
+      requestAnimationFrame(() => this._jumpInCurrentView(nodePath));
+      return;
+    }
+
+    // 2) 通过仓库服务器加载并打开
+    if (!this.repoServerUrl) {
+      toast('未连接仓库，无法打开 ' + docName);
+      return;
+    }
+    // 优先在当前 repoDir 找 docName.udd / docName.json
+    const candidates = [];
+    if (this.repoDir) {
+      candidates.push({ path: this.repoDir + '/' + docName + '.udd', isUdd: true });
+      candidates.push({ path: this.repoDir + '\\' + docName + '.udd', isUdd: true });
+      candidates.push({ path: this.repoDir + '/' + docName + '.json', isUdd: false });
+    }
+    // 也支持 docName 本身就是绝对路径
+    if (/^[A-Za-z]:[\\/]/.test(docName)) {
+      candidates.unshift({ path: docName.endsWith('.udd') || docName.endsWith('.json') ? docName : docName + '.udd', isUdd: !docName.endsWith('.json') });
+    }
+
+    for (const c of candidates) {
+      try {
+        const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(c.path));
+        if (!resp.ok) continue;
+        let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
+        if (c.isUdd) {
+          const blob = await resp.blob();
+          ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
+        } else {
+          const text = await resp.text();
+          data = JSON.parse(text);
+        }
+        const fileName = c.path.replace(/^.*[\\/]/, '').replace(/\.(udd|json)$/i, '');
+        this._addSessionAndSwitch(fileName, data, null, c.path, c.path, { xlsxBin, pptFormat });
+        if (this._activeSession) {
+          this._activeSession.embeddedMedia = embeddedMedia || {};
+          this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
+        }
+        this._updateSourceBtn();
+        requestAnimationFrame(() => this._jumpInCurrentView(nodePath));
+        toast('已打开: ' + fileName);
+        return;
+      } catch (e) { /* try next */ }
+    }
+    toast('未在仓库中找到: ' + docName);
+  }
+
+  // 切换/打开会话之后，在当前视图里跳到指定 nodePath 并高亮（与 jumpToNode 类似但不再压栈）。
+  _jumpInCurrentView(nodePath) {
+    if (!nodePath) return;
+    const viewInstance = this._getViewByName(this.currentView);
+    if (!viewInstance) return;
+    if (typeof ensureNodeVisible === 'function') ensureNodeVisible(this.data, nodePath);
+    viewInstance.focusPath = nodePath;
+    viewInstance.focusField = 'content';
+    viewInstance.focusCursorEnd = false;
+    if (typeof viewInstance.render === 'function') {
+      const ret = viewInstance.render(this.data);
+      // PPT render 是 async，吃掉错误避免 unhandled rejection
+      if (ret && typeof ret.then === 'function') ret.catch(() => {});
+    }
+    this.updateSidebar(nodePath);
+    requestAnimationFrame(() => {
+      const el = viewInstance.el && viewInstance.el.querySelector(`[data-path="${nodePath}"][data-field="content"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.transition = 'background-color 0.3s';
+        el.style.backgroundColor = 'var(--blue-100)';
+        setTimeout(() => { el.style.backgroundColor = ''; }, 1500);
+      }
+    });
+  }
+
+  // 表格引用跳转：切到表格视图，激活目标工作表，选中目标单元格。
+  // 复用 SheetView._selectCell（已含 _parseAddr + rangeStart/End + _updateFormulaBar + render）。
+  gotoSheetCell(sheetName, addr, srcViewInstance) {
+    const sv = this.sheetView;
+    if (!sv || !sv.workbook || !sv.workbook.Sheets[sheetName]) {
+      toast('未找到表格: ' + sheetName);
+      return;
+    }
+    if (srcViewInstance) this._saveBackPosition(srcViewInstance);
+    if (this.currentView !== 'sheet') this.switchView('sheet');
+    sv.activeSheet = sheetName;
+    sv._selectCell(addr);
+    requestAnimationFrame(() => {
+      const td = sv.el && sv.el.querySelector(`td[data-addr="${addr}"]`);
+      if (td) td.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }
 
@@ -694,6 +995,13 @@ class App {
     document.getElementById('tool-align-left').classList.toggle('active', align === 'left' || !align);
     document.getElementById('tool-align-center').classList.toggle('active', align === 'center');
     document.getElementById('tool-align-right').classList.toggle('active', align === 'right');
+
+    // 节点级编号 toggle 按钮状态（只在此焦点节点上反映，不继承）
+    const focusNode = getNodeByPath(this.data, path);
+    const noNumBtn = document.getElementById('tool-no-number');
+    const rstBtn = document.getElementById('tool-restart-number');
+    if (noNumBtn) noNumBtn.classList.toggle('active', !!(focusNode && focusNode.no_number));
+    if (rstBtn) rstBtn.classList.toggle('active', !!(focusNode && focusNode.restart_number));
   }
 
   setNodeStyle(field, value) {
@@ -1042,6 +1350,34 @@ class App {
     this.markDirty();
   }
 
+  // 切换当前焦点节点的 no_number（Word 行为：跳过且不占编号位）
+  toggleNoNumber() {
+    const path = this.getCurrentFocusPath();
+    if (!path) { toast('请先选中一个节点'); return; }
+    const node = getNodeByPath(this.data, path);
+    if (!node) return;
+    this.pushUndo();
+    if (node.no_number) delete node.no_number; else node.no_number = 1;
+    this._invalidateAllViews();
+    this.renderCurrentView();
+    this.updateToolbar(path);
+    this.markDirty();
+  }
+
+  // 切换当前焦点节点的 restart_number（从此节点起在同级重新计数）
+  toggleRestartNumber() {
+    const path = this.getCurrentFocusPath();
+    if (!path) { toast('请先选中一个节点'); return; }
+    const node = getNodeByPath(this.data, path);
+    if (!node) return;
+    this.pushUndo();
+    if (node.restart_number) delete node.restart_number; else node.restart_number = 1;
+    this._invalidateAllViews();
+    this.renderCurrentView();
+    this.updateToolbar(path);
+    this.markDirty();
+  }
+
   // Undo / Redo
   pushUndo() { this.undoMgr.push(this.data); }
   undo() {
@@ -1068,10 +1404,14 @@ class App {
   }
 
   // Dirty / save state
+  // 数据被修改（文本输入 / 样式 / 插入媒体 / undo-redo 等）后调用，
+  // 自动失效"其它视图"的缓存——当前视图的 DOM 已即时更新或马上会 renderCurrentView，
+  // 但下次切到其它视图必须拿新数据重渲。
   markDirty() {
     this.dirty = true;
     document.getElementById('stat-save').textContent = '● 未保存';
     document.getElementById('stat-save').style.color = '#ef4444';
+    this._invalidateOtherViews();
     this.debouncedAutoSave();
     this.debouncedRefreshRefs();
     this._debouncedRenderOpenDocs();
@@ -1097,13 +1437,21 @@ class App {
     if (this.currentView === 'outline') this.outlineView.syncAll();
     else if (this.currentView === 'document') this.documentView.syncAll();
     else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
+    // 把当前活动会话的工作簿快照保存到 session.xlsxBin
+    this._captureActiveSessionSheetState();
     let anyDirty = false;
     try {
       for (const s of this.sessions) {
         if (!s.dirty) continue;
         anyDirty = true;
         s.data.meta.modified = new Date().toISOString();
-        await dbSave('session_' + s.id, s.data);
+        // 新格式：把表格簿 / PPT 格式一起持久化，避免页面刷新后表格列空白
+        await dbSave('session_' + s.id, {
+          data: s.data,
+          xlsxBin: s.xlsxBin || null,
+          pptFormat: s.pptFormat || null,
+          sheetActiveSheet: s.sheetActiveSheet || null
+        });
         const docTitle = s.data.meta?.title;
         if (docTitle && docTitle !== '未命名文档') {
           await dbSaveNamedDoc(docTitle, s.data);
@@ -1129,8 +1477,14 @@ class App {
       name = baseName + ' ' + n;
     }
     newData.meta.title = name;
-    this.sheetView.resetWithDefaultData();
-    this._addSessionAndSwitch(name, newData, null, null);
+    // 给新会话准备一份独立的默认表格簿（捕获其二进制后让 _addSessionAndSwitch 写入 session.xlsxBin）
+    let xlsxBin = null;
+    try {
+      const tmp = new SheetView(document.createElement('div'));
+      tmp.resetWithDefaultData();
+      xlsxBin = tmp.toBinary();
+    } catch (e) { /* skip if XLSX unavailable */ }
+    this._addSessionAndSwitch(name, newData, null, null, null, { xlsxBin });
     this.outlineView.focusPath = 't0-1';
     this.renderCurrentView();
     toast('已新建文档');
@@ -1161,17 +1515,17 @@ class App {
       if (!file) return;
 
       let data;
-      let embeddedMedia = {}, embeddedRefDocs = {};
+      let embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
       if (file.name.endsWith('.json')) {
         const text = await file.text();
         data = JSON.parse(text);
       } else {
-        ({ data, embeddedMedia, embeddedRefDocs } = await parseUDDBlob(file));
+        ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(file));
       }
 
       const name = file.name.replace(/\.(udd|json)$/i, '') || data.meta?.title || '未命名文档';
       // Browser security: full path unavailable for local picker; use filename only
-      this._addSessionAndSwitch(name, data, handle, null, file.name);
+      this._addSessionAndSwitch(name, data, handle, null, file.name, { xlsxBin, pptFormat });
       if (this._activeSession) {
         this._activeSession.embeddedMedia = embeddedMedia;
         this._activeSession.embeddedRefDocs = embeddedRefDocs;
@@ -1511,16 +1865,16 @@ class App {
       try {
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(item.path));
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        let data, embeddedMedia = {}, embeddedRefDocs = {};
+        let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
         if (item.ext === '.json') {
           const text = await resp.text();
           data = JSON.parse(text);
         } else {
           const blob = await resp.blob();
-          ({ data, embeddedMedia, embeddedRefDocs } = await parseUDDBlob(blob));
+          ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
         }
         const name = item.name.replace(/\.(udd|json)$/, '');
-        this._addSessionAndSwitch(name, data, null, item.path, item.path);
+        this._addSessionAndSwitch(name, data, null, item.path, item.path, { xlsxBin, pptFormat });
         if (this._activeSession) {
           this._activeSession.embeddedMedia = embeddedMedia || {};
           this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
