@@ -63,6 +63,13 @@
         <button type="button" class="tool-color-arrow" onclick="app.toggleColorPalette('bg')">▾</button>
         <div class="color-palette" id="palette-bg"></div>
       </div>
+      <div class="tool-color-wrap" id="color-wrap-ref">
+        <button type="button" class="tool-color-btn" id="tool-ref-btn" onclick="app.applyLastColor('ref')" title="引用背景色（▾ 含"无设置"恢复默认浅蓝）">
+          <span class="tool-color-preview" id="tool-ref-preview" style="background:#eff6ff;border:1px solid var(--blue-200)"></span>
+        </button>
+        <button type="button" class="tool-color-arrow" onclick="app.toggleColorPalette('ref')">▾</button>
+        <div class="color-palette" id="palette-ref"></div>
+      </div>
       <div class="tool-sep"></div>
       <button id="tool-align-left" class="tool-btn" onclick="app.setNodeStyle('text_align','left')" title="左对齐">≡</button>
       <button id="tool-align-center" class="tool-btn" onclick="app.setNodeStyle('text_align','center')" title="居中">≡</button>

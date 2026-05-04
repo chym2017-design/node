@@ -303,14 +303,15 @@ class DocumentView {
       renderInlineSegments(contentSpan, desc.inlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), style);
       contentSpan.contentEditable = 'false';
       contentSpan.classList.add('ref-display');
+      contentSpan.dataset.hasRef = '1';
     } else {
       renderStyledText(contentSpan, contentText, node, 'content', style, (el, rs) => this.applyInlineStyle(el, rs));
     }
-    if (!readOnly) {
-      contentSpan.dataset.path = path;
-      contentSpan.dataset.field = 'content';
-      contentSpan.spellcheck = false;
-    }
+    // dataset.path/field 始终写：双击进入"原始 ref 源码编辑"以及 closest 选择器都依赖这两个属性。
+    // 之前仅 !readOnly 时写，导致引用 (__ref__) 子节点的 dblclick 取不到 path → 沉默无响应。
+    contentSpan.dataset.path = path;
+    contentSpan.dataset.field = 'content';
+    contentSpan.spellcheck = false;
     if (desc.refStr) {
       contentSpan.classList.add('ref-display');
       contentSpan.dataset.ref = desc.refStr;
@@ -349,10 +350,22 @@ class DocumentView {
       const bodyStyle = this.getBodyStyle(path);
       const bodyText = stripMediaTags(desc.displayBody);
       renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
-      if (!readOnly) {
-        bodyDiv.dataset.path = path;
-        bodyDiv.dataset.field = 'body';
-        bodyDiv.spellcheck = false;
+      bodyDiv.dataset.path = path;
+      bodyDiv.dataset.field = 'body';
+      bodyDiv.spellcheck = false;
+      // 标记 ref-display：当本节点 body 自身是引用、或宿主整体走全节点引用（desc.sourceNode），
+      // 都让 bodyDiv 成为可双击源码编辑的引用单元（与大纲一致）。
+      const rawDocBody = node.body || '';
+      if (isRef(rawDocBody)) {
+        bodyDiv.classList.add('ref-display');
+        bodyDiv.dataset.ref = rawDocBody;
+        if (!isSheetRef(rawDocBody) && parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
+        bodyDiv.contentEditable = 'false';
+        bodyDiv.appendChild(createRefIcon(this.data, rawDocBody, this));
+      } else if (desc.sourceNode) {
+        bodyDiv.classList.add('ref-display');
+        bodyDiv.dataset.hasRef = '1';
+        bodyDiv.contentEditable = 'false';
       }
       this.applyInlineStyle(bodyDiv, bodyStyle);
       nodeDiv.appendChild(bodyDiv);
@@ -440,6 +453,11 @@ class DocumentView {
     if (!el || e.target.classList.contains('ref-icon')) return;
     const refEl = e.target.closest('.ref-display');
     if (!refEl || (!refEl.dataset.ref && !refEl.dataset.hasRef)) return;
+    // 引用子节点（路径含 __ref__）→ 源码在源节点里，不能原地编辑；提示用户到源节点编辑
+    if (refEl.dataset.path && refEl.dataset.path.includes('.__ref__.')) {
+      if (typeof toast === 'function') toast('引用克隆节点不可直接编辑，请到源节点修改');
+      return;
+    }
     const node = getNodeByPath(this.data, refEl.dataset.path);
     if (!node) return;
     const field = refEl.dataset.field || 'content';

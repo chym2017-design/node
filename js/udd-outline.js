@@ -229,7 +229,7 @@ class OutlineView {
           if (parseRef(rawBody).docName) bodyEl.dataset.refAsync = rawBody;
           bodyEl.contentEditable = 'false';
           const bodyRefIcon = createRefIcon(this.data, rawBody, this);
-          bodyEl.insertBefore(bodyRefIcon, bodyEl.firstChild);
+          bodyEl.appendChild(bodyRefIcon);
         }
       } else {
         // Read-only body (from full-node ref source — pure visual clone)
@@ -381,6 +381,11 @@ class OutlineView {
     if (!el || e.target.classList.contains('ref-icon')) return;
     const refEl = e.target.closest('.ref-display');
     if (!refEl || (!refEl.dataset.ref && !refEl.dataset.hasRef)) return;
+    // 引用子节点（路径含 __ref__）→ 源码在源节点里，不能原地编辑
+    if (refEl.dataset.path && refEl.dataset.path.includes('.__ref__.')) {
+      if (typeof toast === 'function') toast('引用克隆节点不可直接编辑，请到源节点修改');
+      return;
+    }
     const node = getNodeByPath(this.data, refEl.dataset.path);
     if (!node) return;
     const field = refEl.dataset.field || 'content';

@@ -748,14 +748,13 @@ function refreshRefs(viewEl, data) {
     const isFullRef_ = isFullNodeRef(refStr);
     const sourceNode_ = isFullRef_ ? getFullRefNode(data, refStr) : null;
     const resolved = isFullRef_ && sourceNode_ ? (sourceNode_.content || '') : resolveRef(data, refStr);
-    // Preserve existing ref-icon if present
+    // 保留现有 ref-icon（↗），让它始终位于文本之后（右下角）
     const existingIcon = el.querySelector('.ref-icon');
     if (existingIcon) {
-      // Remove all text nodes and non-icon children, keep icon
       Array.from(el.childNodes).forEach(child => {
         if (child !== existingIcon) el.removeChild(child);
       });
-      el.appendChild(document.createTextNode(resolved));
+      el.insertBefore(document.createTextNode(resolved), existingIcon);
     } else {
       el.textContent = resolved;
     }
@@ -770,7 +769,7 @@ function refreshRefs(viewEl, data) {
       Array.from(el.childNodes).forEach(child => {
         if (child !== existingIcon) el.removeChild(child);
       });
-      el.appendChild(document.createTextNode(resolved));
+      el.insertBefore(document.createTextNode(resolved), existingIcon);
     } else {
       el.textContent = resolved;
     }

@@ -30,22 +30,34 @@ class MindmapView {
 
   _initEvents() {
     this._spaceDown = false;
-    // Middle-button or space+left-button drag
+    // Middle-button / right-button / space+left-button drag for canvas pan.
+    // 右键拖动：与中键体验一致；右键单击节点仍弹节点菜单（contextmenu 监听里区分）。
     this.el.addEventListener('mousedown', e => {
-      if (e.button === 1 || (e.button === 0 && this._spaceDown)) {
+      if (e.button === 1 || e.button === 2 || (e.button === 0 && this._spaceDown)) {
         e.preventDefault();
         this._dragging = true;
+        this._dragMoved = false;
+        this._dragButton = e.button;
         this._dragStart = { x: e.clientX - this.pan.x, y: e.clientY - this.pan.y };
         this.el.querySelector('#mindmap-canvas')?.classList.add('grabbing');
       }
     });
     this.el.addEventListener('mousemove', e => {
       if (!this._dragging) return;
-      this.pan.x = e.clientX - this._dragStart.x;
-      this.pan.y = e.clientY - this._dragStart.y;
+      const nx = e.clientX - this._dragStart.x;
+      const ny = e.clientY - this._dragStart.y;
+      if (!this._dragMoved && (Math.abs(nx - this.pan.x) > 3 || Math.abs(ny - this.pan.y) > 3)) {
+        this._dragMoved = true;
+      }
+      this.pan.x = nx;
+      this.pan.y = ny;
       this._applyTransform();
     });
     const stopDrag = () => {
+      // 右键拖动结束 + 真发生过位移 → 标记吞掉接下来的 contextmenu，否则会冒出节点/原生菜单
+      if (this._dragging && this._dragButton === 2 && this._dragMoved) {
+        this._dragJustEnded = true;
+      }
       this._dragging = false;
       this.el.querySelector('#mindmap-canvas')?.classList.remove('grabbing');
     };
@@ -73,6 +85,8 @@ class MindmapView {
     document.addEventListener('keydown', e => this._onKeyDown(e));
     // Context menu
     this.el.addEventListener('contextmenu', e => {
+      // 刚刚结束的右键拖动 → 吞掉这次 contextmenu
+      if (this._dragJustEnded) { e.preventDefault(); this._dragJustEnded = false; return; }
       const nodeEl = e.target.closest('.mm-node');
       if (!nodeEl) return;
       e.preventDefault();

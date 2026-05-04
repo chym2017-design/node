@@ -26,6 +26,7 @@ const ESCAPE_TABLE = {
   numbering_style:"ns",numbering_format:"nf",numbering_start:"nst",list_style:"lst",
   no_number:"nn",restart_number:"rst",
   background_color:"bgc",background_opacity:"bgo",
+  ref_color:"rfc",
   border:"bdr",border_style:"bdrs",border_color:"bdrc",
   border_width:"bdrw",border_radius:"bdrr",shadow:"shd",opacity:"op",rotation:"rot"
 };

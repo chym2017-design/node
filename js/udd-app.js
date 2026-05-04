@@ -147,17 +147,17 @@ class App {
   }
 
   // 把 session 持有的 xlsxBin 注入到 sheetView，让该会话拿到自己的工作簿。
-  // 没有 xlsxBin 的会话（例如全新文档 / 从 JSON 导入 / 老格式恢复）→ 装入空白工作簿，
-  // 并立刻把这份空白簿的 toBinary() 写回 session.xlsxBin，让会话之间真正隔离，
-  // 之后用户对这份会话的编辑不会污染到下一个被切换进来的会话。
+  // 没有 xlsxBin 的会话（例如全新文档 / 从 JSON 导入 / 老格式恢复）→ 装入"默认样板簿"
+  // （resetWithDefaultData 的产物，含 A1:D6 表头与 B/C/D 列示例数据），
+  // 不再把这份样板二进制当场固化回 session.xlsxBin —— 留给 autoSave 通过正常捕获路径
+  // 在用户实际进入/编辑表格视图时记录，避免一份"空白/样板占位"被误当作用户真实工作簿落盘。
   _applySessionSheetState(session) {
     if (!session) return;
     if (this.sheetView) {
       if (session.xlsxBin) {
         this.sheetView.loadFromBinary(session.xlsxBin);
       } else {
-        this.sheetView._initDefaultWorkbook();
-        try { session.xlsxBin = this.sheetView.toBinary(); } catch (e) {}
+        this.sheetView.resetWithDefaultData();
       }
       if (session.sheetActiveSheet && this.sheetView.workbook && this.sheetView.workbook.Sheets[session.sheetActiveSheet]) {
         this.sheetView.activeSheet = session.sheetActiveSheet;
@@ -456,15 +456,29 @@ class App {
   }
 
   // 手动刷新按钮入口：强制重渲当前视图（无视缓存），用于引用源文件在外部改动后拉最新。
+  // 同时清空跨文档引用缓存 _refDocCache，让被引用文件的最新内容真正重新从磁盘/服务器读取，
+  // 否则视图重渲也只会读到旧缓存（=只有浏览器整体刷新才能拿到最新）。
   refreshCurrentView() {
+    if (typeof _refDocCache !== 'undefined') {
+      for (const k of Object.keys(_refDocCache)) delete _refDocCache[k];
+    }
     const v = this._getViewByName(this.currentView);
     if (v) v._rendered = false;
+    // 仓库面板若已连上服务器，顺手把目录里的 .udd 重新预加载到引用缓存
+    if (this.repoServerUrl && this._repoFiles && this._repoFiles.length) {
+      this._preloadRepoUDDs(this._repoFiles.filter(i => i.ext === '.udd'));
+    }
     this.renderCurrentView();
     toast('已刷新');
   }
 
   renderCurrentView() {
     const cur = this._getViewByName(this.currentView);
+    // 同步"引用色"CSS 变量到 #editor（数据侧设置→视觉即时生效，各视图无需各自处理）
+    const rfc = this.data && this.data.type_global && this.data.type_global.ref_color;
+    const editorEl = document.getElementById('editor');
+    if (editorEl) editorEl.style.setProperty('--ref-color', rfc ? `rgb(${rfc})` : '');
+    this._syncRefColorPreview();
     if (this.currentView === 'outline') {
       this.outlineView.render(this.data);
       this._resolveAsyncRefs(this.outlineView.el);
@@ -1063,20 +1077,79 @@ class App {
     this.setNodeStyle('background_color', hexToRgb(hex));
   }
 
+  // 引用背景色：作用于 .ref-display / .inline-ref 的 background（非 per-node），
+  // 存在 data.type_global.ref_color。空值 = 无设置（回到 CSS 默认 var(--blue-50) 浅蓝）。
+  setRefColor(hex) {
+    this.pushUndo();
+    if (!this.data.type_global) this.data.type_global = {};
+    const preview = document.getElementById('tool-ref-preview');
+    if (!hex) {
+      delete this.data.type_global.ref_color;
+      if (preview) {
+        preview.style.background = '#eff6ff';
+        preview.style.borderStyle = 'solid';
+        preview.style.borderColor = 'var(--blue-200)';
+      }
+    } else {
+      this.lastRefColor = hex;
+      this.data.type_global.ref_color = hexToRgb(hex);
+      if (preview) {
+        preview.style.background = hex;
+        preview.style.borderStyle = 'solid';
+        preview.style.borderColor = 'var(--gray-200)';
+      }
+    }
+    this._invalidateAllViews();
+    this.renderCurrentView();
+    this.markDirty();
+  }
+
   applyLastColor(type) {
     if (type === 'fg') this.setColor(this.lastFgColor);
-    else this.setBgColor(this.lastBgColor);
+    else if (type === 'bg') this.setBgColor(this.lastBgColor);
+    else if (type === 'ref') this.setRefColor(this.lastRefColor || '#dbeafe');
   }
 
   // Color palette
   initColorPalettes() {
     this.buildPalette('palette-fg', 'fg');
     this.buildPalette('palette-bg', 'bg');
+    this.buildPalette('palette-ref', 'ref');
+    // 初始同步引用色预览（刷新后恢复自 data.type_global.ref_color）
+    this._syncRefColorPreview();
+  }
+
+  _syncRefColorPreview() {
+    const preview = document.getElementById('tool-ref-preview');
+    if (!preview) return;
+    const rfc = this.data && this.data.type_global && this.data.type_global.ref_color;
+    if (rfc) {
+      preview.style.background = `rgb(${rfc})`;
+      preview.style.borderStyle = 'solid';
+      preview.style.borderColor = 'var(--gray-200)';
+    } else {
+      preview.style.background = '#eff6ff';
+      preview.style.borderStyle = 'solid';
+      preview.style.borderColor = 'var(--blue-200)';
+    }
   }
 
   buildPalette(containerId, type) {
     const container = document.getElementById(containerId);
     if (!container) return;
+    // 引用色专属：顶部一个"无设置"按钮，清空 data.type_global.ref_color（回到默认浅蓝）
+    if (type === 'ref') {
+      const none = document.createElement('div');
+      none.className = 'color-palette-none';
+      none.style.cssText = 'padding:4px 6px;margin-bottom:4px;font-size:12px;color:var(--gray-600);border:1px dashed var(--gray-300);border-radius:3px;cursor:pointer;text-align:center';
+      none.textContent = '无设置（默认浅蓝背景）';
+      none.onclick = (e) => {
+        e.stopPropagation();
+        this.setRefColor('');
+        this.closeAllPalettes();
+      };
+      container.appendChild(none);
+    }
     const grid = document.createElement('div');
     grid.className = 'color-palette-grid';
     for (const color of PALETTE_COLORS) {
@@ -1085,7 +1158,8 @@ class App {
       span.onclick = (e) => {
         e.stopPropagation();
         if (type === 'fg') this.setColor(color);
-        else this.setBgColor(color);
+        else if (type === 'bg') this.setBgColor(color);
+        else this.setRefColor(color);
         this.closeAllPalettes();
       };
       grid.appendChild(span);
@@ -1096,10 +1170,11 @@ class App {
     custom.innerHTML = '自定义: ';
     const input = document.createElement('input');
     input.type = 'color';
-    input.value = type === 'fg' ? this.lastFgColor : this.lastBgColor;
+    input.value = type === 'fg' ? this.lastFgColor : type === 'bg' ? this.lastBgColor : (this.lastRefColor || '#2563eb');
     input.onchange = (e) => {
       if (type === 'fg') this.setColor(e.target.value);
-      else this.setBgColor(e.target.value);
+      else if (type === 'bg') this.setBgColor(e.target.value);
+      else this.setRefColor(e.target.value);
       this.closeAllPalettes();
     };
     custom.appendChild(input);
@@ -1107,15 +1182,16 @@ class App {
   }
 
   toggleColorPalette(type) {
-    const id = type === 'fg' ? 'palette-fg' : 'palette-bg';
+    const id = 'palette-' + type;
     const el = document.getElementById(id);
-    const otherId = type === 'fg' ? 'palette-bg' : 'palette-fg';
-    document.getElementById(otherId)?.classList.remove('show');
+    // 关掉其他两个
+    for (const t of ['fg', 'bg', 'ref']) {
+      if (t !== type) document.getElementById('palette-' + t)?.classList.remove('show');
+    }
     if (el) {
       const isShowing = el.classList.toggle('show');
       if (isShowing) {
-        const wrapId = type === 'fg' ? 'color-wrap-fg' : 'color-wrap-bg';
-        const wrap = document.getElementById(wrapId);
+        const wrap = document.getElementById('color-wrap-' + type);
         const rect = wrap.getBoundingClientRect();
         el.style.top = rect.bottom + 2 + 'px';
         el.style.left = rect.left + 'px';
@@ -1486,6 +1562,10 @@ class App {
     } catch (e) { /* skip if XLSX unavailable */ }
     this._addSessionAndSwitch(name, newData, null, null, null, { xlsxBin });
     this.outlineView.focusPath = 't0-1';
+    // 标脏：让 autoSave 把新会话（含样板表格簿 xlsxBin）真正写进 IndexedDB。
+    // 否则下次浏览器刷新时 sessions_index 有这条记录，但 session_<id> 不存在 → 会话丢失，
+    // 进而被空 fallback 顶替，最终保存出来的 .udd 里 sheets.xlsx 为空。
+    this.markDirty();
     this.renderCurrentView();
     toast('已新建文档');
   }

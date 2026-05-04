@@ -104,15 +104,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .outline-children.tree-lines::before{content:'';position:absolute;left:var(--tree-x);top:0;bottom:14px;border-left:1px solid var(--gray-300)}
 
 /* ===== REFERENCE STYLES ===== */
-.ref-display{background:var(--blue-50);border-radius:3px;position:relative}
+/* 引用背景色：默认 var(--blue-50)，被 data.type_global.ref_color 覆盖（统一通过 #editor 上的 --ref-color 变量） */
+.ref-display{background:var(--ref-color,var(--blue-50));border-radius:3px;position:relative}
 .ref-display:focus{background:var(--bg)}
 .ref-error{color:#ef4444;font-style:italic;font-size:90%}
 .ref-icon{display:inline-block;font-size:9px;color:var(--blue-400);margin-left:2px;opacity:0;cursor:pointer;user-select:none;vertical-align:middle;text-decoration:none;transition:opacity .15s}
 .outline-content:hover .ref-icon,.doc-content:hover .ref-icon,.ref-icon:focus{opacity:.7}
 .ref-icon:hover{opacity:1;color:var(--blue-600);transform:scale(1.15)}
 .ref-icon.ref-icon-error{color:#ef4444;opacity:.6}
-.inline-ref{display:inline;background:var(--blue-50);border-radius:2px;padding:0 2px;color:var(--blue-700);cursor:default}
-.inline-ref:hover{background:var(--blue-100)}
+/* 行内引用：背景同样受 --ref-color 控制；字体颜色不再硬编码蓝色，与块级 .ref-display 统一跟随节点样式 */
+.inline-ref{display:inline;background:var(--ref-color,var(--blue-50));border-radius:2px;padding:0 2px;cursor:default}
+.inline-ref:hover{filter:brightness(.95)}
 .inline-ref .ref-icon{font-size:8px;margin-left:1px}
 
 /* Inline table */
