@@ -149,6 +149,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ===== DOCUMENT VIEW ===== */
 .doc-page{max-width:780px;margin:0 auto 40px;padding:60px 72px;background:var(--bg);box-shadow:var(--shadow);border:1px solid var(--gray-200);border-radius:var(--radius);min-height:600px}
+/* 文档分页模式：按 data.type_global.page_size 指定的 --page-w / --page-h 显示为纸张尺寸。
+   浏览器内只是"按纸张宽度渲染一整张纸"（不自动断页）；分页断开由打印/导出 PDF 时的 @page 规则完成。 */
+#editor.paged #document-view .doc-page{max-width:none;width:var(--page-w);min-height:var(--page-h);padding:20mm 20mm;margin:20px auto;box-sizing:border-box}
+#editor.paged #document-view{overflow:auto;padding:20px 0;background:var(--gray-100)}
 .doc-node{position:relative}
 .doc-h1{font-size:12pt;font-weight:700;color:var(--text);margin:28px 0 10px;line-height:1.4}
 .doc-h2{font-size:12pt;font-weight:600;color:var(--text);margin:20px 0 8px;line-height:1.4}
@@ -176,6 +180,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .media-caption{font-size:12px;color:var(--gray-400);text-align:center;margin-top:4px;line-height:1.4}
 .media-resize-handle{position:absolute;right:-4px;bottom:-4px;width:14px;height:14px;background:var(--primary);border-radius:50%;cursor:nwse-resize;opacity:0;transition:opacity .15s;z-index:10;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.2)}
 .media-wrap.resizing .media-resize-handle{opacity:1}
+.media-edit-btn{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;background:rgba(37,99,235,.85);color:#fff;border:none;font-size:13px;line-height:24px;text-align:center;padding:0;cursor:pointer;opacity:0;transition:opacity .15s;z-index:11;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.media-wrap:hover .media-edit-btn{opacity:1}
+.media-edit-btn:hover{background:var(--primary)}
+.media-audio-wrap{display:block;line-height:normal}
+.media-audio-wrap .media-edit-btn{top:50%;transform:translateY(-50%);right:-30px;background:var(--gray-200);color:var(--gray-600)}
+.media-audio-wrap:hover .media-edit-btn{opacity:1}
+.media-audio-wrap .media-edit-btn:hover{background:var(--primary);color:#fff}
 .outline-media{margin:4px 0}
 .outline-media .media-wrap{display:inline-block}
 .outline-media img{max-width:100%;border-radius:3px}
@@ -287,6 +298,21 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #media-picker .mp-item-icon{font-size:14px;width:18px;text-align:center;flex-shrink:0}
 #media-picker .mp-item-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #media-picker .mp-actions{padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+
+/* ===== GRAPH VIEW (文档关联图谱) ===== */
+#graph-view{display:none;width:100%;height:100%;position:relative;background:var(--gray-50)}
+#graph-view.active{display:block}
+#graph-view .graph-wrap{width:100%;height:100%;display:flex;flex-direction:column}
+#graph-view .graph-controls{padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg);display:flex;align-items:center;gap:14px;font-size:12px;color:var(--gray-600);flex-shrink:0}
+#graph-view .graph-controls .graph-title{font-weight:600;color:var(--gray-800);font-size:13px}
+#graph-view .graph-controls label{display:inline-flex;align-items:center;gap:6px}
+#graph-view .graph-controls input[type=number]{padding:2px 4px;border:1px solid var(--gray-200);border-radius:3px;font-size:12px}
+#graph-view .graph-controls button{padding:3px 10px;border:1px solid var(--gray-200);background:var(--bg);border-radius:3px;font-size:12px;color:var(--gray-600);cursor:pointer}
+#graph-view .graph-controls button:hover{background:var(--gray-100)}
+#graph-view .graph-hint{color:var(--gray-400);font-size:11px;margin-left:auto}
+#graph-view .graph-svg-wrap{flex:1;overflow:hidden;position:relative;user-select:none}
+#graph-view .graph-loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--gray-400);font-size:13px}
+#graph-view .graph-node:hover circle{filter:brightness(0.92)}
 
 /* ===== RESPONSIVE ===== */
 @media(max-width:768px){

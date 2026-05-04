@@ -32,12 +32,118 @@ class DocumentView {
     this.counters = {};
     this.renderChildren(data, '', 0, page, numStyle);
     this.el.appendChild(page);
+    // 分页模式：把第一页的溢出内容拆分到后续 .doc-page。
+    // 只在 #editor 带 .paged 时生效（即 data.type_global.page_size 已设置）。
+    if (document.getElementById('editor')?.classList.contains('paged')) {
+      requestAnimationFrame(() => this._paginate());
+    }
     if (this.focusPath) {
       requestAnimationFrame(() => this.restoreFocus());
     }
     // 渲染后 DOM 与 data 一致；打上缓存命中标记，清脏
     this._rendered = true;
     this._inputDirty = false;
+  }
+
+  // 把 #document-view 里第一页的溢出内容按「叶子」级别（标题/正文/媒体/表格）搬到后续页，
+  // 递归处理以保证 Word 风格「行填满再翻页」。
+  // 叶子选择器：.doc-h1~h6 / .doc-body / .media-wrap / .inline-table。
+  // 包裹它们的 .doc-node 仅作容器，自动被浅克隆以保留嵌套结构。
+  _paginate() {
+    const firstPage = this.el.querySelector('.doc-page');
+    if (!firstPage) return;
+    const pageH = this._readPageHeightPx();
+    if (!pageH) return;
+    this._splitPagesFrom(firstPage, pageH);
+  }
+
+  // 把 var(--page-h) 解析成像素：建临时 div 设置 height: var(--page-h) 测量。
+  _readPageHeightPx() {
+    const editor = document.getElementById('editor');
+    if (!editor) return 0;
+    const probe = document.createElement('div');
+    probe.style.position = 'absolute';
+    probe.style.visibility = 'hidden';
+    probe.style.height = 'var(--page-h)';
+    probe.style.width = '1px';
+    editor.appendChild(probe);
+    const px = probe.offsetHeight;
+    probe.remove();
+    return px;
+  }
+
+  // 递归分页：在 page 里找第一个 bottom 超出容量的叶子，从那里拆分。
+  _splitPagesFrom(page, pageHeightPx) {
+    const cs = window.getComputedStyle(page);
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const padBottom = parseFloat(cs.paddingBottom) || 0;
+    const cap = pageHeightPx - padTop - padBottom;
+    if (cap <= 0) return;
+
+    const leafSel = '.doc-h1, .doc-h2, .doc-h3, .doc-h4, .doc-h5, .doc-h6, .doc-body, .media-wrap, .inline-table';
+    const all = Array.from(page.querySelectorAll(leafSel));
+    // 去掉嵌套在另一个叶子里的元素（比如 .ref-display 在 .doc-body 里，不算独立叶子）
+    const leaves = all.filter(el => {
+      let p = el.parentElement;
+      while (p && p !== page) {
+        if (p.matches && p.matches(leafSel)) return false;
+        p = p.parentElement;
+      }
+      return true;
+    });
+    if (leaves.length === 0) return;
+
+    const pageRect = page.getBoundingClientRect();
+    for (let i = 0; i < leaves.length; i++) {
+      const leaf = leaves[i];
+      const r = leaf.getBoundingClientRect();
+      const bottom = r.bottom - pageRect.top - padTop;
+      if (bottom <= cap) continue;
+      // 第 0 个叶子就已超长：该叶子过大，无法再拆，让当前页自然延伸
+      if (i === 0) return;
+      const newPage = this._splitAtLeaf(page, leaf);
+      if (newPage) this._splitPagesFrom(newPage, pageHeightPx);
+      return;
+    }
+  }
+
+  // 把 leaf 及其后续 DOM（按文档顺序）从 page 移到新建的 .doc-page，
+  // 沿 leaf→page 的祖先链浅克隆 .doc-node 容器，保持嵌套结构。
+  _splitAtLeaf(page, leaf) {
+    const newPage = document.createElement('div');
+    newPage.className = 'doc-page';
+    page.parentElement.insertBefore(newPage, page.nextSibling);
+
+    // 祖先链：从 page 的直接子节点到 leaf（从外到内）
+    const chain = [];
+    let cur = leaf;
+    while (cur && cur.parentElement !== page) {
+      chain.unshift(cur);
+      cur = cur.parentElement;
+    }
+    if (!cur) return null;
+    chain.unshift(cur);
+
+    let parentNew = newPage;
+    for (let i = 0; i < chain.length; i++) {
+      const wrap = chain[i];
+      const laterSibs = [];
+      let sib = wrap.nextSibling;
+      while (sib) { laterSibs.push(sib); sib = sib.nextSibling; }
+
+      if (i === chain.length - 1) {
+        // 最后一层（leaf）：先把 leaf 本身搬到 parentNew，再追加后续兄弟，保持原顺序
+        parentNew.appendChild(wrap);
+        for (const s of laterSibs) parentNew.appendChild(s);
+        break;
+      }
+      // 中间层：先追加克隆容器，再在其后追加后续兄弟（顺序：克隆首位、兄弟在后）
+      const newWrap = wrap.cloneNode(false);
+      parentNew.appendChild(newWrap);
+      for (const s of laterSibs) parentNew.appendChild(s);
+      parentNew = newWrap;
+    }
+    return newPage;
   }
 
   renderChildren(parentObj, parentPath, parentLevel, container, numStyle) {

@@ -32,6 +32,7 @@ class App {
     this.sheetView = new SheetView(document.getElementById('sheet-view'));
     this.sheetView.resetWithDefaultData();
     this.pptView = new PptView(document.getElementById('ppt-view'));
+    this.graphView = new GraphView(document.getElementById('graph-view'));
 
     // Create initial session（捕获默认表格簿的二进制写到 session.xlsxBin，
     // 让该会话拥有"自己的"工作簿，避免与后续打开的文档共用同一对象。）
@@ -432,13 +433,14 @@ class App {
     if (name === 'document') return this.documentView;
     if (name === 'sheet') return this.sheetView;
     if (name === 'ppt') return this.pptView;
+    if (name === 'graph') return this.graphView;
     return null;
   }
 
   // 把所有视图的缓存标记清空 → 下次切到哪个视图就会重新 render。
   // 用于：数据级变动（撤销/重做/sidebar 应用/格式开关/渲染开关/来源切换/编号样式/会话切换等）。
   _invalidateAllViews() {
-    for (const name of ['outline', 'mindmap', 'document', 'sheet', 'ppt']) {
+    for (const name of ['outline', 'mindmap', 'document', 'sheet', 'ppt', 'graph']) {
       const v = this._getViewByName(name);
       if (v) { v._rendered = false; v._inputDirty = false; }
     }
@@ -448,7 +450,7 @@ class App {
   // 用于：当前视图内用户敲字（contentEditable 已经在 DOM 上即时更新），
   //   当前视图不需要重渲，但其它视图下次进入必须重渲以拿到新数据。
   _invalidateOtherViews() {
-    for (const name of ['outline', 'mindmap', 'document', 'sheet', 'ppt']) {
+    for (const name of ['outline', 'mindmap', 'document', 'sheet', 'ppt', 'graph']) {
       if (name === this.currentView) continue;
       const v = this._getViewByName(name);
       if (v) { v._rendered = false; v._inputDirty = false; }
@@ -479,6 +481,8 @@ class App {
     const editorEl = document.getElementById('editor');
     if (editorEl) editorEl.style.setProperty('--ref-color', rfc ? `rgb(${rfc})` : '');
     this._syncRefColorPreview();
+    // 同步页面尺寸（分页样式 + 工具栏下拉框）
+    this._applyPageSizeVars();
     if (this.currentView === 'outline') {
       this.outlineView.render(this.data);
       this._resolveAsyncRefs(this.outlineView.el);
@@ -488,6 +492,8 @@ class App {
       this.sheetView.render(this.data);
     } else if (this.currentView === 'ppt') {
       this.pptView.render(this.data).catch(e => console.error('PPT render:', e));
+    } else if (this.currentView === 'graph') {
+      this.graphView.render(this.data).catch(e => console.error('Graph render:', e));
     } else {
       this.documentView.render(this.data);
       this._resolveAsyncRefs(this.documentView.el);
@@ -612,6 +618,7 @@ class App {
     document.getElementById('document-view').classList.toggle('active', view === 'document');
     document.getElementById('sheet-view').classList.toggle('active', view === 'sheet');
     document.getElementById('ppt-view').classList.toggle('active', view === 'ppt');
+    document.getElementById('graph-view').classList.toggle('active', view === 'graph');
     this.syncFmtCheckboxes();
     // 视图缓存：若目标视图已 rendered 且数据未失效，仅跑一次轻量的 async refs 补齐即可，
     // 不再重新 render（这是切换页面卡顿的主因）。
@@ -626,11 +633,13 @@ class App {
   }
 
   getCurrentFocusPath() {
+    if (this.currentView === 'graph' || this.currentView === 'sheet' || this.currentView === 'ppt') return null;
     const view = this.currentView === 'outline' ? this.outlineView : this.currentView === 'mindmap' ? this.mindmapView : this.documentView;
     return view.focusPath;
   }
 
   getCurrentFocusField() {
+    if (this.currentView === 'graph' || this.currentView === 'sheet' || this.currentView === 'ppt') return 'content';
     const view = this.currentView === 'outline' ? this.outlineView : this.currentView === 'mindmap' ? this.mindmapView : this.documentView;
     return view.focusField || 'content';
   }
@@ -639,7 +648,7 @@ class App {
     const path = this.getCurrentFocusPath();
     const field = this.getCurrentFocusField();
     if (!path || !field) return null;
-    if (this.currentView === 'mindmap') return null;
+    if (this.currentView === 'mindmap' || this.currentView === 'graph' || this.currentView === 'sheet' || this.currentView === 'ppt') return null;
     const view = this.currentView === 'outline' ? this.outlineView : this.documentView;
     return view.el.querySelector(`[data-path="${path}"][data-field="${field}"]`);
   }
@@ -798,16 +807,27 @@ class App {
   //   1) 已打开的 session（按 fileName / filePath 匹配）→ switchSession
   //   2) 仓库（开了 server）→ 在 _refDocCache / 当前 repoDir 中找文件路径 → 打开
   // 引用解析失败的不会调到这里（createRefIcon 已在 isError 分支提前返回）。
+  // docName 可以是新格式 "path/file.udd"、绝对路径 "D:\xxx.udd"，也可兼容旧裸名 "filename"。
   async openCrossDocRef(docName, nodePath, srcViewInstance) {
     if (!docName) return;
-    // 保存返回点（在源视图）
     if (srcViewInstance) this._saveBackPosition(srcViewInstance);
+
+    const hasUdd = docName.endsWith('.udd');
+    const bare = hasUdd ? docName.replace(/\.udd$/, '') : docName;
+    // 取裸文件名（不含目录）用于和 session.fileName 比较
+    const bareLeaf = bare.replace(/^.*[\\/]/, '');
 
     // 1) 已打开的 session
     const matchOpen = this.sessions.find(s => {
-      if (s.fileName === docName) return true;
+      if (s.fileName === docName || s.fileName === bare || s.fileName === bareLeaf) return true;
       const fp = s.filePath || s.originPath || '';
-      return fp.endsWith('/' + docName + '.udd') || fp.endsWith('\\' + docName + '.udd') || fp.endsWith('/' + docName + '.json') || fp.endsWith('\\' + docName + '.json');
+      if (!fp) return false;
+      // 完整路径 / 后缀匹配
+      if (fp === docName) return true;
+      const sufA = '/' + bare + '.udd', sufB = '\\' + bare + '.udd';
+      const sufC = '/' + bareLeaf + '.udd', sufD = '\\' + bareLeaf + '.udd';
+      const sufE = '/' + bareLeaf + '.json', sufF = '\\' + bareLeaf + '.json';
+      return fp.endsWith(sufA) || fp.endsWith(sufB) || fp.endsWith(sufC) || fp.endsWith(sufD) || fp.endsWith(sufE) || fp.endsWith(sufF);
     });
     if (matchOpen) {
       if (matchOpen.id !== this.activeSessionId) this.switchSession(matchOpen.id);
@@ -820,16 +840,30 @@ class App {
       toast('未连接仓库，无法打开 ' + docName);
       return;
     }
-    // 优先在当前 repoDir 找 docName.udd / docName.json
     const candidates = [];
-    if (this.repoDir) {
-      candidates.push({ path: this.repoDir + '/' + docName + '.udd', isUdd: true });
-      candidates.push({ path: this.repoDir + '\\' + docName + '.udd', isUdd: true });
-      candidates.push({ path: this.repoDir + '/' + docName + '.json', isUdd: false });
-    }
-    // 也支持 docName 本身就是绝对路径
-    if (/^[A-Za-z]:[\\/]/.test(docName)) {
-      candidates.unshift({ path: docName.endsWith('.udd') || docName.endsWith('.json') ? docName : docName + '.udd', isUdd: !docName.endsWith('.json') });
+    // 当前文档目录（用于解析相对路径）
+    const curFp = this._activeSession && this._activeSession.filePath || '';
+    const curDir = curFp ? curFp.replace(/[\\/][^\\/]+$/, '') : '';
+    // 绝对路径
+    if (/^[A-Za-z]:[\\/]/.test(docName) || docName.startsWith('/')) {
+      candidates.push({ path: hasUdd ? docName : docName + '.udd', isUdd: true });
+    } else if (docName.includes('/') || docName.includes('\\')) {
+      // 相对路径：当前目录与仓库根
+      if (curDir) {
+        candidates.push({ path: hasUdd ? curDir + '/' + docName : curDir + '/' + docName + '.udd', isUdd: true });
+        candidates.push({ path: hasUdd ? curDir + '\\' + docName : curDir + '\\' + docName + '.udd', isUdd: true });
+      }
+      if (this.repoDir) {
+        candidates.push({ path: hasUdd ? this.repoDir + '/' + docName : this.repoDir + '/' + docName + '.udd', isUdd: true });
+        candidates.push({ path: hasUdd ? this.repoDir + '\\' + docName : this.repoDir + '\\' + docName + '.udd', isUdd: true });
+      }
+    } else {
+      // 裸文件名：仓库目录优先
+      if (this.repoDir) {
+        candidates.push({ path: this.repoDir + '/' + bare + '.udd', isUdd: true });
+        candidates.push({ path: this.repoDir + '\\' + bare + '.udd', isUdd: true });
+        candidates.push({ path: this.repoDir + '/' + bare + '.json', isUdd: false });
+      }
     }
 
     for (const c of candidates) {
@@ -1231,7 +1265,7 @@ class App {
     const field = this.getCurrentFocusField();
     const sheetNames = (this.sheetView && this.sheetView.workbook) ? this.sheetView.workbook.SheetNames : ['Sheet1'];
     const defaultSheet = sheetNames[0] || 'Sheet1';
-    const input = prompt('插入表格引用\n格式: 表格名.起始:结束\n例如: Sheet1.A1:C4\n跨文档: 文件名.Sheet1.A1:C4', defaultSheet + '.A1:C4');
+    const input = prompt('插入表格引用\n格式: 表格名.起始:结束\n例如: Sheet1.A1:C4\n跨文档: 路径/文件名.udd.Sheet1.A1:C4', defaultSheet + '.A1:C4');
     if (!input) return;
     this.pushUndo();
     const node = getNodeByPath(this.data, nodePath);
@@ -1256,7 +1290,7 @@ class App {
   }
 
   async _showMediaPicker(nodePath) {
-    const MEDIA_EXTS = ['.png','.jpg','.jpeg','.gif','.svg','.webp','.bmp','.mp4','.webm','.ogg','.mov','.avi','.mp3','.wav','.aac'];
+    const MEDIA_EXTS = ['.png','.jpg','.jpeg','.gif','.svg','.webp','.bmp','.mp4','.webm','.ogg','.mov','.avi','.mp3','.wav','.aac','.m4a','.flac'];
     let currentDir = this.repoDir || '';
     let selectedItem = null;
 
@@ -1299,7 +1333,7 @@ class App {
           icon.className = 'mp-item-icon';
           if (item.type === 'dir') icon.textContent = '📁';
           else if (['.mp4','.webm','.ogg','.mov','.avi'].includes(item.ext)) icon.textContent = '📹';
-          else if (['.mp3','.wav','.aac'].includes(item.ext)) icon.textContent = '🔊';
+          else if (['.mp3','.wav','.aac','.m4a','.flac'].includes(item.ext)) icon.textContent = '🔊';
           else icon.textContent = '🖼';
           el.appendChild(icon);
           const name = document.createElement('span');
@@ -1334,7 +1368,7 @@ class App {
       const absPath = selectedItem.path;
       const ext = selectedItem.ext.toLowerCase();
       const isVideo = ['.mp4','.webm','.ogg','.mov','.avi'].includes(ext);
-      const isAudio = ['.mp3','.wav','.aac'].includes(ext);
+      const isAudio = ['.mp3','.wav','.aac','.m4a','.flac'].includes(ext);
       const mediaType = isVideo ? 'video' : isAudio ? 'audio' : 'image';
       const tag = `{{"${mediaType}":"${absPath.replace(/\\/g, '\\\\')}","${mediaType}.width":"100%"}}`;
       this.pushUndo();
@@ -1424,6 +1458,215 @@ class App {
     this.data.type_global.numbering_style = style;
     this.renderCurrentView();
     this.markDirty();
+  }
+
+  // ================================================================
+  // 文档视图分页：存在 data.type_global.page_size
+  //   ""/undefined = 不分页；A4/A3/A5/letter/legal/B5 = 对应尺寸
+  // 作用：文档视图 .doc-page 的宽高切到 CSS 变量 --page-w / --page-h；
+  //       打印/导出 PDF 时 @page { size } 按该尺寸出纸；
+  //       导出 Word 时 doc 头里写 @page 与 section 尺寸。
+  // ================================================================
+  static PAGE_SIZES = {
+    A4:     { w: '210mm', h: '297mm', printSize: 'A4' },
+    A3:     { w: '297mm', h: '420mm', printSize: 'A3' },
+    A5:     { w: '148mm', h: '210mm', printSize: 'A5' },
+    letter: { w: '216mm', h: '279mm', printSize: 'Letter' },
+    legal:  { w: '216mm', h: '356mm', printSize: 'Legal' },
+    B5:     { w: '176mm', h: '250mm', printSize: '176mm 250mm' },
+  };
+
+  setPageSize(size) {
+    this.pushUndo();
+    if (!this.data.type_global) this.data.type_global = {};
+    if (!size) delete this.data.type_global.page_size;
+    else this.data.type_global.page_size = size;
+    this._applyPageSizeVars();
+    this._invalidateAllViews();
+    this.renderCurrentView();
+    this.markDirty();
+  }
+
+  // 把 data.type_global.page_size 同步成 #editor 的 CSS 变量 + 下拉框选中项。
+  // 在 renderCurrentView / 切换会话后调用，保证打开文档时样式即时生效。
+  _applyPageSizeVars() {
+    const size = this.data && this.data.type_global && this.data.type_global.page_size;
+    const editorEl = document.getElementById('editor');
+    if (editorEl) {
+      const spec = size && App.PAGE_SIZES[size];
+      if (spec) {
+        editorEl.style.setProperty('--page-w', spec.w);
+        editorEl.style.setProperty('--page-h', spec.h);
+        editorEl.classList.add('paged');
+      } else {
+        editorEl.style.removeProperty('--page-w');
+        editorEl.style.removeProperty('--page-h');
+        editorEl.classList.remove('paged');
+      }
+    }
+    const sel = document.getElementById('tool-page-size');
+    if (sel) sel.value = size || '';
+  }
+
+  // 导出 PDF：注入一份临时打印样式，把 #document-view 当作主内容，@page size 按当前选择，
+  // 调浏览器打印对话框（用户选"另存为 PDF"）。打印后自动清掉样式。
+  exportPDF() {
+    // 先确保是文档视图且当前 DOM 是最新的
+    if (this.currentView !== 'document') this.switchView('document');
+    // 切视图是同步的，但 renderCurrentView 已调用 —— 直接触发打印
+    requestAnimationFrame(() => this._runPrint());
+  }
+
+  _runPrint() {
+    const size = this.data && this.data.type_global && this.data.type_global.page_size;
+    const spec = size && App.PAGE_SIZES[size];
+    const pageRule = spec ? `@page { size: ${spec.printSize}; margin: 16mm; }` : '@page { margin: 16mm; }';
+    // 关键：html / body / #app / #main / #editor 全链路都设置了 height:100% + overflow:hidden，
+    // 打印时会把内容裁到一屏 → 只输出第一页。下面把整条链全部解锁为 height:auto + overflow:visible。
+    const css = `
+      ${pageRule}
+      @media print {
+        html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+        #app { height: auto !important; min-height: 0 !important; overflow: visible !important; display: block !important; background: #fff !important; }
+        #header, #status-bar, #sidebar, #repo-panel, #toast { display: none !important; }
+        #main { height: auto !important; min-height: 0 !important; overflow: visible !important; display: block !important; }
+        #editor { height: auto !important; min-height: 0 !important; overflow: visible !important; display: block !important; padding: 0 !important; margin: 0 !important; background: #fff !important; position: static !important; }
+        #editor > div { display: none !important; }
+        #editor > #document-view { display: block !important; }
+        #document-view { height: auto !important; min-height: 0 !important; overflow: visible !important; width: 100% !important; background: #fff !important; padding: 0 !important; margin: 0 !important; position: static !important; }
+        .doc-page { box-shadow: none !important; border: none !important; border-radius: 0 !important; margin: 0 !important; padding: 0 !important; max-width: none !important; width: 100% !important; min-height: 0 !important; height: auto !important; background: #fff !important; overflow: visible !important; page-break-after: always; break-after: page; }
+        .doc-page:last-child { page-break-after: auto; break-after: auto; }
+        .doc-node { page-break-inside: avoid; break-inside: avoid; }
+        .ref-icon, .body-btn, .doc-fold { display: none !important; }
+      }
+    `;
+    const style = document.createElement('style');
+    style.id = 'udd-print-style';
+    style.textContent = css;
+    document.head.appendChild(style);
+    const cleanup = () => {
+      style.remove();
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    try { window.print(); } catch (e) { cleanup(); toast('打印失败: ' + e.message); }
+    // 兜底：有些浏览器不触发 afterprint
+    setTimeout(cleanup, 60000);
+  }
+
+  // 导出 Word：生成 Word 兼容的 HTML Blob（.doc）。
+  // 图片走 fetch → base64 嵌入（与 PPT 一致路径，使用 resolveMediaSrcCandidates 候选回退）；
+  // 视频/音频 Word 内联无意义，留占位文本。
+  // 页面尺寸通过 <style> 里的 @page 指定。
+  async exportWord() {
+    if (this.currentView !== 'document') this.switchView('document');
+    const docEl = document.getElementById('document-view');
+    if (!docEl) { toast('文档视图不可用'); return; }
+    toast('正在导出 Word...');
+    const clone = docEl.cloneNode(true);
+    clone.querySelectorAll('.ref-icon, .body-btn, .doc-fold, .media-resize-handle, .media-editor').forEach(el => el.remove());
+    clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+
+    // 视频/音频留占位
+    clone.querySelectorAll('video,audio').forEach(el => {
+      const alt = el.tagName === 'VIDEO' ? '[视频]' : '[音频]';
+      const span = document.createElement('span');
+      span.style.color = '#888';
+      span.textContent = alt;
+      el.replaceWith(span);
+    });
+
+    // 图片：把每个 <img> 的 src（已是 blob: 或 http: 由 _bindMediaSrcWithFallback 设置）
+    // fetch → base64 data URL。失败用 [图片] 占位。
+    const imgs = Array.from(clone.querySelectorAll('img'));
+    await Promise.all(imgs.map(async (img) => {
+      const dataUrl = await this._imgToDataURL(img.src);
+      if (dataUrl) {
+        img.src = dataUrl;
+        img.removeAttribute('srcset');
+        img.removeAttribute('crossorigin');
+      } else {
+        const span = document.createElement('span');
+        span.style.color = '#888';
+        span.textContent = '[图片]';
+        img.replaceWith(span);
+      }
+    }));
+
+    const size = this.data && this.data.type_global && this.data.type_global.page_size;
+    const spec = size && App.PAGE_SIZES[size];
+    const pageRule = spec ? `@page WordSection1 { size: ${spec.w} ${spec.h}; margin: 16mm 16mm 16mm 16mm; }` : '@page WordSection1 { margin: 16mm 16mm 16mm 16mm; }';
+
+    const title = (this.fileName || '未命名文档').replace(/[<>&"']/g, '');
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<!--[if gte mso 9]>
+<xml>
+<w:WordDocument>
+<w:View>Print</w:View>
+<w:Zoom>100</w:Zoom>
+<w:DoNotOptimizeForBrowser/>
+</w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+body { font-family: '微软雅黑', Arial, sans-serif; font-size: 12pt; color: #1e293b; line-height: 1.6; }
+h1,h2,h3,h4,h5,h6 { font-family: '微软雅黑'; color: #1e293b; }
+.doc-h1 { font-size: 16pt; font-weight: 700; margin: 18pt 0 10pt; }
+.doc-h2 { font-size: 14pt; font-weight: 600; margin: 14pt 0 8pt; }
+.doc-h3 { font-size: 12pt; font-weight: 600; margin: 10pt 0 6pt; }
+.doc-h4, .doc-h5, .doc-h6 { font-size: 12pt; font-weight: 600; margin: 8pt 0 4pt; }
+.doc-body { font-size: 12pt; line-height: 1.8; text-indent: 2em; margin: 4pt 0 10pt; }
+.doc-num { margin-right: 6px; font-weight: 400; }
+.inline-table { border-collapse: collapse; margin: 6pt 0; font-size: 11pt; }
+.inline-table th, .inline-table td { border: 1px solid #cbd5e1; padding: 3pt 6pt; }
+.ref-display, .inline-ref { background: #eff6ff; border-radius: 2px; padding: 0 2px; }
+.media-wrap { margin: 6pt 0; }
+.media-img { max-width: 100%; }
+.media-caption { font-size: 10pt; color: #64748b; text-align: center; margin-top: 2pt; }
+.doc-page + .doc-page { page-break-before: always; }
+${pageRule}
+div.WordSection1 { page: WordSection1; }
+</style>
+</head>
+<body>
+<div class="WordSection1">
+${clone.innerHTML}
+</div>
+</body>
+</html>`;
+
+    const blob = new Blob(['﻿' + html], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (this.fileName || '未命名文档') + '.doc';
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('已导出 Word');
+  }
+
+  // 把任意 <img> 的当前 src 转换成 base64 data URL（用于 Word 嵌入）。
+  // 已是 data: 直接返回；blob: / http: / 服务器代理 URL 全部 fetch + FileReader 转码。
+  // 失败返回空串。
+  async _imgToDataURL(src) {
+    if (!src) return '';
+    if (src.startsWith('data:')) return src;
+    try {
+      const res = await fetch(src);
+      if (!res.ok) return '';
+      const blob = await res.blob();
+      return await new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => resolve('');
+        fr.readAsDataURL(blob);
+      });
+    } catch (e) {
+      return '';
+    }
   }
 
   // 切换当前焦点节点的 no_number（Word 行为：跳过且不占编号位）
@@ -1634,8 +1877,13 @@ class App {
         </div>`;
       mask.appendChild(dlg);
       document.body.appendChild(mask);
+      // 防止当前点击事件循环里其它 outside-click 处理器把刚弹出的对话框当成"外部点击"立即关掉
+      // （表现为：第一次点保存看不到对话框，第二次点才出现）。
+      // 推迟到下一次事件循环再绑定 mask 的关闭逻辑。
+      let armed = false;
+      requestAnimationFrame(() => { armed = true; });
       dlg.querySelector('#save-cancel').onclick = () => { mask.remove(); resolve(null); };
-      mask.onclick = e => { if (e.target === mask) { mask.remove(); resolve(null); } };
+      mask.onclick = e => { if (!armed) return; if (e.target === mask) { mask.remove(); resolve(null); } };
       dlg.querySelector('#save-ok').onclick = () => {
         const embedMedia = dlg.querySelector('#save-embed-media').checked;
         const embedRefs = dlg.querySelector('#save-embed-refs').checked;
@@ -1645,22 +1893,63 @@ class App {
     });
   }
 
+  // 把保存（另存为 / showSaveFilePicker）后获得的文件 handle 名同步到 fileName / 标题栏 / 浏览器 tab。
+  // 用户最初是"未命名文档"，另存为之后浏览器标题应当反映新文件名。
+  _applySavedHandleName(handle) {
+    if (!handle || !handle.name) return;
+    const newName = handle.name.replace(/\.udd$/i, '');
+    if (!newName || newName === this.fileName) return;
+    this.fileName = newName;
+    if (this.data && this.data.meta) this.data.meta.title = newName;
+    const titleEl = document.getElementById('doc-title');
+    if (titleEl) titleEl.value = newName;
+    document.title = 'UDD - ' + newName;
+    this._renderOpenDocs();
+  }
+
   async saveFile() {
+    if (this._saveDialogOpen) return; // re-entry guard（保险：防止多次点击/Ctrl+S 连击）
     if (this.currentView === 'outline') this.outlineView.syncAll();
     else if (this.currentView === 'document') this.documentView.syncAll();
     else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
     this.data.meta.modified = new Date().toISOString();
     this.data.meta.title = this.fileName;
 
-    const opts = await this._showSaveOptions();
+    this._saveDialogOpen = true;
+    let opts;
+    try { opts = await this._showSaveOptions(); }
+    finally { this._saveDialogOpen = false; }
     if (!opts) return;
+    await this._doSave(opts, false);
+  }
 
+  async saveFileAs() {
+    if (this._saveDialogOpen) return;
+    if (this.currentView === 'outline') this.outlineView.syncAll();
+    else if (this.currentView === 'document') this.documentView.syncAll();
+    else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
+    this.data.meta.modified = new Date().toISOString();
+    this.data.meta.title = this.fileName;
+
+    this._saveDialogOpen = true;
+    let opts;
+    try { opts = await this._showSaveOptions(); }
+    finally { this._saveDialogOpen = false; }
+    if (!opts) return;
+    await this._doSave(opts, true);
+  }
+
+  // 把"询问 embed 选项"和"实际写入"拆开，避免 saveFile 询问 opts 后再 fall-through 到
+  // saveFileAs 时被二次询问（用户表现为"点两次保存才弹系统对话框"）。
+  // forceAs=true → 始终走 showSaveFilePicker（另存为）。
+  // forceAs=false → 优先走 fileHandle / 服务器；都没有时再回退到 showSaveFilePicker，opts 沿用本次。
+  async _doSave(opts, forceAs) {
     try {
       toast('正在保存...');
       const blob = await createUDDBlob(this.data, opts);
-      if (this.fileHandle) {
+
+      if (!forceAs && this.fileHandle) {
         try {
-          // Re-request permission if needed (handle may have gone stale)
           if (this.fileHandle.requestPermission) {
             const perm = await this.fileHandle.requestPermission({ mode: 'readwrite' });
             if (perm !== 'granted') throw new Error('未获得写入权限');
@@ -1671,44 +1960,18 @@ class App {
         } catch (handleErr) {
           throw new Error('文件写入失败: ' + handleErr.message);
         }
-      } else if (this._activeSession && this._activeSession.filePath && this.repoServerUrl) {
+      } else if (!forceAs && this._activeSession && this._activeSession.filePath && this.repoServerUrl) {
         const resp = await fetch(this.repoServerUrl + '/api/writefile?path=' + encodeURIComponent(this._activeSession.filePath), {
           method: 'POST', body: blob
         });
         if (!resp.ok) throw new Error('服务器写入失败: HTTP ' + resp.status);
-      } else {
-        await this.saveFileAs();
-        return;
-      }
-      if (this.fileName && this.fileName !== '未命名文档') {
-        await dbSaveNamedDoc(this.fileName, this.data);
-      }
-      this.markClean();
-      toast('已保存');
-    } catch (e) {
-      if (e.name !== 'AbortError') toast('保存失败: ' + e.message);
-    }
-  }
-
-  async saveFileAs() {
-    if (this.currentView === 'outline') this.outlineView.syncAll();
-    else if (this.currentView === 'document') this.documentView.syncAll();
-    else if (this.currentView === 'mindmap') this.mindmapView.syncAll();
-    this.data.meta.modified = new Date().toISOString();
-    this.data.meta.title = this.fileName;
-
-    const opts = await this._showSaveOptions();
-    if (!opts) return;
-
-    try {
-      toast('正在保存...');
-      const blob = await createUDDBlob(this.data, opts);
-      if (window.showSaveFilePicker) {
+      } else if (window.showSaveFilePicker) {
         const handle = await window.showSaveFilePicker({
           suggestedName: this.fileName + '.udd',
           types: [{ description: 'UDD文档', accept: { 'application/zip': ['.udd'] } }]
         });
         this.fileHandle = handle;
+        this._applySavedHandleName(handle);
         const writable = await handle.createWritable();
         await writable.write(blob);
         await writable.close();
@@ -1717,6 +1980,10 @@ class App {
         const a = document.createElement('a');
         a.href = url; a.download = this.fileName + '.udd';
         a.click(); URL.revokeObjectURL(url);
+      }
+
+      if (this.fileName && this.fileName !== '未命名文档') {
+        await dbSaveNamedDoc(this.fileName, this.data);
       }
       this.markClean();
       toast('已保存');

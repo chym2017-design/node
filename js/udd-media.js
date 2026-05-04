@@ -10,19 +10,29 @@ function parseMediaTag(tagContent) {
   catch (e) { return null; }
 }
 
-// Inline table: {{Sheet1.A1:C4}} or {{文件名.Sheet1.A1:C4}}
+// Inline table: {{Sheet1.A1:C4}} 本档；{{路径/文件名.udd.Sheet1.A1:C4}} 跨档
 function parseTableRef(tagContent) {
-  // Match: docName.sheetName.A1:C4 or sheetName.A1:C4
+  // Match: prefix.A1:C4
   const m = tagContent.match(/^(.+)\.([A-Z]{1,3}\d+):([A-Z]{1,3}\d+)$/);
   if (!m) return null;
   const prefix = m[1], startAddr = m[2], endAddr = m[3];
-  const dot = prefix.lastIndexOf('.');
+
+  // 新语法：检测 ".udd." 段作为 docName 边界
   let docName = null, sheetName;
-  if (dot > 0) {
-    docName = prefix.substring(0, dot);
-    sheetName = prefix.substring(dot + 1);
+  const uddMark = '.udd.';
+  const uddPos = prefix.indexOf(uddMark);
+  if (uddPos >= 0) {
+    docName = prefix.slice(0, uddPos) + '.udd';
+    sheetName = prefix.slice(uddPos + uddMark.length);
   } else {
-    sheetName = prefix;
+    // 旧语法：最后一个 dot 之前是 docName，之后是 sheetName
+    const dot = prefix.lastIndexOf('.');
+    if (dot > 0) {
+      docName = prefix.substring(0, dot);
+      sheetName = prefix.substring(dot + 1);
+    } else {
+      sheetName = prefix;
+    }
   }
   return { docName, sheetName, startAddr, endAddr };
 }
@@ -133,6 +143,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       img.ondblclick = (e) => { e.stopPropagation(); showLightbox(img.src); };
       img.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
       wrapper.appendChild(img);
+      _addMediaEditBtn(wrapper, mediaInfo);
       const handle = document.createElement('div');
       handle.className = 'media-resize-handle';
       handle.onmousedown = (e) => startMediaResize(e, img, wrapper, mediaInfo);
@@ -162,23 +173,69 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       if (media['video.autoplay']) vid.autoplay = true;
       if (media['video.loop']) vid.loop = true;
       if (media['video.poster']) vid.poster = resolveMediaSrc(media['video.poster']);
-      vid.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+      // 不在 <video> 上挂 click/dblclick：原生控件（播放/进度/音量）会消化点击；
+      // 编辑入口走 wrapper 上的浮动 ✎ 按钮，保证进度条 seek 等原生交互不被打断。
       wrapper.appendChild(vid);
+      _addMediaEditBtn(wrapper, mediaInfo);
       const handle = document.createElement('div');
       handle.className = 'media-resize-handle';
       handle.onmousedown = (e) => startMediaResize(e, vid, wrapper, mediaInfo);
       wrapper.appendChild(handle);
+      if (media['video.caption']) {
+        const cap = document.createElement('div');
+        cap.className = 'media-caption';
+        cap.textContent = media['video.caption'];
+        wrapper.appendChild(cap);
+      }
       alignBox.appendChild(wrapper);
       container.appendChild(alignBox);
     } else if (it.type === 'audio') {
+      // 音频：用 media-wrap 包一层，支持对齐 + 说明（与图片 / 视频一致）
+      const alignBox = document.createElement('div');
+      if (!noAlign && media['audio.align']) alignBox.style.textAlign = media['audio.align'];
+      const wrapper = document.createElement('div');
+      wrapper.className = 'media-wrap media-audio-wrap';
+      const audW = media['audio.width'] || '';
+      if (audW) wrapper.style.width = audW;
       const aud = document.createElement('audio');
       _bindMediaSrcWithFallback(aud, it.src);
       aud.controls = true;
       aud.className = 'media-audio';
-      aud.onclick = (e) => { e.stopPropagation(); showMediaEditor(aud, mediaInfo); };
-      container.appendChild(aud);
+      aud.style.width = '100%';
+      if (media['audio.autoplay']) aud.autoplay = true;
+      if (media['audio.loop']) aud.loop = true;
+      // 同 <video>：不挂 click/dblclick，进度条 seek 走原生；编辑入口走 ✎ 按钮。
+      wrapper.appendChild(aud);
+      _addMediaEditBtn(wrapper, mediaInfo);
+      if (media['audio.caption']) {
+        const cap = document.createElement('div');
+        cap.className = 'media-caption';
+        cap.textContent = media['audio.caption'];
+        wrapper.appendChild(cap);
+      }
+      alignBox.appendChild(wrapper);
+      container.appendChild(alignBox);
     }
   }
+}
+
+// 在媒体 wrapper 右上角加一个浮动的 ✎ 编辑按钮。
+// 为什么不用 <audio>/<video> 自身的 click 事件？
+//   原生控件（play / progress / volume）位于浏览器实现的 shadow DOM 内，
+//   click 在该层被消化，事件不一定冒泡到我们绑的 onclick；
+//   即便冒泡到了，我们的 handler 一旦弹出编辑器，又会反过来打断"点进度条跳播放"的原生行为。
+//   做成一个独立浮动按钮，原生控件完全不受影响，编辑入口也始终可用。
+function _addMediaEditBtn(wrapper, mediaInfo) {
+  if (!mediaInfo) return; // 没有 path/field 信息（如思维导图气泡里）就不挂按钮
+  if (!wrapper.style.position) wrapper.style.position = 'relative';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'media-edit-btn';
+  btn.title = '编辑媒体属性';
+  btn.textContent = '✎';
+  btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+  btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+  wrapper.appendChild(btn);
 }
 
 // 回退：仅在 collector 不可用时用；保持和旧行为兼容（不深入 ref）
@@ -316,12 +373,22 @@ function showMediaEditor(mediaEl, mediaInfo) {
       {key: 'video.width', label: '宽度', val: media['video.width'] || ''},
       {key: 'video.height', label: '高度', val: media['video.height'] || ''},
       {key: 'video.align', label: '对齐', val: media['video.align'] || '', type: 'select', opts: ['','left','center','right']},
+      {key: 'video.caption', label: '说明', val: media['video.caption'] || ''},
       {key: 'video.autoplay', label: '自动播放', val: media['video.autoplay'] || '', type: 'check'},
       {key: 'video.loop', label: '循环', val: media['video.loop'] || '', type: 'check'},
     );
+  } else if (mediaType === 'audio') {
+    fields.push(
+      {key: 'audio.width', label: '宽度', val: media['audio.width'] || ''},
+      {key: 'audio.align', label: '对齐', val: media['audio.align'] || '', type: 'select', opts: ['','left','center','right']},
+      {key: 'audio.caption', label: '说明', val: media['audio.caption'] || ''},
+      {key: 'audio.autoplay', label: '自动播放', val: media['audio.autoplay'] || '', type: 'check'},
+      {key: 'audio.loop', label: '循环', val: media['audio.loop'] || '', type: 'check'},
+    );
   }
 
-  let html = `<div class="media-editor-title">${mediaType === 'image' ? '图片' : '视频'}属性</div>`;
+  const titleMap = { image: '图片', video: '视频', audio: '音频' };
+  let html = `<div class="media-editor-title">${titleMap[mediaType] || ''}属性</div>`;
   for (const f of fields) {
     if (f.type === 'select') {
       const optHtml = f.opts.map(o => `<option value="${o}"${o===f.val?' selected':''}>${o||'默认'}</option>`).join('');

@@ -28,6 +28,11 @@ const MIME_TYPES = {
   '.ogg': 'video/ogg',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
+  '.aac': 'audio/aac',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+  '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
   '.udd': 'application/octet-stream',
   '.md': 'text/markdown; charset=utf-8',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -126,12 +131,45 @@ const server = http.createServer(async (req, res) => {
       }
 
       const ext = path.extname(resolved).toLowerCase();
-      res.writeHead(200, {
-        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-        'Content-Length': stat.size,
-        'Access-Control-Allow-Origin': '*',
-      });
-      fs.createReadStream(resolved).pipe(res);
+      const mime = MIME_TYPES[ext] || 'application/octet-stream';
+      const total = stat.size;
+
+      // Range 请求支持：浏览器 <audio>/<video> 进度条 seek 必需。
+      // 没这条响应时，浏览器看到没 Accept-Ranges 头就拒绝发送 Range 请求，
+      // 表现为"点进度条没反应/不跳"。
+      const rangeHeader = req.headers.range;
+      if (rangeHeader) {
+        const m = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+        let start = m && m[1] ? parseInt(m[1], 10) : 0;
+        let end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+        if (isNaN(start) || start < 0) start = 0;
+        if (isNaN(end) || end >= total) end = total - 1;
+        if (start > end) {
+          res.writeHead(416, {
+            'Content-Range': `bytes */${total}`,
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end();
+          return;
+        }
+        res.writeHead(206, {
+          'Content-Type': mime,
+          'Content-Range': `bytes ${start}-${end}/${total}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': end - start + 1,
+          'Access-Control-Allow-Origin': '*',
+        });
+        // 流式分片返回，避免大视频读进内存
+        fs.createReadStream(resolved, { start, end }).pipe(res);
+      } else {
+        res.writeHead(200, {
+          'Content-Type': mime,
+          'Content-Length': total,
+          'Accept-Ranges': 'bytes',
+          'Access-Control-Allow-Origin': '*',
+        });
+        fs.createReadStream(resolved).pipe(res);
+      }
     } catch (e) {
       sendError(res, e.message, 404);
     }

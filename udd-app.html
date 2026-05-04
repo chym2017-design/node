@@ -17,13 +17,15 @@
     <div id="menu-bar">
       <span class="logo">UDD</span>
       <input id="doc-title" class="doc-title" value="未命名文档" spellcheck="false">
-      <button class="menu-btn primary" onclick="app.newFile()" title="Ctrl+N">新建</button>
-      <button class="menu-btn" onclick="app.openFile()" title="Ctrl+O">打开</button>
-      <button class="menu-btn" onclick="app.saveFile()" title="Ctrl+S">保存</button>
-      <button class="menu-btn" onclick="app.saveFileAs()">另存为</button>
+      <button class="menu-btn primary" onmousedown="event.preventDefault()" onclick="app.newFile()" title="Ctrl+N">新建</button>
+      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.openFile()" title="Ctrl+O">打开</button>
+      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.saveFile()" title="Ctrl+S">保存</button>
+      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.saveFileAs()">另存为</button>
       <div class="menu-sep"></div>
-      <button class="menu-btn" onclick="app.exportJSON()">导出JSON</button>
-      <button class="menu-btn" onclick="app.importJSON()">导入JSON</button>
+      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportPDF()" title="导出为 PDF（使用浏览器打印对话框，选择&quot;另存为 PDF&quot;）">PDF</button>
+      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportWord()" title="导出为 Word .doc">Word</button>
+      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportJSON()">导出JSON</button>
+      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.importJSON()">导入JSON</button>
     </div>
     <div id="toolbar">
       <button class="tool-btn" onclick="app.undo()" title="撤销 Ctrl+Z">↩</button>
@@ -71,6 +73,16 @@
         <div class="color-palette" id="palette-ref"></div>
       </div>
       <div class="tool-sep"></div>
+      <select id="tool-page-size" class="tool-select" onchange="app.setPageSize(this.value)" title="文档视图页面尺寸（分页）" style="width:90px">
+        <option value="">不分页</option>
+        <option value="A4">A4</option>
+        <option value="A3">A3</option>
+        <option value="A5">A5</option>
+        <option value="letter">Letter</option>
+        <option value="legal">Legal</option>
+        <option value="B5">B5</option>
+      </select>
+      <div class="tool-sep"></div>
       <button id="tool-align-left" class="tool-btn" onclick="app.setNodeStyle('text_align','left')" title="左对齐">≡</button>
       <button id="tool-align-center" class="tool-btn" onclick="app.setNodeStyle('text_align','center')" title="居中">≡</button>
       <button id="tool-align-right" class="tool-btn" onclick="app.setNodeStyle('text_align','right')" title="右对齐">≡</button>
@@ -110,6 +122,7 @@
       <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
       <button class="view-tab" data-view="sheet" onclick="app.switchView('sheet')">表格</button>
       <button class="view-tab" data-view="ppt" onclick="app.switchView('ppt')">演示</button>
+      <button class="view-tab" data-view="graph" onclick="app.switchView('graph')">图谱</button>
       <button id="back-btn" onclick="app.goBack()" style="display:none;background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">← 返回</button>
       <div class="spacer"></div>
       <button id="render-toggle" onclick="app.toggleRenderMode()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染 on</button>
@@ -151,6 +164,7 @@
       <div id="document-view"></div>
       <div id="sheet-view"></div>
       <div id="ppt-view"></div>
+      <div id="graph-view"></div>
     </div>
 
     <!-- Sidebar (right) -->
@@ -197,6 +211,7 @@
 <script src="js/udd-sheet.js"></script>
 <script src="js/pptxgen.min.js"></script>
 <script src="js/udd-ppt.js"></script>
+<script src="js/udd-graph.js"></script>
 <script src="js/udd-app.js"></script>
 </body>
 </html>

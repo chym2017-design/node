@@ -144,9 +144,20 @@ function parseRef(refStr) {
   const parts = work.split('.');
   const tNodeRe = /^t\d+-\d+$/;
 
-  // Determine docName: if first part is NOT a tNode key, it's a doc name
+  // Determine docName.
+  // 新语法（推荐）：docName 必须以 .udd 段结尾，例如 "report.udd.t1-1.content"
+  //                 或带路径 "../sub/report.udd.t1-1"。docName = "../sub/report.udd"。
+  // 旧语法（向后兼容）：embedded ref 或首段非 tNode 时，把首段作为 docName。
   let idx = 0;
-  if (parts.length >= 2 && !tNodeRe.test(parts[0])) {
+  let uddIdx = -1;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (parts[i] === 'udd') { uddIdx = i; break; }
+  }
+  if (uddIdx >= 0) {
+    const before = parts.slice(0, uddIdx).join('.');
+    result.docName = before ? before + '.udd' : 'udd';
+    idx = uddIdx + 1;
+  } else if (parts.length >= 2 && !tNodeRe.test(parts[0])) {
     result.docName = parts[0];
     idx = 1;
   }
@@ -490,19 +501,46 @@ async function _loadDocFromServer(docName) {
   const serverUrl = (typeof app !== 'undefined' && app.repoServerUrl) || localStorage.getItem('udd_server_url') || '';
   if (!serverUrl) return null;
   const repoDir = (typeof app !== 'undefined' && app.repoDir) || localStorage.getItem('udd_repo_dir') || '';
+  // 当前文档所在目录（用于解析相对路径）
+  const curFilePath = (typeof app !== 'undefined' && app._activeSession && app._activeSession.filePath) || '';
+  const curDir = curFilePath ? curFilePath.replace(/[/\\][^/\\]+$/, '') : '';
 
-  // Try several path patterns
+  const hasUdd = docName.endsWith('.udd');
   const candidates = [];
-  // If docName looks like an absolute path (D:\...), use it directly
-  if (/^[A-Za-z]:[\\/]/.test(docName)) {
+
+  // 绝对 Windows 路径 D:\... 或 /...
+  if (/^[A-Za-z]:[\\/]/.test(docName) || docName.startsWith('/')) {
     candidates.push(docName);
-    if (!docName.endsWith('.udd')) candidates.push(docName + '.udd');
-  } else {
-    // Try as filename in repo dir
+    if (!hasUdd) candidates.push(docName + '.udd');
+  } else if (docName.includes('/') || docName.includes('\\')) {
+    // 相对路径：相对当前文档目录
+    if (curDir) {
+      candidates.push(curDir + '/' + docName);
+      candidates.push(curDir + '\\' + docName);
+      if (!hasUdd) {
+        candidates.push(curDir + '/' + docName + '.udd');
+        candidates.push(curDir + '\\' + docName + '.udd');
+      }
+    }
     if (repoDir) {
-      candidates.push(repoDir + '/' + docName + '.udd');
-      candidates.push(repoDir + '\\' + docName + '.udd');
-      candidates.push(repoDir + '/' + docName + '.json');
+      candidates.push(repoDir + '/' + docName);
+      candidates.push(repoDir + '\\' + docName);
+      if (!hasUdd) {
+        candidates.push(repoDir + '/' + docName + '.udd');
+        candidates.push(repoDir + '\\' + docName + '.udd');
+      }
+    }
+  } else {
+    // 裸文件名：仓库目录下查找
+    if (repoDir) {
+      if (hasUdd) {
+        candidates.push(repoDir + '/' + docName);
+        candidates.push(repoDir + '\\' + docName);
+      } else {
+        candidates.push(repoDir + '/' + docName + '.udd');
+        candidates.push(repoDir + '\\' + docName + '.udd');
+        candidates.push(repoDir + '/' + docName + '.json');
+      }
     }
   }
 

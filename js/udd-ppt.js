@@ -139,14 +139,15 @@ class PptView {
       for (const itemKey of items) {
         const child = node[itemKey];
         if (!child) continue;
-        await this._collectBullets(child, 0, depth - 2, bullets, mediaItems, orderedItems);
+        const childPath = path + '.' + itemKey;
+        await this._collectBullets(child, childPath, getLevel(itemKey), 0, depth - 2, bullets, mediaItems, orderedItems);
       }
       if (node.content) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
       if (node.body) await this._collectMediaAsync(node.body, mediaItems, orderedItems);
       slides.push({
         type: 'content', title: await this._resolveContent(node.content),
         notes: node.body ? await this._resolveContent(node.body) : '',
-        bullets, mediaItems, orderedItems, theme, layout, nodePath: path, splitIndex: i
+        bullets, mediaItems, orderedItems, theme, layout, nodePath: path, titleLevel: 1, splitIndex: i
       });
     }
   }
@@ -157,7 +158,8 @@ class PptView {
     for (const ck of childKeys) {
       const child = node[ck];
       if (!child) continue;
-      await this._collectBullets(child, 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
+      const childPath = path + '.' + ck;
+      await this._collectBullets(child, childPath, getLevel(ck), 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
     }
     // 主节点自己的 content / body 里的媒体（含 =ref 深入解析）
     if (node.content) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
@@ -176,18 +178,20 @@ class PptView {
         if (sourceNode.body) await this._collectMediaAsync(sourceNode.body, mediaItems, orderedItems);
         const srcChildKeys = Object.keys(sourceNode).filter(k => isTNode(k)).sort();
         for (const ck of srcChildKeys) {
-          await this._collectBullets(sourceNode[ck], 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
+          const subPath = path + '.' + ck;
+          await this._collectBullets(sourceNode[ck], subPath, getLevel(ck), 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
         }
       }
     }
-    return { type: 'content', title, notes, bullets, mediaItems, orderedItems, theme, layout, nodePath: path };
+    return { type: 'content', title, notes, bullets, mediaItems, orderedItems, theme, layout, nodePath: path, titleLevel: baseLevel };
   }
 
   // 收集节点及其子节点的文本/媒体，按出现顺序产出三份视图：
   //   bullets      —— 纯文本条目（兼容旧布局 two_col_left/right、three_col、image_full 及 PPTX 导出）
   //   mediaItems   —— 纯媒体条目（同上）
   //   orderedItems —— 文本 + 媒体按出现顺序混排（新的 one_col / two_col 纯顺序布局使用）
-  async _collectBullets(node, level, maxDepth, bullets, mediaItems, orderedItems) {
+  // nodePath / typeLevel：用于 PPTX 导出按节点级别（t1-*. / t2-*.）取 type_global 字体样式
+  async _collectBullets(node, nodePath, typeLevel, level, maxDepth, bullets, mediaItems, orderedItems) {
     if (!node || typeof node !== 'object') return;
     const raw = node.content || '';
 
@@ -195,14 +199,14 @@ class PptView {
     if (isRef(raw) && isFullNodeRef(raw)) {
       const sourceNode = await this._resolveFullNodeAsync(raw);
       if (sourceNode && typeof sourceNode === 'object') {
-        await this._collectBullets(sourceNode, level, maxDepth, bullets, mediaItems, orderedItems);
+        await this._collectBullets(sourceNode, nodePath, typeLevel, level, maxDepth, bullets, mediaItems, orderedItems);
         return;
       }
     }
 
     const content = await this._resolveContent(raw);
     if (content) {
-      const b = { text: content, level };
+      const b = { text: content, level, path: nodePath, typeLevel };
       bullets.push(b);
       if (orderedItems) orderedItems.push({ kind: 'bullet', ...b });
     }
@@ -211,7 +215,7 @@ class PptView {
       const bodyText = await this._resolveContent(node.body);
       const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
       if (bodyDisplay) {
-        const b = { text: bodyDisplay, level, isBody: true };
+        const b = { text: bodyDisplay, level, isBody: true, path: nodePath, typeLevel };
         bullets.push(b);
         if (orderedItems) orderedItems.push({ kind: 'bullet', ...b });
       }
@@ -220,13 +224,15 @@ class PptView {
     if (level < maxDepth) {
       const childKeys = Object.keys(node).filter(k => isTNode(k)).sort();
       for (const ck of childKeys) {
-        await this._collectBullets(node[ck], level + 1, maxDepth, bullets, mediaItems, orderedItems);
+        const childPath = nodePath + '.' + ck;
+        await this._collectBullets(node[ck], childPath, getLevel(ck), level + 1, maxDepth, bullets, mediaItems, orderedItems);
       }
     }
   }
 
   // 公共 collector 的异步包装：深入 =ref / {{=ref}} 展开所有媒体
   // orderedItems 可选，若传入则同步往里 push {kind:'media', ...}
+  // 保留 it.meta（含 image.caption / video.caption / audio.caption / image.width 等）以便 PPT 导出
   async _collectMediaAsync(text, mediaItems, orderedItems) {
     if (!text) return;
     if (typeof collectMediaItemsFromTextAsync === 'function') {
@@ -239,8 +245,9 @@ class PptView {
             if (orderedItems) orderedItems.push({ kind: 'media', type: 'table', rows });
           }
         } else {
-          mediaItems.push({ type: it.type, src: it.src });
-          if (orderedItems) orderedItems.push({ kind: 'media', type: it.type, src: it.src });
+          const m = { type: it.type, src: it.src, meta: it.meta || null };
+          mediaItems.push(m);
+          if (orderedItems) orderedItems.push({ kind: 'media', ...m });
         }
       }
       return;
@@ -278,11 +285,11 @@ class PptView {
     while ((m = re.exec(text)) !== null) {
       const media = parseMediaTag(m[1]);
       if (media && media.image) {
-        push({ type: 'image', src: media.image });
+        push({ type: 'image', src: media.image, meta: media });
       } else if (media && media.video) {
-        push({ type: 'video', src: media.video });
+        push({ type: 'video', src: media.video, meta: media });
       } else if (media && media.audio) {
-        push({ type: 'audio', src: media.audio });
+        push({ type: 'audio', src: media.audio, meta: media });
       } else if (typeof parseTableRef === 'function') {
         const tableRef = parseTableRef(m[1]);
         if (tableRef) {
@@ -657,8 +664,92 @@ class PptView {
 
   // ---- Export to PPTX ----
 
-  exportPptx() {
+  // 通过 app.resolveMediaSrcCandidates 获取所有候选 URL，依次 fetch 直至成功，
+  // 转成 base64 data URL（含 mime）。失败返回 null。
+  async _fetchMediaAsBase64(src) {
+    if (!src) return null;
+    if (src.startsWith('data:')) return src;
+    let candidates = [];
+    if (typeof app !== 'undefined' && app.resolveMediaSrcCandidates) {
+      candidates = app.resolveMediaSrcCandidates(src);
+    } else {
+      candidates = [src];
+    }
+    for (const url of candidates) {
+      if (!url) continue;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        const dataUrl = await new Promise(resolve => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result);
+          fr.onerror = () => resolve(null);
+          fr.readAsDataURL(blob);
+        });
+        if (dataUrl) return dataUrl;
+      } catch (e) { /* try next */ }
+    }
+    return null;
+  }
+
+  // 预读所有 slide 的图片 / 视频 / 音频为 base64 → 写到 m._dataUrl 上，
+  // 之后 exportPptx 同步走 PptxGenJS API 即可。
+  async _prefetchAllMedia() {
+    const tasks = [];
+    const visit = (m) => {
+      if (!m || !m.src) return;
+      if (m.type !== 'image' && m.type !== 'video' && m.type !== 'audio') return;
+      if (m._dataUrl !== undefined) return; // 已处理
+      tasks.push(this._fetchMediaAsBase64(m.src).then(d => { m._dataUrl = d || null; }));
+    };
+    for (const slide of this.slides) {
+      (slide.mediaItems || []).forEach(visit);
+      (slide.orderedItems || []).forEach(it => { if (it.kind === 'media') visit(it); });
+    }
+    await Promise.all(tasks);
+  }
+
+  // 由 type_global 的 t{level}-*.字段生成 PptxGenJS 文本 options。
+  // 与 outline / document 的 applyFmtStyle 同源 —— 都从 buildNodeStyle 取数据。
+  _bulletTextOptions(b, theme) {
+    const styleObj = (typeof buildNodeStyle === 'function')
+      ? buildNodeStyle(this.data, b.path || '', (typeof b.typeLevel === 'number') ? b.typeLevel : (b.level || 0), { isBody: !!b.isBody })
+      : {};
+    const opts = { breakLine: true };
+    if (styleObj.font) opts.fontFace = styleObj.font;
+    if (styleObj.font_size) opts.fontSize = +styleObj.font_size;
+    else opts.fontSize = Math.max(8, 14 - (b.level || 0));
+    if (styleObj.bold) opts.bold = true;
+    if (styleObj.italic || b.isBody) opts.italic = true;
+    if (styleObj.underline) opts.underline = { style: 'sng' };
+    if (styleObj.strikethrough) opts.strike = 'sngStrike';
+    // color: 节点 / 类型样式优先；缺省退回主题文字色
+    const colorRgb = styleObj.color ? (typeof rgbToHex === 'function' ? rgbToHex(String(styleObj.color)).replace('#','') : null) : null;
+    opts.color = colorRgb || theme.text.replace('#', '');
+    if (styleObj.text_align) opts.align = styleObj.text_align;
+    return opts;
+  }
+
+  // 标题行的字体 options：取标题节点（slide.nodePath / slide.titleLevel）的 type_global 样式
+  _titleTextOptions(slide, theme) {
+    const styleObj = (typeof buildNodeStyle === 'function')
+      ? buildNodeStyle(this.data, slide.nodePath || '', (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1, { isBody: false })
+      : {};
+    const opts = { bold: true, color: theme.accent.replace('#', '') };
+    if (styleObj.font) opts.fontFace = styleObj.font;
+    opts.fontSize = styleObj.font_size ? Math.max(18, +styleObj.font_size + 8) : 24;
+    if (styleObj.italic) opts.italic = true;
+    if (styleObj.underline) opts.underline = { style: 'sng' };
+    return opts;
+  }
+
+  async exportPptx() {
     if (typeof PptxGenJS === 'undefined') { toast('PptxGenJS 未加载'); return; }
+    toast('正在导出 PPT，预读媒体...');
+    // 预读所有图片 / 视频 / 音频为 base64 —— 缺这一步视频会被静默丢弃
+    await this._prefetchAllMedia();
+
     const pptx = new PptxGenJS();
     pptx.layout = 'LAYOUT_WIDE'; // 13.33 x 7.5 inches (16:9)
     const theme = PPT_THEMES[this.format.theme] || PPT_THEMES.business_blue;
@@ -674,8 +765,9 @@ class PptView {
       } else if (slide.type === 'ending') {
         s.addText('谢谢', { x: 1, y: 2.5, w: 11, h: 2, fontSize: 44, bold: true, color: t.accent.replace('#', ''), align: 'center' });
       } else {
-        // Title
-        s.addText(slide.title, { x: 0.6, y: 0.3, w: 12, h: 0.8, fontSize: 24, bold: true, color: t.accent.replace('#', '') });
+        // Title — 字体由节点级别样式决定
+        const titleOpts = this._titleTextOptions(slide, t);
+        s.addText(slide.title, { x: 0.6, y: 0.3, w: 12, h: 0.8, ...titleOpts });
         // Accent line
         s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.1, w: 12, h: 0.03, fill: { color: t.accent.replace('#', '') } });
 
@@ -683,35 +775,66 @@ class PptView {
         const layout = slide.layout || 'one_col';
         const mediaItems = slide.mediaItems || [];
         const hasMedia = mediaItems.length > 0;
+        // 每条 bullet 的字体 options 由该节点的 type_global 级别样式决定
         const bulletTexts = (slide.bullets || []).map(b => ({
           text: '  '.repeat(b.level) + (b.level === 0 ? '• ' : b.level === 1 ? '◦ ' : '▪ ') + b.text,
-          options: { fontSize: 14 - b.level, color: t.text.replace('#', ''), breakLine: true, italic: !!b.isBody }
+          options: this._bulletTextOptions(b, t)
         }));
 
-        // Helper: add all mediaItems starting at given x,y,w bounds
+        // 单条媒体 + 标题（caption）的高度估算（inch）
+        const MEDIA_H = { image: 2.5, video: 2.5, audio: 0.5, table: null };
+        const CAPTION_H = 0.3;
+
+        // Helper: add all mediaItems starting at given x,y,w bounds, returning advanced y.
+        // 图片 / 视频走 base64（_dataUrl 在 _prefetchAllMedia 阶段写入）；
+        // 音频也通过 addMedia 嵌入；找不到源文件就降级为 [视频]/[音频] 文本占位。
         const addMediaItems = (items, x, y, w) => {
           let curY = y;
           for (const m of items) {
-            if (m.type === 'image') {
-              try {
-                const src = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(m.src) : m.src;
-                if (src && (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('http'))) {
-                  const imgOpts = src.startsWith('data:') ? { data: src } : { path: src };
-                  s.addImage({ ...imgOpts, x, y: curY, w, h: 2.5 });
-                  curY += 2.6;
+            const meta = m.meta || {};
+            const captionKey = m.type + '.caption';
+            const caption = meta[captionKey] || '';
+            try {
+              if (m.type === 'image') {
+                if (m._dataUrl) {
+                  s.addImage({ data: m._dataUrl, x, y: curY, w, h: MEDIA_H.image });
+                  curY += MEDIA_H.image + 0.05;
+                } else {
+                  s.addText('[图片缺失]', { x, y: curY, w, h: 0.3, fontSize: 11, italic: true, color: '888888' });
+                  curY += 0.35;
                 }
-              } catch (e) {}
-            } else if (m.type === 'table' && m.rows && m.rows.length) {
-              try {
+              } else if (m.type === 'video') {
+                if (m._dataUrl) {
+                  s.addMedia({ type: 'video', data: m._dataUrl, x, y: curY, w, h: MEDIA_H.video });
+                  curY += MEDIA_H.video + 0.05;
+                } else {
+                  s.addText('[视频缺失]', { x, y: curY, w, h: 0.3, fontSize: 11, italic: true, color: '888888' });
+                  curY += 0.35;
+                }
+              } else if (m.type === 'audio') {
+                if (m._dataUrl) {
+                  s.addMedia({ type: 'audio', data: m._dataUrl, x, y: curY, w: Math.min(w, 4), h: MEDIA_H.audio });
+                  curY += MEDIA_H.audio + 0.05;
+                } else {
+                  s.addText('[音频缺失]', { x, y: curY, w, h: 0.3, fontSize: 11, italic: true, color: '888888' });
+                  curY += 0.35;
+                }
+              } else if (m.type === 'table' && m.rows && m.rows.length) {
                 const tableRows = m.rows.map((row, ri) => row.map(cell => ({
                   text: cell,
                   options: ri === 0 ? { bold: true, fill: { color: 'F0F0F0' }, color: t.text.replace('#', '') } : { color: t.text.replace('#', '') }
                 })));
                 s.addTable(tableRows, { x, y: curY, w, fontSize: 11, border: { pt: 0.5, color: 'CCCCCC' } });
                 curY += m.rows.length * 0.3 + 0.2;
-              } catch (e) {}
-            }
+              }
+              // 媒体说明（image.caption / video.caption / audio.caption）
+              if (caption && (m.type === 'image' || m.type === 'video' || m.type === 'audio')) {
+                s.addText(caption, { x, y: curY, w, h: CAPTION_H, fontSize: 10, italic: true, color: '64748B', align: 'center' });
+                curY += CAPTION_H + 0.05;
+              }
+            } catch (e) { /* 单个媒体失败不阻断其它 */ }
           }
+          return curY;
         };
 
         if (layout === 'title_only') {
@@ -732,22 +855,17 @@ class PptView {
             if (colMedia.length) addMediaItems(colMedia, colX, 5.0, 3.8);
           }
         } else if (layout === 'image_full' && hasMedia && mediaItems[0].type === 'image') {
-          try {
-            const src = (typeof resolveMediaSrc === 'function') ? resolveMediaSrc(mediaItems[0].src) : mediaItems[0].src;
-            if (src && src.startsWith('data:')) s.addImage({ data: src, x: 0, y: 0, w: 13.33, h: 7.5 });
-          } catch (e) {}
+          if (mediaItems[0]._dataUrl) {
+            s.addImage({ data: mediaItems[0]._dataUrl, x: 0, y: 0, w: 13.33, h: 7.5 });
+          }
           s.addText(bulletTexts, { x: 0.6, y: 1.4, w: 12, h: 5.5, valign: 'top' });
         } else if (layout === 'two_col') {
-          // 双栏：按 orderedItems 顺序左到右、上到下；左栏满后右栏继续。
-          // 简单实现：按 orderedItems 等分到两栏（按数量），每栏内部按出现顺序顺序排版。
           const ord = slide.orderedItems || [];
           const half = Math.ceil(ord.length / 2);
-          const leftItems = ord.slice(0, half);
-          const rightItems = ord.slice(half);
-          this._addOrderedColumn(s, leftItems, 0.6, 1.4, 5.8, t, addMediaItems);
-          this._addOrderedColumn(s, rightItems, 7,   1.4, 5.8, t, addMediaItems);
+          this._addOrderedColumn(s, ord.slice(0, half), 0.6, 1.4, 5.8, t, addMediaItems);
+          this._addOrderedColumn(s, ord.slice(half),   7,   1.4, 5.8, t, addMediaItems);
         } else {
-          // one_col：纯顺序展示，文本和媒体按 orderedItems 顺序混排（不再左文右图）
+          // one_col
           this._addOrderedColumn(s, slide.orderedItems || [], 0.6, 1.4, 12, t, addMediaItems);
         }
 
@@ -765,14 +883,14 @@ class PptView {
   }
 
   // 把 orderedItems 顺序排版到 PPTX 的一个矩形区域里（用于 one_col / two_col 的每一栏）。
-  // 文本块按 bullet text 集中累积后调一次 addText，遇到媒体再 flush 文本。
+  // 文本块按 bullet 字体 options 集中累积后调一次 addText，遇到媒体再 flush 文本。
+  // 媒体推进 curY 走 addMediaItems 的返回值（含 caption 高度），不再重复用估值表。
   _addOrderedColumn(slide, items, x, y, w, theme, addMediaItems) {
     if (!items || !items.length) return;
     let curY = y;
     let pendingText = [];
     const flushText = () => {
       if (!pendingText.length) return;
-      // 估算文本高度：每条 ~0.3 inch
       const h = Math.min(7.5 - curY, pendingText.length * 0.3 + 0.2);
       slide.addText(pendingText, { x, y: curY, w, h, valign: 'top' });
       curY += h;
@@ -782,16 +900,12 @@ class PptView {
       if (it.kind === 'bullet') {
         pendingText.push({
           text: '  '.repeat(it.level) + (it.level === 0 ? '• ' : it.level === 1 ? '◦ ' : '▪ ') + it.text,
-          options: { fontSize: 14 - it.level, color: theme.text.replace('#', ''), breakLine: true, italic: !!it.isBody }
+          options: this._bulletTextOptions(it, theme)
         });
       } else {
         flushText();
-        addMediaItems([it], x, curY, w);
-        // addMediaItems 内部按 image=2.6 / table=rows*0.3+0.2 推进。
-        // 这里不重复推进 curY；改为重新参考其副作用：addMediaItems 写到 curY 但不返回新位置，
-        // 简化处理：估算图片 2.6、表格 rows*0.3+0.2，与 addMediaItems 内部保持一致。
-        if (it.type === 'image') curY += 2.6;
-        else if (it.type === 'table' && it.rows) curY += it.rows.length * 0.3 + 0.2;
+        const newY = addMediaItems([it], x, curY, w);
+        if (typeof newY === 'number') curY = newY;
       }
     }
     flushText();

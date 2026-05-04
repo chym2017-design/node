@@ -74,8 +74,9 @@ function createDefaultData() {
       // ── 4. 跨文档引用 ──
       "t1-4": {
         content: "跨文档引用", hide: 0, hide_body: 0,
-        body: "引用其他 .udd 文件数据。格式：{{=文档名.节点.字段}}。需在同一仓库目录中打开，点击 ↗ 可自动打开目标文档并定位。",
-        "t2-1": { content: "跨文档数据：{{=测试文档1.t1-1.content}}", hide: 0, hide_body: 0 }
+        body: "引用其他 .udd 文件数据。新语法：{{=路径/文件名.udd.t1-1.content}}（行内）或 =路径/文件名.udd.t1-1（整节点）。文档名必须以 .udd 结尾以与表格名区分。可用相对路径或绝对路径；裸文件名在仓库目录中查找。点击 ↗ 自动打开目标文档并定位。",
+        "t2-1": { content: "跨文档数据：{{=测试文档1.udd.t1-1.content}}", hide: 0, hide_body: 0 },
+        "t2-2": { content: "跨文档表格：{{测试文档1.udd.Sheet1.A1:C3}}", hide: 0, hide_body: 0 }
       },
 
       // ── 5. 表格↔大纲互引 ──
@@ -109,7 +110,7 @@ function createDefaultData() {
         },
         "t2-2": {
           content: "视频：逍遥游样例", hide: 0, hide_body: 0,
-          body: "下方视频可直接在文档中播放。{{\"video\":\"" + VID_PATH + "\",\"video.width\":\"70%\",\"video.align\":\"center\"}}"
+          body: "下方视频可直接在文档中播放。{{\"video\":\"" + VID_PATH + "\",\"video.width\":\"70%\",\"video.align\":\"center\",\"video.caption\":\"逍遥游 · 视频样例\"}}"
         },
         "t2-3": {
           content: "媒体引用联动", hide: 0, hide_body: 0,
