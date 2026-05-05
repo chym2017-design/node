@@ -187,7 +187,7 @@ class OutlineView {
       const mediaDiv = document.createElement('div');
       mediaDiv.className = 'outline-media';
       mediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-      renderTextWithMedia(contentMediaSrc, mediaDiv, {path, field:'content'}, {suppressAlign: !fmt.text_align});
+      renderTextWithMedia(contentMediaSrc, mediaDiv, {path, field:'content', view:this}, {suppressAlign: !fmt.text_align});
       if (mediaDiv.childNodes.length > 0) div.appendChild(mediaDiv);
     }
 
@@ -246,7 +246,7 @@ class OutlineView {
         const bodyMediaDiv = document.createElement('div');
         bodyMediaDiv.className = 'outline-media';
         bodyMediaDiv.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
-        renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'}, {suppressAlign: !fmt.text_align});
+        renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body', view:this}, {suppressAlign: !fmt.text_align});
         if (bodyMediaDiv.childNodes.length > 0) div.appendChild(bodyMediaDiv);
       }
       } // end render ON body block

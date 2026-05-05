@@ -290,45 +290,50 @@ function findRefNode(data, nodePath) {
 // ================================================================
 function collectMediaItemsFromText(data, text, visited) {
   const out = [];
-  _collectMediaItemsSync(data, text, out, visited || new Set());
+  _collectMediaItemsSync(data, text, out, visited || new Set(), null);
   return out;
 }
 
 async function collectMediaItemsFromTextAsync(data, text, visited) {
   const out = [];
-  await _collectMediaItemsAsyncImpl(data, text, out, visited || new Set());
+  await _collectMediaItemsAsyncImpl(data, text, out, visited || new Set(), null);
   return out;
 }
 
-function _emitMediaTag(inner, out) {
+// item 上额外挂两个字段：
+//   rawInner    {{...}} 里花括号内的原始字符串，editor 写回时按它精确定位该 tag
+//   srcRefStr   若本 item 是沿 =ref / {{=ref}} 递归进来的，这里是 **最外层** 那个 ref 字符串
+//               （供 ↗ 跳转用）；直接在宿主文本里出现的 tag 则为 null。
+function _emitMediaTag(inner, out, curRef) {
   const media = typeof parseMediaTag === 'function' ? parseMediaTag(inner) : null;
-  if (media && media.image) { out.push({ type: 'image', src: media.image, meta: media }); return true; }
-  if (media && media.video) { out.push({ type: 'video', src: media.video, meta: media }); return true; }
-  if (media && media.audio) { out.push({ type: 'audio', src: media.audio, meta: media }); return true; }
+  if (media && media.image) { out.push({ type: 'image', src: media.image, meta: media, rawInner: inner, srcRefStr: curRef || null }); return true; }
+  if (media && media.video) { out.push({ type: 'video', src: media.video, meta: media, rawInner: inner, srcRefStr: curRef || null }); return true; }
+  if (media && media.audio) { out.push({ type: 'audio', src: media.audio, meta: media, rawInner: inner, srcRefStr: curRef || null }); return true; }
   if (typeof parseTableRef === 'function') {
     const tr = parseTableRef(inner);
-    if (tr) { out.push({ type: 'table', tableRef: tr }); return true; }
+    if (tr) { out.push({ type: 'table', tableRef: tr, rawInner: inner, srcRefStr: curRef || null }); return true; }
   }
   return false;
 }
 
-function _collectMediaItemsSync(data, text, out, visited) {
+function _collectMediaItemsSync(data, text, out, visited, curRef) {
   if (!text || typeof text !== 'string') return;
   // 整段是 =ref（无 {{}}）→ 深入源节点 content + body
   if (isRef(text) && !text.includes('{{')) {
     if (visited.has(text)) return;
     visited.add(text);
+    const nextRef = curRef || text;
     if (isFullNodeRef(text)) {
       const src = getFullRefNode(data, text);
       if (src && typeof src === 'object') {
-        _collectMediaItemsSync(data, src.content || '', out, visited);
-        _collectMediaItemsSync(data, src.body || '', out, visited);
+        _collectMediaItemsSync(data, src.content || '', out, visited, nextRef);
+        _collectMediaItemsSync(data, src.body || '', out, visited, nextRef);
       }
       return;
     }
     const resolved = resolveRef(data, text);
     if (typeof resolved === 'string' && !resolved.startsWith('#')) {
-      _collectMediaItemsSync(data, resolved, out, visited);
+      _collectMediaItemsSync(data, resolved, out, visited, nextRef);
     }
     return;
   }
@@ -338,33 +343,35 @@ function _collectMediaItemsSync(data, text, out, visited) {
   while ((m = re.exec(text)) !== null) {
     const inner = m[1];
     if (inner.startsWith('=')) {
-      const key = '=' + inner.slice(1);
-      if (visited.has(key)) continue;
-      visited.add(key);
+      const refStr = '=' + inner.slice(1);
+      if (visited.has(refStr)) continue;
+      visited.add(refStr);
+      const nextRef = curRef || refStr;
       // {{=fullNodeRef}}：按全节点展开，媒体来自源节点的 content+body
-      if (isFullNodeRef('=' + inner.slice(1))) {
-        const src = getFullRefNode(data, '=' + inner.slice(1));
+      if (isFullNodeRef(refStr)) {
+        const src = getFullRefNode(data, refStr);
         if (src && typeof src === 'object') {
-          _collectMediaItemsSync(data, src.content || '', out, visited);
-          _collectMediaItemsSync(data, src.body || '', out, visited);
+          _collectMediaItemsSync(data, src.content || '', out, visited, nextRef);
+          _collectMediaItemsSync(data, src.body || '', out, visited, nextRef);
         }
         continue;
       }
       const resolved = resolveRef(data, inner);
       if (typeof resolved === 'string' && !resolved.startsWith('#')) {
-        _collectMediaItemsSync(data, resolved, out, visited);
+        _collectMediaItemsSync(data, resolved, out, visited, nextRef);
       }
       continue;
     }
-    _emitMediaTag(inner, out);
+    _emitMediaTag(inner, out, curRef);
   }
 }
 
-async function _collectMediaItemsAsyncImpl(data, text, out, visited) {
+async function _collectMediaItemsAsyncImpl(data, text, out, visited, curRef) {
   if (!text || typeof text !== 'string') return;
   if (isRef(text) && !text.includes('{{')) {
     if (visited.has(text)) return;
     visited.add(text);
+    const nextRef = curRef || text;
     if (isFullNodeRef(text)) {
       let src = getFullRefNode(data, text);
       if (!src) {
@@ -373,14 +380,14 @@ async function _collectMediaItemsAsyncImpl(data, text, out, visited) {
         src = getFullRefNode(data, text);
       }
       if (src && typeof src === 'object') {
-        await _collectMediaItemsAsyncImpl(data, src.content || '', out, visited);
-        await _collectMediaItemsAsyncImpl(data, src.body || '', out, visited);
+        await _collectMediaItemsAsyncImpl(data, src.content || '', out, visited, nextRef);
+        await _collectMediaItemsAsyncImpl(data, src.body || '', out, visited, nextRef);
       }
       return;
     }
     const resolved = await resolveRefAsync(data, text);
     if (typeof resolved === 'string' && !resolved.startsWith('#')) {
-      await _collectMediaItemsAsyncImpl(data, resolved, out, visited);
+      await _collectMediaItemsAsyncImpl(data, resolved, out, visited, nextRef);
     }
     return;
   }
@@ -389,28 +396,29 @@ async function _collectMediaItemsAsyncImpl(data, text, out, visited) {
   while ((m = re.exec(text)) !== null) {
     const inner = m[1];
     if (inner.startsWith('=')) {
-      const key = '=' + inner.slice(1);
-      if (visited.has(key)) continue;
-      visited.add(key);
-      if (isFullNodeRef('=' + inner.slice(1))) {
-        let src = getFullRefNode(data, '=' + inner.slice(1));
+      const refStr = '=' + inner.slice(1);
+      if (visited.has(refStr)) continue;
+      visited.add(refStr);
+      const nextRef = curRef || refStr;
+      if (isFullNodeRef(refStr)) {
+        let src = getFullRefNode(data, refStr);
         if (!src) {
-          await resolveRefAsync(data, '=' + inner.slice(1));
-          src = getFullRefNode(data, '=' + inner.slice(1));
+          await resolveRefAsync(data, refStr);
+          src = getFullRefNode(data, refStr);
         }
         if (src && typeof src === 'object') {
-          await _collectMediaItemsAsyncImpl(data, src.content || '', out, visited);
-          await _collectMediaItemsAsyncImpl(data, src.body || '', out, visited);
+          await _collectMediaItemsAsyncImpl(data, src.content || '', out, visited, nextRef);
+          await _collectMediaItemsAsyncImpl(data, src.body || '', out, visited, nextRef);
         }
         continue;
       }
       const resolved = await resolveRefAsync(data, inner);
       if (typeof resolved === 'string' && !resolved.startsWith('#')) {
-        await _collectMediaItemsAsyncImpl(data, resolved, out, visited);
+        await _collectMediaItemsAsyncImpl(data, resolved, out, visited, nextRef);
       }
       continue;
     }
-    _emitMediaTag(inner, out);
+    _emitMediaTag(inner, out, curRef);
   }
 }
 

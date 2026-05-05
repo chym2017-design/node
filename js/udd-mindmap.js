@@ -508,7 +508,7 @@ class MindmapView {
         if (bodyText) { const t = document.createElement('div'); t.textContent = bodyText; popup.appendChild(t); }
         if (hasMediaTag(rawMmBody)) {
           const md = document.createElement('div');
-          renderTextWithMedia(rawMmBody, md, {path: item.path, field:'body'});
+          renderTextWithMedia(rawMmBody, md, {path: item.path, field:'body', view:this});
           popup.appendChild(md);
         }
         container.appendChild(popup);
@@ -752,7 +752,7 @@ class MindmapView {
     closeBtn.onclick = ev => { ev.stopPropagation(); popup.remove(); };
     popup.appendChild(closeBtn);
     const md = document.createElement('div');
-    renderTextWithMedia(mediaTag, md, {path: item.path, field: field});
+    renderTextWithMedia(mediaTag, md, {path: item.path, field: field, view:this});
     popup.appendChild(md);
     container.appendChild(popup);
   }

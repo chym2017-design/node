@@ -272,7 +272,7 @@ class DocumentView {
       if (desc.renderOn && (hasMediaTag(contentMediaSrc) || isRef(contentMediaSrc) || hasInlineRefs(contentMediaSrc))) {
         const mediaDiv = document.createElement('div');
         mediaDiv.className = 'media-inline';
-        renderTextWithMedia(contentMediaSrc, mediaDiv, {path, field:'content'});
+        renderTextWithMedia(contentMediaSrc, mediaDiv, {path, field:'content', view:this});
         if (mediaDiv.childNodes.length > 0) nodeDiv.appendChild(mediaDiv);
       }
 
@@ -322,7 +322,7 @@ class DocumentView {
         if (hasMediaTag(bodyMediaSrc) || isRef(bodyMediaSrc) || hasInlineRefs(bodyMediaSrc)) {
           const bodyMediaDiv = document.createElement('div');
           bodyMediaDiv.className = 'media-inline';
-          renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'});
+          renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body', view:this});
           if (bodyMediaDiv.childNodes.length > 0) nodeDiv.appendChild(bodyMediaDiv);
         }
         } // end render ON body block
@@ -443,7 +443,7 @@ class DocumentView {
     if (desc.renderOn && (hasMediaTag(rcMediaSrc) || isRef(rcMediaSrc) || hasInlineRefs(rcMediaSrc))) {
       const mediaDiv = document.createElement('div');
       mediaDiv.className = 'media-inline';
-      renderTextWithMedia(rcMediaSrc, mediaDiv, {path, field:'content'});
+      renderTextWithMedia(rcMediaSrc, mediaDiv, {path, field:'content', view:this});
       if (mediaDiv.childNodes.length > 0) nodeDiv.appendChild(mediaDiv);
     }
 
@@ -451,37 +451,55 @@ class DocumentView {
     if (!node.hide_body && hasBody) {
       const bodyDiv = document.createElement('div');
       bodyDiv.className = 'doc-body doc-editable';
-      bodyDiv.contentEditable = desc.bodyEditable ? 'plaintext-only' : 'false';
-      if (!desc.bodyEditable && !bodyDiv.contentEditable) bodyDiv.contentEditable = 'false';
       const bodyStyle = this.getBodyStyle(path);
-      const bodyText = stripMediaTags(desc.displayBody);
-      renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
-      bodyDiv.dataset.path = path;
-      bodyDiv.dataset.field = 'body';
-      bodyDiv.spellcheck = false;
-      // 标记 ref-display：当本节点 body 自身是引用、或宿主整体走全节点引用（desc.sourceNode），
-      // 都让 bodyDiv 成为可双击源码编辑的引用单元（与大纲一致）。
-      const rawDocBody = node.body || '';
-      if (isRef(rawDocBody)) {
-        bodyDiv.classList.add('ref-display');
-        bodyDiv.dataset.ref = rawDocBody;
-        if (!isSheetRef(rawDocBody) && parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
-        bodyDiv.contentEditable = 'false';
-        bodyDiv.appendChild(createRefIcon(this.data, rawDocBody, this));
-      } else if (desc.sourceNode) {
-        bodyDiv.classList.add('ref-display');
-        bodyDiv.dataset.hasRef = '1';
-        bodyDiv.contentEditable = 'false';
-      }
-      this.applyInlineStyle(bodyDiv, bodyStyle);
-      nodeDiv.appendChild(bodyDiv);
 
-      const bodyMediaSrc = desc.sourceNode ? (desc.sourceNode.body || '') : (node.body || '');
-      if (hasMediaTag(bodyMediaSrc) || isRef(bodyMediaSrc) || hasInlineRefs(bodyMediaSrc)) {
-        const bodyMediaDiv = document.createElement('div');
-        bodyMediaDiv.className = 'media-inline';
-        renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body'});
-        if (bodyMediaDiv.childNodes.length > 0) nodeDiv.appendChild(bodyMediaDiv);
+      if (!desc.renderOn) {
+        // 渲染 off：直接展示 raw body，可编辑（非 readOnly 情况），不渲染媒体。
+        // 与 outline 视图及 _renderMainNode 的 renderOn off 分支保持一致。
+        bodyDiv.textContent = node.body || '';
+        if (!readOnly) {
+          bodyDiv.contentEditable = 'plaintext-only';
+          if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
+          bodyDiv.dataset.path = path;
+          bodyDiv.dataset.field = 'body';
+          bodyDiv.spellcheck = false;
+        } else {
+          bodyDiv.contentEditable = 'false';
+        }
+        this.applyInlineStyle(bodyDiv, bodyStyle);
+        nodeDiv.appendChild(bodyDiv);
+      } else {
+        bodyDiv.contentEditable = desc.bodyEditable ? 'plaintext-only' : 'false';
+        if (!desc.bodyEditable && !bodyDiv.contentEditable) bodyDiv.contentEditable = 'false';
+        const bodyText = stripMediaTags(desc.displayBody);
+        renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
+        bodyDiv.dataset.path = path;
+        bodyDiv.dataset.field = 'body';
+        bodyDiv.spellcheck = false;
+        // 标记 ref-display：当本节点 body 自身是引用、或宿主整体走全节点引用（desc.sourceNode），
+        // 都让 bodyDiv 成为可双击源码编辑的引用单元（与大纲一致）。
+        const rawDocBody = node.body || '';
+        if (isRef(rawDocBody)) {
+          bodyDiv.classList.add('ref-display');
+          bodyDiv.dataset.ref = rawDocBody;
+          if (!isSheetRef(rawDocBody) && parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
+          bodyDiv.contentEditable = 'false';
+          bodyDiv.appendChild(createRefIcon(this.data, rawDocBody, this));
+        } else if (desc.sourceNode) {
+          bodyDiv.classList.add('ref-display');
+          bodyDiv.dataset.hasRef = '1';
+          bodyDiv.contentEditable = 'false';
+        }
+        this.applyInlineStyle(bodyDiv, bodyStyle);
+        nodeDiv.appendChild(bodyDiv);
+
+        const bodyMediaSrc = desc.sourceNode ? (desc.sourceNode.body || '') : (node.body || '');
+        if (hasMediaTag(bodyMediaSrc) || isRef(bodyMediaSrc) || hasInlineRefs(bodyMediaSrc)) {
+          const bodyMediaDiv = document.createElement('div');
+          bodyMediaDiv.className = 'media-inline';
+          renderTextWithMedia(bodyMediaSrc, bodyMediaDiv, {path, field:'body', view:this});
+          if (bodyMediaDiv.childNodes.length > 0) nodeDiv.appendChild(bodyMediaDiv);
+        }
       }
     }
 

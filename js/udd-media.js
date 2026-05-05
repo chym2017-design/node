@@ -114,6 +114,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
   if (!text) return;
   const noAlign = opts && opts.suppressAlign;
   const data = (typeof app !== 'undefined' && app.data) ? app.data : null;
+  const viewInstance = mediaInfo && mediaInfo.view;
   const items = (typeof collectMediaItemsFromText === 'function')
     ? collectMediaItemsFromText(data, text)
     : _legacyCollect(text);
@@ -124,6 +125,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       continue;
     }
     const media = it.meta || {};
+    const isRefSourced = !!it.srcRefStr;
     if (it.type === 'image') {
       const alignBox = document.createElement('div');
       if (!noAlign && media['image.align']) alignBox.style.textAlign = media['image.align'];
@@ -141,12 +143,16 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       if (media['image.border']) img.style.border = '1px solid var(--gray-300)';
       img.draggable = false;
       img.ondblclick = (e) => { e.stopPropagation(); showLightbox(img.src); };
-      img.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+      // 仅"直接 tag"的图片支持单击进编辑器；ref-sourced 图片只给 ↗（编辑要去源节点）。
+      if (!isRefSourced) {
+        img.onclick = (e) => { e.stopPropagation(); showMediaEditor(wrapper, mediaInfo, it); };
+      }
       wrapper.appendChild(img);
-      _addMediaEditBtn(wrapper, mediaInfo);
+      if (isRefSourced) _addMediaRefBtn(wrapper, it.srcRefStr, viewInstance);
+      else _addMediaEditBtn(wrapper, mediaInfo, it);
       const handle = document.createElement('div');
       handle.className = 'media-resize-handle';
-      handle.onmousedown = (e) => startMediaResize(e, img, wrapper, mediaInfo);
+      handle.onmousedown = (e) => startMediaResize(e, img, wrapper, mediaInfo, it);
       wrapper.appendChild(handle);
       if (media['image.caption']) {
         const cap = document.createElement('div');
@@ -174,12 +180,13 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       if (media['video.loop']) vid.loop = true;
       if (media['video.poster']) vid.poster = resolveMediaSrc(media['video.poster']);
       // 不在 <video> 上挂 click/dblclick：原生控件（播放/进度/音量）会消化点击；
-      // 编辑入口走 wrapper 上的浮动 ✎ 按钮，保证进度条 seek 等原生交互不被打断。
+      // 编辑入口走 wrapper 上的浮动 ✎ / ↗ 按钮，保证进度条 seek 等原生交互不被打断。
       wrapper.appendChild(vid);
-      _addMediaEditBtn(wrapper, mediaInfo);
+      if (isRefSourced) _addMediaRefBtn(wrapper, it.srcRefStr, viewInstance);
+      else _addMediaEditBtn(wrapper, mediaInfo, it);
       const handle = document.createElement('div');
       handle.className = 'media-resize-handle';
-      handle.onmousedown = (e) => startMediaResize(e, vid, wrapper, mediaInfo);
+      handle.onmousedown = (e) => startMediaResize(e, vid, wrapper, mediaInfo, it);
       wrapper.appendChild(handle);
       if (media['video.caption']) {
         const cap = document.createElement('div');
@@ -204,9 +211,10 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       aud.style.width = '100%';
       if (media['audio.autoplay']) aud.autoplay = true;
       if (media['audio.loop']) aud.loop = true;
-      // 同 <video>：不挂 click/dblclick，进度条 seek 走原生；编辑入口走 ✎ 按钮。
+      // 同 <video>：不挂 click/dblclick，进度条 seek 走原生；编辑入口走 ✎ / ↗ 按钮。
       wrapper.appendChild(aud);
-      _addMediaEditBtn(wrapper, mediaInfo);
+      if (isRefSourced) _addMediaRefBtn(wrapper, it.srcRefStr, viewInstance);
+      else _addMediaEditBtn(wrapper, mediaInfo, it);
       if (media['audio.caption']) {
         const cap = document.createElement('div');
         cap.className = 'media-caption';
@@ -225,7 +233,8 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
 //   click 在该层被消化，事件不一定冒泡到我们绑的 onclick；
 //   即便冒泡到了，我们的 handler 一旦弹出编辑器，又会反过来打断"点进度条跳播放"的原生行为。
 //   做成一个独立浮动按钮，原生控件完全不受影响，编辑入口也始终可用。
-function _addMediaEditBtn(wrapper, mediaInfo) {
+// item 携带 collector 给的 type / meta / rawInner，editor 直接用，不再回头扫宿主文本。
+function _addMediaEditBtn(wrapper, mediaInfo, item) {
   if (!mediaInfo) return; // 没有 path/field 信息（如思维导图气泡里）就不挂按钮
   if (!wrapper.style.position) wrapper.style.position = 'relative';
   const btn = document.createElement('button');
@@ -234,22 +243,37 @@ function _addMediaEditBtn(wrapper, mediaInfo) {
   btn.title = '编辑媒体属性';
   btn.textContent = '✎';
   btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
-  btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showMediaEditor(wrapper, mediaInfo); };
+  btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showMediaEditor(wrapper, mediaInfo, item); };
   wrapper.appendChild(btn);
 }
 
-// 回退：仅在 collector 不可用时用；保持和旧行为兼容（不深入 ref）
+// ref-sourced 媒体的跳转按钮：复用 createRefIcon（统一三种跳转：本档 / 跨档 / 表格）。
+// 加 .media-ref-btn 类做绝对定位，外观与 ✎ 按钮同位（hover 可见）。
+function _addMediaRefBtn(wrapper, refStr, viewInstance) {
+  if (!refStr || !viewInstance) return;
+  if (typeof createRefIcon !== 'function' || typeof app === 'undefined') return;
+  if (!wrapper.style.position) wrapper.style.position = 'relative';
+  const icon = createRefIcon(app.data, refStr, viewInstance);
+  icon.classList.add('media-ref-btn');
+  // 阻止外层捕获（image.onclick / dblclick 之类）
+  icon.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+  wrapper.appendChild(icon);
+}
+
+// 回退：仅在 collector 不可用时用；保持和旧行为兼容（不深入 ref）。
+// 同样产出 rawInner / srcRefStr，让 ✎ / ↗ 按钮在 fallback 路径下也有正确数据。
 function _legacyCollect(text) {
   const out = [];
   const parts = text.split(MEDIA_RE);
   for (let i = 1; i < parts.length; i += 2) {
-    const media = parseMediaTag(parts[i]);
-    if (media && media.image) out.push({ type: 'image', src: media.image, meta: media });
-    else if (media && media.video) out.push({ type: 'video', src: media.video, meta: media });
-    else if (media && media.audio) out.push({ type: 'audio', src: media.audio, meta: media });
+    const inner = parts[i];
+    const media = parseMediaTag(inner);
+    if (media && media.image) out.push({ type: 'image', src: media.image, meta: media, rawInner: inner, srcRefStr: null });
+    else if (media && media.video) out.push({ type: 'video', src: media.video, meta: media, rawInner: inner, srcRefStr: null });
+    else if (media && media.audio) out.push({ type: 'audio', src: media.audio, meta: media, rawInner: inner, srcRefStr: null });
     else {
-      const tr = parseTableRef(parts[i]);
-      if (tr) out.push({ type: 'table', tableRef: tr });
+      const tr = parseTableRef(inner);
+      if (tr) out.push({ type: 'table', tableRef: tr, rawInner: inner, srcRefStr: null });
     }
   }
   return out;
@@ -275,7 +299,9 @@ function _bindMediaSrcWithFallback(el, src) {
   tryNext();
 }
 // Drag-to-resize
-function startMediaResize(e, el, wrapper, mediaInfo) {
+// item（可选）：collector 给出的媒体项。存在时用 rawInner 精确定位该 tag，
+// 避免全字段所有 {{...}} 被一起改写的旧 bug。
+function startMediaResize(e, el, wrapper, mediaInfo, item) {
   e.preventDefault();
   e.stopPropagation();
   const startX = e.clientX;
@@ -300,6 +326,25 @@ function startMediaResize(e, el, wrapper, mediaInfo) {
         const pct = Math.round(finalW / parentW * 100);
         const widthStr = pct + '%';
         const mediaType = el.tagName === 'VIDEO' ? 'video' : 'image';
+        // 优先用 item.rawInner 做精确 tag 定位；否则回退到老的"替换所有 {{...}}"。
+        if (item && item.rawInner) {
+          const origTag = '{{' + item.rawInner + '}}';
+          if (text.indexOf(origTag) >= 0) {
+            try {
+              const obj = JSON.parse('{' + item.rawInner + '}');
+              if (obj[mediaType]) {
+                obj[mediaType + '.width'] = widthStr;
+                delete obj[mediaType + '.height'];
+                const newInner = JSON.stringify(obj).slice(1, -1);
+                node[mediaInfo.field] = text.replace(origTag, '{{' + newInner + '}}');
+                item.rawInner = newInner;
+                item.meta = obj;
+                app.markDirty();
+                return;
+              }
+            } catch (ex) { /* fall through to regex */ }
+          }
+        }
         const updated = text.replace(MEDIA_RE, (match, content) => {
           try {
             const obj = JSON.parse('{' + content + '}');
@@ -340,17 +385,15 @@ function showLightbox(src) {
 }
 
 // Media property editor popup
-function showMediaEditor(mediaEl, mediaInfo) {
+// item（必传，由 collector 给出）：携带 type / meta / rawInner，
+// 编辑器直接按它出类型与初始值，写回时用 rawInner 精确替换该 tag——
+// 避免旧实现"扫文本拿第一个 {{...}}"造成的"全弹图片属性"和"误改其它 tag"两个 bug。
+function showMediaEditor(mediaEl, mediaInfo, item) {
   closeMediaEditor();
-  const text = (() => {
-    const node = getNodeByPath(app.data, mediaInfo.path);
-    return node ? (node[mediaInfo.field] || '') : '';
-  })();
-  const match = text.match(/\{\{(.*?)\}\}/);
-  if (!match) return;
-  const media = parseMediaTag(match[1]);
-  if (!media) return;
-  const mediaType = media.image ? 'image' : media.video ? 'video' : 'audio';
+  if (!item || !item.meta || !item.rawInner) return;
+  const media = item.meta;
+  const mediaType = item.type;
+  if (mediaType !== 'image' && mediaType !== 'video' && mediaType !== 'audio') return;
 
   mediaEl.classList.add('media-selected');
 
@@ -414,21 +457,27 @@ function showMediaEditor(mediaEl, mediaInfo) {
     const node = getNodeByPath(app.data, mediaInfo.path);
     if (!node) return;
     const curText = node[mediaInfo.field] || '';
-    const updated = curText.replace(/\{\{(.*?)\}\}/, (m, content) => {
-      try {
-        const obj = JSON.parse('{' + content + '}');
-        popup.querySelectorAll('[data-key]').forEach(el => {
-          const k = el.dataset.key;
-          if (el.type === 'checkbox') {
-            if (el.checked) obj[k] = 1; else delete obj[k];
-          } else {
-            if (el.value) obj[k] = el.value; else delete obj[k];
-          }
-        });
-        return '{{' + JSON.stringify(obj).slice(1,-1) + '}}';
-      } catch(ex) { return m; }
+    const origTag = '{{' + item.rawInner + '}}';
+    // 用 item.meta 的副本起手（保留原顺序），按 popup 里的输入更新
+    const obj = Object.assign({}, item.meta);
+    popup.querySelectorAll('[data-key]').forEach(el => {
+      const k = el.dataset.key;
+      if (el.type === 'checkbox') {
+        if (el.checked) obj[k] = 1; else delete obj[k];
+      } else {
+        if (el.value) obj[k] = el.value; else delete obj[k];
+      }
     });
-    node[mediaInfo.field] = updated;
+    const newInner = JSON.stringify(obj).slice(1, -1);
+    const newTag = '{{' + newInner + '}}';
+    if (curText.indexOf(origTag) >= 0) {
+      node[mediaInfo.field] = curText.replace(origTag, newTag);
+    } else {
+      // 兜底：找不到原 tag（可能数据被外部改过）→ 追加新 tag
+      node[mediaInfo.field] = curText + newTag;
+    }
+    item.rawInner = newInner;
+    item.meta = obj;
     closeMediaEditor();
     app.renderCurrentView();
     app.markDirty();
@@ -438,7 +487,14 @@ function showMediaEditor(mediaEl, mediaInfo) {
     app.pushUndo();
     const node = getNodeByPath(app.data, mediaInfo.path);
     if (!node) return;
-    node[mediaInfo.field] = (node[mediaInfo.field] || '').replace(/\{\{.*?\}\}/, '');
+    const curText = node[mediaInfo.field] || '';
+    const origTag = '{{' + item.rawInner + '}}';
+    if (curText.indexOf(origTag) >= 0) {
+      node[mediaInfo.field] = curText.replace(origTag, '');
+    } else {
+      // 兜底：按旧规则删第一个媒体 tag（不删 {{=ref}}）
+      node[mediaInfo.field] = curText.replace(/\{\{(?!=)(.*?)\}\}/, '');
+    }
     closeMediaEditor();
     app.renderCurrentView();
     app.markDirty();
