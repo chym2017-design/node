@@ -1270,7 +1270,9 @@ class App {
     this.pushUndo();
     const node = getNodeByPath(this.data, nodePath);
     if (!node) return;
-    const tag = '{{' + input + '}}';
+    // 新格式：JSON 标签，使用统一无前缀属性键 (width/align/border/...)。
+    // 与图片/视频/音频共用一套属性体系；裸括号 {{Sheet1.A1:C4}} 已停止支持。
+    const tag = `{{"table":"${input}","width":"100%","border":1}}`;
     const curVal = node[field] || '';
     node[field] = curVal.endsWith(tag) ? curVal : curVal + tag;
     this.markDirty();

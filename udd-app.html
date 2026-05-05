@@ -28,8 +28,8 @@
       <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.importJSON()">导入JSON</button>
     </div>
     <div id="toolbar">
-      <button class="tool-btn" onclick="app.undo()" title="撤销 Ctrl+Z">↩</button>
-      <button class="tool-btn" onclick="app.redo()" title="重做 Ctrl+Shift+Z">↪</button>
+      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.undo()" title="撤销 Ctrl+Z">↩</button>
+      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.redo()" title="重做 Ctrl+Shift+Z">↪</button>
       <div class="tool-sep"></div>
       <select id="tool-font" class="tool-select" onchange="app.setNodeStyle('font',this.value)" title="字体">
         <option value="微软雅黑">微软雅黑</option>
@@ -46,30 +46,30 @@
         <option value="28">28</option><option value="32">32</option><option value="36">36</option>
       </select>
       <div class="tool-sep"></div>
-      <button id="tool-bold" class="tool-btn" onclick="app.toggleStyle('bold')" title="加粗 Ctrl+B"><b>B</b></button>
-      <button id="tool-italic" class="tool-btn" onclick="app.toggleStyle('italic')" title="斜体 Ctrl+I"><i>I</i></button>
-      <button id="tool-underline" class="tool-btn" onclick="app.toggleStyle('underline')" title="下划线 Ctrl+U"><u>U</u></button>
-      <button id="tool-strike" class="tool-btn" onclick="app.toggleStyle('strikethrough')" title="删除线"><s>S</s></button>
+      <button id="tool-bold" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('bold')" title="加粗 Ctrl+B"><b>B</b></button>
+      <button id="tool-italic" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('italic')" title="斜体 Ctrl+I"><i>I</i></button>
+      <button id="tool-underline" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('underline')" title="下划线 Ctrl+U"><u>U</u></button>
+      <button id="tool-strike" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('strikethrough')" title="删除线"><s>S</s></button>
       <div class="tool-sep"></div>
       <div class="tool-color-wrap" id="color-wrap-fg">
-        <button type="button" class="tool-color-btn" id="tool-color-btn" onclick="app.applyLastColor('fg')" title="字体颜色">
+        <button type="button" class="tool-color-btn" id="tool-color-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('fg')" title="字体颜色">
           <span class="tool-color-preview" id="tool-color-preview" style="background:#1e293b"></span>
         </button>
-        <button type="button" class="tool-color-arrow" onclick="app.toggleColorPalette('fg')">▾</button>
+        <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('fg')">▾</button>
         <div class="color-palette" id="palette-fg"></div>
       </div>
       <div class="tool-color-wrap" id="color-wrap-bg">
-        <button type="button" class="tool-color-btn" id="tool-bg-btn" onclick="app.applyLastColor('bg')" title="背景色">
+        <button type="button" class="tool-color-btn" id="tool-bg-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('bg')" title="背景色">
           <span class="tool-color-preview" id="tool-bg-preview" style="background:#ffffff;border:1px solid var(--gray-200)"></span>
         </button>
-        <button type="button" class="tool-color-arrow" onclick="app.toggleColorPalette('bg')">▾</button>
+        <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('bg')">▾</button>
         <div class="color-palette" id="palette-bg"></div>
       </div>
       <div class="tool-color-wrap" id="color-wrap-ref">
-        <button type="button" class="tool-color-btn" id="tool-ref-btn" onclick="app.applyLastColor('ref')" title="引用背景色（▾ 含"无设置"恢复默认浅蓝）">
+        <button type="button" class="tool-color-btn" id="tool-ref-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('ref')" title="引用背景色（▾ 含"无设置"恢复默认浅蓝）">
           <span class="tool-color-preview" id="tool-ref-preview" style="background:#eff6ff;border:1px solid var(--blue-200)"></span>
         </button>
-        <button type="button" class="tool-color-arrow" onclick="app.toggleColorPalette('ref')">▾</button>
+        <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('ref')">▾</button>
         <div class="color-palette" id="palette-ref"></div>
       </div>
       <div class="tool-sep"></div>
@@ -83,9 +83,9 @@
         <option value="B5">B5</option>
       </select>
       <div class="tool-sep"></div>
-      <button id="tool-align-left" class="tool-btn" onclick="app.setNodeStyle('text_align','left')" title="左对齐">≡</button>
-      <button id="tool-align-center" class="tool-btn" onclick="app.setNodeStyle('text_align','center')" title="居中">≡</button>
-      <button id="tool-align-right" class="tool-btn" onclick="app.setNodeStyle('text_align','right')" title="右对齐">≡</button>
+      <button id="tool-align-left" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','left')" title="左对齐">≡</button>
+      <button id="tool-align-center" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','center')" title="居中">≡</button>
+      <button id="tool-align-right" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','right')" title="右对齐">≡</button>
       <div class="tool-sep"></div>
       <select id="tool-numbering" class="tool-select" onchange="app.setNumbering(this.value)" title="编号样式" style="width:90px">
         <option value="1.1.1">1.1.1</option>
@@ -95,11 +95,11 @@
         <option value="bullet-uniform">统一无序</option>
         <option value="none">无编号</option>
       </select>
-      <button id="tool-no-number" class="tool-btn" onclick="app.toggleNoNumber()" title="此节点不显示编号（且不占编号位）">⊘</button>
-      <button id="tool-restart-number" class="tool-btn" onclick="app.toggleRestartNumber()" title="从此节点起在同级重新编号">↺1</button>
+      <button id="tool-no-number" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleNoNumber()" title="此节点不显示编号（且不占编号位）">⊘</button>
+      <button id="tool-restart-number" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleRestartNumber()" title="从此节点起在同级重新编号">↺1</button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" onclick="app.insertMedia()" title="插入媒体">🖼</button>
-      <button class="tool-btn" onclick="app.insertTableRef()" title="插入表格引用">☐</button>
+      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.insertMedia()" title="插入媒体">🖼</button>
+      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.insertTableRef()" title="插入表格引用">☐</button>
     </div>
     <div class="fmt-sw" id="fmt-switches">
       <label><input type="checkbox" data-fmt="font" checked>字体</label>

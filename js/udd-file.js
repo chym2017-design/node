@@ -76,7 +76,7 @@ function createDefaultData() {
         content: "跨文档引用", hide: 0, hide_body: 0,
         body: "引用其他 .udd 文件数据。新语法：{{=路径/文件名.udd.t1-1.content}}（行内）或 =路径/文件名.udd.t1-1（整节点）。文档名必须以 .udd 结尾以与表格名区分。可用相对路径或绝对路径；裸文件名在仓库目录中查找。点击 ↗ 自动打开目标文档并定位。",
         "t2-1": { content: "跨文档数据：{{=测试文档1.udd.t1-1.content}}", hide: 0, hide_body: 0 },
-        "t2-2": { content: "跨文档表格：{{测试文档1.udd.Sheet1.A1:C3}}", hide: 0, hide_body: 0 }
+        "t2-2": { content: "跨文档表格：{{\"table\":\"测试文档1.udd.Sheet1.A1:C3\",\"width\":\"100%\",\"border\":1}}", hide: 0, hide_body: 0 }
       },
 
       // ── 5. 表格↔大纲互引 ──
@@ -103,14 +103,14 @@ function createDefaultData() {
       // ── 6. 多媒体嵌入 ──
       "t1-6": {
         content: "多媒体嵌入", hide: 0, hide_body: 0,
-        body: "正文中可通过 {{\"image\":\"路径\"}} / {{\"video\":\"路径\"}} / {{\"audio\":\"路径\"}} 插入媒体。支持宽高、对齐、旋转、说明等属性；点击图片可编辑，双击可全屏预览。",
+        body: "正文中可嵌入 image / video / audio 标签，通用属性：宽度、比例、对齐、旋转、说明、边框、透明度。鼠标移到媒体右下角拖动 ▦ 调宽度，右上角点 ✎ 编辑全部属性。",
         "t2-1": {
           content: "图片：庄周梦蝶", hide: 0, hide_body: 0,
-          body: "下方图片来自 example 文件夹。{{\"image\":\"" + IMG_PATH + "\",\"image.width\":\"60%\",\"image.align\":\"center\",\"image.caption\":\"庄周梦蝶 · 逍遥之境\",\"image.border\":1}}"
+          body: "下方图片来自 example 文件夹。{{\"image\":\"" + IMG_PATH + "\",\"width\":\"60%\",\"align\":\"center\",\"caption\":\"庄周梦蝶 · 逍遥之境\",\"border\":1}}"
         },
         "t2-2": {
           content: "视频：逍遥游样例", hide: 0, hide_body: 0,
-          body: "下方视频可直接在文档中播放。{{\"video\":\"" + VID_PATH + "\",\"video.width\":\"70%\",\"video.align\":\"center\",\"video.caption\":\"逍遥游 · 视频样例\"}}"
+          body: "下方视频可直接在文档中播放。{{\"video\":\"" + VID_PATH + "\",\"width\":\"70%\",\"align\":\"center\",\"caption\":\"逍遥游 · 视频样例\"}}"
         },
         "t2-3": {
           content: "媒体引用联动", hide: 0, hide_body: 0,
@@ -121,10 +121,10 @@ function createDefaultData() {
       // ── 7. 内嵌表格 ──
       "t1-7": {
         content: "内嵌表格", hide: 0, hide_body: 0,
-        body: "使用 {{Sheet1.A1:D6}} 语法可将表格区域直接嵌入正文。下方即为工作表 Sheet1 的完整产品清单：{{Sheet1.A1:D6}}",
+        body: "通过工具栏 ☐ 按钮可将表格区域嵌入正文，与其它多媒体共用一套属性（宽度/对齐/说明/边框等）。下方即为工作表 Sheet1 的完整产品清单：{{\"table\":\"Sheet1.A1:D6\",\"width\":\"100%\",\"border\":1}}",
         "t2-1": {
           content: "局部区域引用", hide: 0, hide_body: 0,
-          body: "也可以只嵌入部分区域，例如仅表头与前两行：{{Sheet1.A1:D3}}"
+          body: "也可以只嵌入部分区域，例如仅表头与前两行：{{\"table\":\"Sheet1.A1:D3\",\"width\":\"100%\",\"border\":1}}"
         }
       },
 

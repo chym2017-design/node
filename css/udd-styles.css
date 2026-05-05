@@ -121,6 +121,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .inline-table{border-collapse:collapse;margin:8px 0;font-size:12px;width:auto}
 .inline-table th,.inline-table td{border:1px solid var(--gray-200);padding:3px 8px;text-align:left}
 .inline-table th{background:var(--gray-50);font-weight:600;font-size:11px;color:var(--gray-500)}
+.inline-table.no-border,.inline-table.no-border th,.inline-table.no-border td{border:none}
+.inline-table.no-border th{background:transparent}
 
 /* Full node reference: cloned node display */
 .ref-full-node{position:relative}
@@ -173,6 +175,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* ===== MEDIA ===== */
 .media-wrap{display:inline-block;position:relative;margin:8px 0;line-height:0;max-width:100%}
 .media-wrap:hover .media-resize-handle{opacity:1}
+.media-wrap.has-border{outline:1px solid var(--gray-300);outline-offset:0}
 .media-img{max-width:100%;border-radius:4px;cursor:pointer;display:block}
 .media-img.media-selected,.media-video.media-selected,.media-wrap.media-selected{outline:2px solid var(--primary);outline-offset:2px}
 .media-video{max-width:100%;border-radius:4px;display:block}
@@ -195,6 +198,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .media-audio-wrap .media-ref-btn.ref-icon{top:50%;transform:translateY(-50%);right:-30px;background:var(--gray-200);color:var(--gray-600)}
 .media-audio-wrap:hover .media-ref-btn.ref-icon{opacity:1}
 .media-audio-wrap .media-ref-btn.ref-icon:hover{background:var(--primary);color:#fff;transform:translateY(-50%)}
+/* 区域级表格 wrapper：撤销 .media-wrap 的 line-height:0（表格单元格要正常行高），
+   保留 position:relative 给 ✎/↗ 按钮用；inline-block 随父（media-wrap 默认）。 */
+.media-table-wrap{line-height:normal}
+.media-table-wrap .inline-table{margin:0}
 .outline-media{margin:4px 0}
 .outline-media .media-wrap{display:inline-block}
 .outline-media img{max-width:100%;border-radius:3px}

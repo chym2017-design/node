@@ -792,8 +792,8 @@ class PptView {
           let curY = y;
           for (const m of items) {
             const meta = m.meta || {};
-            const captionKey = m.type + '.caption';
-            const caption = meta[captionKey] || '';
+            // 统一无前缀键优先；老 type-prefixed 键 (image.caption 等) 兜底，兼容历史数据。
+            const caption = (meta.caption !== undefined ? meta.caption : meta[m.type + '.caption']) || '';
             try {
               if (m.type === 'image') {
                 if (m._dataUrl) {

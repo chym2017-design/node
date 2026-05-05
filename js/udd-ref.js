@@ -309,9 +309,11 @@ function _emitMediaTag(inner, out, curRef) {
   if (media && media.image) { out.push({ type: 'image', src: media.image, meta: media, rawInner: inner, srcRefStr: curRef || null }); return true; }
   if (media && media.video) { out.push({ type: 'video', src: media.video, meta: media, rawInner: inner, srcRefStr: curRef || null }); return true; }
   if (media && media.audio) { out.push({ type: 'audio', src: media.audio, meta: media, rawInner: inner, srcRefStr: curRef || null }); return true; }
-  if (typeof parseTableRef === 'function') {
-    const tr = parseTableRef(inner);
-    if (tr) { out.push({ type: 'table', tableRef: tr, rawInner: inner, srcRefStr: curRef || null }); return true; }
+  // JSON 形 {{"table":"Sheet1.A1:C4","width":"60%",...}} —— 与 image/video/audio 一致。
+  // 旧裸括号 {{Sheet1.A1:C4}} 不再支持；默认数据已改成 JSON 形。
+  if (media && media.table && typeof parseTableRef === 'function') {
+    const tr = parseTableRef(media.table);
+    if (tr) { out.push({ type: 'table', tableRef: tr, meta: media, rawInner: inner, srcRefStr: curRef || null }); return true; }
   }
   return false;
 }
