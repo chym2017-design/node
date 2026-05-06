@@ -298,6 +298,10 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
     // 按钮：ref-sourced 给 ↗，否则 ✎
     if (isRefSourced) _addMediaRefBtn(wrapper, it.srcRefStr, viewInstance);
     else _addMediaEditBtn(wrapper, mediaInfo, it);
+    // 表格无论是否 ref-sourced，都额外提供一个跳转到源表的 ↗ 按钮（与 ✎ 共存）
+    if (it.type === 'table' && !isRefSourced && it.tableRef) {
+      _addTableJumpBtn(wrapper, it.tableRef, viewInstance);
+    }
 
     // 所有类型统一提供拖宽手柄
     _addResizeHandle(wrapper, mediaEl, mediaInfo, it);
@@ -348,6 +352,28 @@ function _addMediaRefBtn(wrapper, refStr, viewInstance) {
   icon.classList.add('media-ref-btn');
   // 阻止外层捕获（image.onclick / dblclick 之类）
   icon.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+  wrapper.appendChild(icon);
+}
+
+// 内联表格（非 ref-sourced）的跳转按钮：直接跳到对应工作表的起始单元格。
+// 直接用 ↗ 图标 + .ref-icon + .media-ref-btn（与 _addMediaRefBtn 视觉一致），
+// 但点击逻辑是 app.gotoSheetCell(sheetName, startAddr, view, docName)。
+// docName 为空 → 本档跳转；非空 → 先打开目标 .udd 再跳转（gotoSheetCell 内部处理）。
+function _addTableJumpBtn(wrapper, tableRef, viewInstance) {
+  if (!tableRef || !tableRef.sheetName) return;
+  if (typeof app === 'undefined' || !app.gotoSheetCell) return;
+  if (!wrapper.style.position) wrapper.style.position = 'relative';
+  const icon = document.createElement('span');
+  icon.className = 'ref-icon media-ref-btn';
+  icon.textContent = '↗';
+  const docPart = tableRef.docName ? (tableRef.docName + '.') : '';
+  icon.title = '跳转到表格: ' + docPart + tableRef.sheetName + '!' + tableRef.startAddr + ':' + tableRef.endAddr;
+  icon.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+  icon.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    app.gotoSheetCell(tableRef.sheetName, tableRef.startAddr, viewInstance, tableRef.docName || null);
+  });
   wrapper.appendChild(icon);
 }
 

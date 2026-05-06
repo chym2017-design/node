@@ -199,6 +199,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .media-audio-wrap:hover .media-edit-btn{opacity:1}
 .media-audio-wrap .media-edit-btn:hover{background:var(--primary);color:#fff}
 .media-ref-btn.ref-icon{position:absolute;top:4px;right:4px;left:auto;display:inline-block;width:24px;height:24px;border-radius:50%;background:rgba(37,99,235,.85);color:#fff;font-size:13px;line-height:24px;text-align:center;padding:0;margin:0;cursor:pointer;opacity:0;transition:opacity .15s,background .15s;z-index:11;box-shadow:0 1px 4px rgba(0,0,0,.25);vertical-align:middle}
+/* 表格场景下 ✎ 与 ↗ 共存：把 ↗ 左移一格避免重叠 */
+.media-table-wrap .media-edit-btn~.media-ref-btn.ref-icon{right:32px}
 .media-wrap:hover .media-ref-btn.ref-icon{opacity:1}
 .media-ref-btn.ref-icon:hover{opacity:1;background:var(--primary);color:#fff;transform:none}
 .media-ref-btn.ref-icon.ref-icon-error{background:#ef4444;color:#fff;opacity:.85}

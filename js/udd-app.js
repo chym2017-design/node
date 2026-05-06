@@ -843,15 +843,23 @@ class App {
   }
 
   // 跨文档引用跳转：找到 docName 对应的 .udd 文件并打开它，跳转到 nodePath。
-  // 查找顺序：
-  //   1) 已打开的 session（按 fileName / filePath 匹配）→ switchSession
-  //   2) 仓库（开了 server）→ 在 _refDocCache / 当前 repoDir 中找文件路径 → 打开
-  // 引用解析失败的不会调到这里（createRefIcon 已在 isError 分支提前返回）。
-  // docName 可以是新格式 "path/file.udd"、绝对路径 "D:\xxx.udd"，也可兼容旧裸名 "filename"。
+  // 实际打开逻辑抽到 _openDocByName，本方法只负责打开后跳到节点。
   async openCrossDocRef(docName, nodePath, srcViewInstance) {
     if (!docName) return;
     if (srcViewInstance) this._saveBackPosition(srcViewInstance);
+    const ok = await this._openDocByName(docName);
+    if (!ok) return;
+    requestAnimationFrame(() => this._jumpInCurrentView(nodePath));
+  }
 
+  // 把 docName 解析到一个已打开的 session（必要时从仓库加载并 _addSessionAndSwitch）。
+  // 查找顺序：
+  //   1) 已打开的 session（按 fileName / filePath 后缀匹配）→ switchSession
+  //   2) 仓库（开了 server）→ 在 _refDocCache / 当前 repoDir 中找文件路径 → 打开
+  // 成功返回 true（this.activeSession 已是目标），失败返回 false 并已 toast。
+  // docName 可以是新格式 "path/file.udd"、绝对路径 "D:\xxx.udd"，也可兼容旧裸名 "filename"。
+  async _openDocByName(docName) {
+    if (!docName) return false;
     const hasUdd = docName.endsWith('.udd');
     const bare = hasUdd ? docName.replace(/\.udd$/, '') : docName;
     // 取裸文件名（不含目录）用于和 session.fileName 比较
@@ -862,7 +870,6 @@ class App {
       if (s.fileName === docName || s.fileName === bare || s.fileName === bareLeaf) return true;
       const fp = s.filePath || s.originPath || '';
       if (!fp) return false;
-      // 完整路径 / 后缀匹配
       if (fp === docName) return true;
       const sufA = '/' + bare + '.udd', sufB = '\\' + bare + '.udd';
       const sufC = '/' + bareLeaf + '.udd', sufD = '\\' + bareLeaf + '.udd';
@@ -871,24 +878,20 @@ class App {
     });
     if (matchOpen) {
       if (matchOpen.id !== this.activeSessionId) this.switchSession(matchOpen.id);
-      requestAnimationFrame(() => this._jumpInCurrentView(nodePath));
-      return;
+      return true;
     }
 
     // 2) 通过仓库服务器加载并打开
     if (!this.repoServerUrl) {
       toast('未连接仓库，无法打开 ' + docName);
-      return;
+      return false;
     }
     const candidates = [];
-    // 当前文档目录（用于解析相对路径）
     const curFp = this._activeSession && this._activeSession.filePath || '';
     const curDir = curFp ? curFp.replace(/[\\/][^\\/]+$/, '') : '';
-    // 绝对路径
     if (/^[A-Za-z]:[\\/]/.test(docName) || docName.startsWith('/')) {
       candidates.push({ path: hasUdd ? docName : docName + '.udd', isUdd: true });
     } else if (docName.includes('/') || docName.includes('\\')) {
-      // 相对路径：当前目录与仓库根
       if (curDir) {
         candidates.push({ path: hasUdd ? curDir + '/' + docName : curDir + '/' + docName + '.udd', isUdd: true });
         candidates.push({ path: hasUdd ? curDir + '\\' + docName : curDir + '\\' + docName + '.udd', isUdd: true });
@@ -898,7 +901,6 @@ class App {
         candidates.push({ path: hasUdd ? this.repoDir + '\\' + docName : this.repoDir + '\\' + docName + '.udd', isUdd: true });
       }
     } else {
-      // 裸文件名：仓库目录优先
       if (this.repoDir) {
         candidates.push({ path: this.repoDir + '/' + bare + '.udd', isUdd: true });
         candidates.push({ path: this.repoDir + '\\' + bare + '.udd', isUdd: true });
@@ -925,12 +927,12 @@ class App {
           this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
         }
         this._updateSourceBtn();
-        requestAnimationFrame(() => this._jumpInCurrentView(nodePath));
         toast('已打开: ' + fileName);
-        return;
+        return true;
       } catch (e) { /* try next */ }
     }
     toast('未在仓库中找到: ' + docName);
+    return false;
   }
 
   // 切换/打开会话之后，在当前视图里跳到指定 nodePath 并高亮（与 jumpToNode 类似但不再压栈）。
@@ -960,8 +962,17 @@ class App {
   }
 
   // 表格引用跳转：切到表格视图，激活目标工作表，选中目标单元格。
+  // 支持跨文档：传入 docName 时先 _openDocByName 切到目标文档，再在新文档里跳。
   // 复用 SheetView._selectCell（已含 _parseAddr + rangeStart/End + _updateFormulaBar + render）。
-  gotoSheetCell(sheetName, addr, srcViewInstance) {
+  async gotoSheetCell(sheetName, addr, srcViewInstance, docName) {
+    if (docName) {
+      if (srcViewInstance) this._saveBackPosition(srcViewInstance);
+      const ok = await this._openDocByName(docName);
+      if (!ok) return;
+      // 切到新文档后 sheetView 已是新实例；递归（不再传 docName / srcViewInstance）。
+      requestAnimationFrame(() => this.gotoSheetCell(sheetName, addr, null));
+      return;
+    }
     const sv = this.sheetView;
     if (!sv || !sv.workbook || !sv.workbook.Sheets[sheetName]) {
       toast('未找到表格: ' + sheetName);

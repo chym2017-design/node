@@ -509,6 +509,25 @@ class OutlineView {
         this.syncAll();
         app.pushUndo();
         this.deleteBody(path);
+        return;
+      }
+      // Word 风格：Backspace 在首字符处删除首行缩进（text-indent）
+      if (e.key === 'Backspace' && el.textContent !== '') {
+        const offsets = getSelectionOffsetsWithin(el);
+        if (offsets && offsets.start === 0 && offsets.end === 0) {
+          const cur = parseFloat(el.style.textIndent) || 0;
+          if (cur > 0) {
+            e.preventDefault();
+            const node = getNodeByPath(this.data, path);
+            if (node) {
+              app.pushUndo();
+              node['body.paragraph_first_indent'] = 0;
+              el.style.textIndent = '0';
+              app.markDirty();
+            }
+            return;
+          }
+        }
       }
       return;
     }
