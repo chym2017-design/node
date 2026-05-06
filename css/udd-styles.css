@@ -161,6 +161,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .doc-h3{font-size:12pt;font-weight:600;color:var(--text);margin:14px 0 6px;line-height:1.4}
 .doc-h4,.doc-h5,.doc-h6{font-size:12pt;font-weight:600;color:var(--text);margin:10px 0 4px;line-height:1.4}
 .doc-body{font-size:12pt;line-height:1.8;color:var(--text);margin:4px 0 10px;text-indent:2em}
+.udd-md-rendered>p{margin:0;text-indent:inherit}
+.udd-md-rendered>p+p{margin-top:.3em}
+.udd-md-rendered>ul,.udd-md-rendered>ol{margin:.2em 0;padding-left:1.6em;text-indent:0}
+.udd-md-rendered>h1,.udd-md-rendered>h2,.udd-md-rendered>h3,.udd-md-rendered>h4,.udd-md-rendered>h5,.udd-md-rendered>h6{margin:.4em 0 .2em;text-indent:0}
+.udd-md-rendered>blockquote{margin:.3em 0;padding-left:.8em;border-left:3px solid var(--gray-200);color:var(--gray-500)}
+.udd-md-rendered>pre,.udd-md-rendered code{font-family:Consolas,Menlo,monospace;font-size:95%}
+.udd-md-rendered>pre{margin:.3em 0;padding:.4em .6em;background:var(--gray-50);border-radius:3px;overflow:auto;text-indent:0}
 .doc-page .doc-h1:first-child{margin-top:0}
 .doc-num{margin-right:6px;font-weight:400;font-size:90%}
 .doc-fold{position:absolute;left:-28px;top:0;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:transparent;font-size:11px;border-radius:var(--radius);user-select:none}

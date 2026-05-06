@@ -46,6 +46,8 @@ class App {
     // Expose convenience accessors
     this.currentView = 'outline';
     this.renderMode = true;
+    this.renderMd = (localStorage.getItem('udd_render_md') !== '0');
+    this.renderHtml = (localStorage.getItem('udd_render_html') !== '0');
     this.sidebarMode = 'raw'; // 'raw' or 'values'
     this.contentSource = 'embedded'; // 'embedded' | 'repo'
     // Embedded data stored per-session (session.embeddedMedia, session.embeddedRefDocs)
@@ -65,6 +67,7 @@ class App {
     this.documentFmt = { font: true, font_size: true, color: true, bold: true,
       italic: true, underline: true, strikethrough: true, background_color: true, text_align: true, tree_lines: false };
     this.initFmtSwitches();
+    this._initRenderMore();
 
     // Auto-save
     this.autoSaveTimer = setInterval(() => this.autoSave(), 30000);
@@ -681,6 +684,43 @@ class App {
     // 渲染模式切换影响所有视图（每个视图对 renderMode 的处理方式不同），全部失效
     this._invalidateAllViews();
     this.renderCurrentView();
+  }
+
+  _initRenderMore() {
+    const cbMd = document.getElementById('opt-render-md');
+    const cbHtml = document.getElementById('opt-render-html');
+    if (cbMd) {
+      cbMd.checked = this.renderMd;
+      cbMd.addEventListener('change', () => {
+        this.renderMd = !!cbMd.checked;
+        localStorage.setItem('udd_render_md', this.renderMd ? '1' : '0');
+        this._invalidateAllViews();
+        this.renderCurrentView();
+      });
+    }
+    if (cbHtml) {
+      cbHtml.checked = this.renderHtml;
+      cbHtml.addEventListener('change', () => {
+        this.renderHtml = !!cbHtml.checked;
+        localStorage.setItem('udd_render_html', this.renderHtml ? '1' : '0');
+        this._invalidateAllViews();
+        this.renderCurrentView();
+      });
+    }
+    // Close popover on outside click
+    document.addEventListener('click', (e) => {
+      const pop = document.getElementById('render-more-pop');
+      if (!pop || pop.hidden) return;
+      if (e.target.closest('#render-more') || e.target.closest('#render-more-pop')) return;
+      pop.hidden = true;
+    });
+  }
+
+  toggleRenderMore(e) {
+    if (e) e.stopPropagation();
+    const pop = document.getElementById('render-more-pop');
+    if (!pop) return;
+    pop.hidden = !pop.hidden;
   }
 
   toggleContentSource() {

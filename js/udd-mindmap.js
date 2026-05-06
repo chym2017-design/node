@@ -376,6 +376,9 @@ class MindmapView {
     }
     const labelText = stripMediaTags(item.label) || '\u00A0';
     div.textContent = labelText;
+    if (typeof applyMdHtml === 'function' && (typeof app !== 'undefined') && app.renderMode) {
+      applyMdHtml(div, app, {inline:true});
+    }
     if (hasMediaTag(item.label || '')) {
       const parts = (item.label || '').split(MEDIA_RE);
       for (let i = 1; i < parts.length; i += 2) {
@@ -435,9 +438,10 @@ class MindmapView {
 
       div.contentEditable = 'true';
       div.focus();
-      if (isContentRef) {
-        // Show raw ref formula for editing
+      if (isContentRef || div.classList.contains('udd-md-rendered')) {
+        // Show raw source for editing (md-rendered or ref cell)
         div.textContent = rawContent;
+        div.classList.remove('udd-md-rendered');
       }
       const sel = window.getSelection();
       sel.selectAllChildren(div);

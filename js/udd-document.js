@@ -215,6 +215,7 @@ class DocumentView {
         if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
       } else if (desc.hasInlineRefs && desc.inlineSegments) {
         renderInlineSegments(contentSpan, desc.inlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), style);
+        if (typeof applyMdHtml === 'function') applyMdHtml(contentSpan, app, {inline:true});
         contentSpan.contentEditable = 'false';
         contentSpan.classList.add('ref-display');
         contentSpan.dataset.hasRef = '1';
@@ -223,9 +224,11 @@ class DocumentView {
         renderStyledText(contentSpan, contentText, node, 'content', style, (el, runStyle) => this.applyInlineStyle(el, runStyle));
         contentSpan.contentEditable = 'plaintext-only';
         if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
+        if (typeof applyMdHtml === 'function') applyMdHtml(contentSpan, app, {inline:true});
       } else {
         const contentText = stripMediaTags(desc.displayContent);
         renderStyledText(contentSpan, contentText, node, 'content', style, (el, runStyle) => this.applyInlineStyle(el, runStyle));
+        if (typeof applyMdHtml === 'function') applyMdHtml(contentSpan, app, {inline:true});
         contentSpan.contentEditable = 'false';
         contentSpan.classList.add('ref-display');
         contentSpan.dataset.ref = desc.refStr;
@@ -299,6 +302,7 @@ class DocumentView {
           bodyDiv.contentEditable = 'plaintext-only';
           if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
           renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
+          if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
           bodyDiv.dataset.path = path;
           bodyDiv.dataset.field = 'body';
           bodyDiv.spellcheck = false;
@@ -314,6 +318,7 @@ class DocumentView {
         } else {
           bodyDiv.contentEditable = 'false';
           renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
+          if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
         }
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
@@ -413,6 +418,7 @@ class DocumentView {
     } else {
       renderStyledText(contentSpan, contentText, node, 'content', style, (el, rs) => this.applyInlineStyle(el, rs));
     }
+    if (desc.renderOn && typeof applyMdHtml === 'function') applyMdHtml(contentSpan, app, {inline:true});
     // dataset.path/field 始终写：双击进入"原始 ref 源码编辑"以及 closest 选择器都依赖这两个属性。
     // 之前仅 !readOnly 时写，导致引用 (__ref__) 子节点的 dblclick 取不到 path → 沉默无响应。
     contentSpan.dataset.path = path;
@@ -473,6 +479,7 @@ class DocumentView {
         if (!desc.bodyEditable && !bodyDiv.contentEditable) bodyDiv.contentEditable = 'false';
         const bodyText = stripMediaTags(desc.displayBody);
         renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
+        if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
         bodyDiv.dataset.path = path;
         bodyDiv.dataset.field = 'body';
         bodyDiv.spellcheck = false;

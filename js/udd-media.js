@@ -81,9 +81,11 @@ function buildInlineTable(ref) {
       const sheetRefs = (typeof app !== 'undefined' && app.data && app.data._sheetRefs) ? app.data._sheetRefs : {};
       if (sheetRefs[refKey] && typeof resolveRef === 'function') {
         td.textContent = resolveRef(app.data, sheetRefs[refKey]);
+        if (app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(td, app, {inline:true});
       } else {
         const cell = ws[addr];
         td.textContent = cell ? (cell.w || (cell.v !== undefined ? String(cell.v) : '')) : '';
+        if (app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(td, app, {inline:true});
       }
       tr.appendChild(td);
     }
@@ -304,6 +306,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
       const cap = document.createElement('div');
       cap.className = 'media-caption';
       cap.textContent = meta.caption;
+      if (app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(cap, app, {inline:true});
       wrapper.appendChild(cap);
     }
 

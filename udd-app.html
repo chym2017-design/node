@@ -126,6 +126,13 @@
       <button id="back-btn" onclick="app.goBack()" style="display:none;background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">← 返回</button>
       <div class="spacer"></div>
       <button id="render-toggle" onclick="app.toggleRenderMode()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染 on</button>
+      <span style="position:relative;display:inline-block;margin-left:4px">
+        <button id="render-more" onclick="app.toggleRenderMore(event)" title="渲染选项" style="background:none;border:1px solid var(--gray-200);padding:3px 8px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">更多 ▾</button>
+        <div id="render-more-pop" hidden style="position:absolute;top:100%;right:0;margin-top:4px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:6px 10px;font-size:12px;z-index:200;white-space:nowrap">
+          <label style="display:block;padding:2px 0;cursor:pointer"><input type="checkbox" id="opt-render-md" style="vertical-align:middle;margin-right:6px"> md</label>
+          <label style="display:block;padding:2px 0;cursor:pointer"><input type="checkbox" id="opt-render-html" style="vertical-align:middle;margin-right:6px"> html</label>
+        </div>
+      </span>
       <button id="refresh-view" onclick="app.refreshCurrentView()" title="刷新当前视图（强制重新渲染，引用/媒体重新读取）" style="background:none;border:1px solid var(--gray-200);padding:3px 8px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius);margin-left:4px">🔄 刷新</button>
       <button id="source-toggle" onclick="app.toggleContentSource()" style="display:none;background:var(--blue-50);border:1px solid var(--blue-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">来源:嵌入</button>
       <input id="tool-fold-n" type="number" value="5" min="1" max="20" title="展开层数">
@@ -200,6 +207,8 @@
 
 <!-- ===== SCRIPTS (load order matters) ===== -->
 <script src="js/jszip.min.js"></script>
+<script src="js/markdown-it.min.js"></script>
+<script src="js/udd-mdhtml.js"></script>
 <script src="js/udd-data.js"></script>
 <script src="js/udd-ref.js"></script>
 <script src="js/udd-media.js"></script>

@@ -197,10 +197,12 @@ class SheetView {
         if (uddRef && isRef(uddRef)) {
           const resolved = resolveRef(this.data, uddRef);
           td.textContent = resolved;
+          if (app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(td, app, {inline:true});
           td.classList.add('sheet-ref');
           td.title = uddRef;
         } else if (cell) {
           td.textContent = cell.w || (cell.v !== undefined ? String(cell.v) : '');
+          if (app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(td, app, {inline:true});
           if (cell.f) td.title = '=' + cell.f;
         }
 

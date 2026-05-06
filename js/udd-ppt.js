@@ -381,6 +381,7 @@ class PptView {
       inner.style.background = slide.theme.bg;
       inner.innerHTML = this._renderSlideHTML(slide, true);
       this._bindMediaElements(inner);
+      this._applyMdHtmlToSlide(inner);
       thumb.appendChild(inner);
       const num = document.createElement('span');
       num.className = 'ppt-thumb-num';
@@ -403,6 +404,7 @@ class PptView {
       slideEl.style.color = s.theme.text;
       slideEl.innerHTML = this._renderSlideHTML(s, false);
       this._bindMediaElements(slideEl);
+      this._applyMdHtmlToSlide(slideEl);
       if (s.type === 'cover') slideEl.classList.add('slide-cover');
       else if (s.type === 'ending') slideEl.classList.add('slide-ending');
       else if (s.layout === 'title_only') slideEl.classList.add('slide-title-only');
@@ -529,6 +531,13 @@ class PptView {
       const src = el.getAttribute('data-mediasrc');
       el.removeAttribute('data-mediasrc');
       _bindMediaSrcWithFallback(el, src);
+    });
+  }
+
+  _applyMdHtmlToSlide(rootEl) {
+    if (!rootEl || typeof applyMdHtml !== 'function' || typeof app === 'undefined' || !app.renderMode) return;
+    rootEl.querySelectorAll('.slide-title, .slide-subtitle, .slide-bullet, .slide-table th, .slide-table td').forEach(el => {
+      applyMdHtml(el, app, {inline:true});
     });
   }
 

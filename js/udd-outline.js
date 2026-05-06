@@ -124,6 +124,7 @@ class OutlineView {
       if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
     } else if (desc.hasInlineRefs && desc.inlineSegments) {
       renderInlineSegments(content, desc.inlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), style);
+      if (typeof applyMdHtml === 'function') applyMdHtml(content, app, {inline:true});
       content.contentEditable = 'false';
       content.classList.add('ref-display');
       content.dataset.hasRef = '1';
@@ -132,9 +133,11 @@ class OutlineView {
       renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
       content.contentEditable = 'plaintext-only';
       if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
+      if (typeof applyMdHtml === 'function') applyMdHtml(content, app, {inline:true});
     } else {
       const contentText = stripMediaTags(desc.displayContent);
       renderStyledText(content, contentText, node, 'content', style, (el, runStyle) => this.applyStyle(el, runStyle));
+      if (typeof applyMdHtml === 'function') applyMdHtml(content, app, {inline:true});
       content.contentEditable = 'false';
       if (desc.refStr) {
         content.classList.add('ref-display');
@@ -218,6 +221,7 @@ class OutlineView {
         bodyEl.contentEditable = 'plaintext-only';
         if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
         renderStyledText(bodyEl, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
+        if (typeof applyMdHtml === 'function') applyMdHtml(bodyEl, app, {inline:false});
         bodyEl.dataset.path = path;
         bodyEl.dataset.field = 'body';
         bodyEl.spellcheck = false;
@@ -235,6 +239,7 @@ class OutlineView {
         // Read-only body (from full-node ref source — pure visual clone)
         bodyEl.contentEditable = 'false';
         renderStyledText(bodyEl, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
+        if (typeof applyMdHtml === 'function') applyMdHtml(bodyEl, app, {inline:false});
       }
       bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
       this.applyStyle(bodyEl, bodyStyle);
