@@ -83,6 +83,12 @@ class MindmapView {
     });
     // Keyboard operations
     document.addEventListener('keydown', e => this._onKeyDown(e));
+    // 思维导图 body popup 里的双击源码编辑失焦恢复：与大纲/文档同一套路径。
+    // 差别仅一步：大纲/文档失焦后跑 this.render(this.data) 重渲整页；思维导图 popup 是
+    // 独立浮层，整页重渲会把它清掉 → 改为就地 applyMdHtml(el) 重新渲染即可。
+    // 复用 udd-mdhtml.js 的 dataset.refEditing 标记（双击 + 全选蓝色 + 写回比对）一致。
+    this.el.addEventListener('focusout', e => this.onFocusOut(e));
+    this.el.addEventListener('focusin', e => this.onFocusIn(e));
     // Context menu
     this.el.addEventListener('contextmenu', e => {
       // 刚刚结束的右键拖动 → 吞掉这次 contextmenu
@@ -509,7 +515,28 @@ class MindmapView {
         const rawMmBody = effectiveMmNode.body || '';
         const displayMmBody = isRef(rawMmBody) ? getDisplayValue(this.data, effectiveMmNode, 'body') : rawMmBody;
         const bodyText = stripMediaTags(displayMmBody);
-        if (bodyText) { const t = document.createElement('div'); t.textContent = bodyText; popup.appendChild(t); }
+        // 是否允许在 popup 内编辑：本节点的真实 body（非 ref 克隆、非 =ref 字段）才可编辑。
+        // 编辑写回到 item.node.body —— ref 克隆请到源节点编辑，避免歧义。
+        const editable = !item._sourceNode && !isRef(rawMmBody) && !!item.node;
+        if (bodyText) {
+          const t = document.createElement('div');
+          t.textContent = bodyText;
+          if (editable) {
+            t.dataset.path = item.path;
+            t.dataset.field = 'body';
+            // 先 plaintext-only：applyMdHtml 会在元素内容含 md/html 语法时把它锁回 'false'
+            // 并把 'plaintext-only' 存到 dataset.uddCePrev，配合 udd-mdhtml.js 的双击-编辑-失焦
+            // 流水线（双击 → refEditing + 还原源码；mousedown-outside / focusout → 写回 + 重渲）。
+            t.contentEditable = 'plaintext-only';
+            if (!t.contentEditable || t.contentEditable === 'inherit') t.contentEditable = 'true';
+            t.spellcheck = false;
+          }
+          popup.appendChild(t);
+          // 与标题一致：弹出 body 也走 md/html 渲染（受 app.renderMd / renderHtml 控制）。
+          if (typeof applyMdHtml === 'function' && typeof app !== 'undefined' && app.renderMode) {
+            applyMdHtml(t, app, { inline: false });
+          }
+        }
         if (hasMediaTag(rawMmBody)) {
           const md = document.createElement('div');
           renderTextWithMedia(rawMmBody, md, {path: item.path, field:'body', view:this});
@@ -592,6 +619,37 @@ class MindmapView {
     else if (e.key === 'Delete') { e.preventDefault(); this._deleteNode(path); }
     else if (e.code === 'Space' && !this._spaceDown) { e.preventDefault(); this._toggleFold(path); }
     else if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); this._navigate(e.key); }
+  }
+
+  // 与大纲/文档视图完全一致的 refEditing 失焦恢复：dataset.refEditing 是 udd-mdhtml.js 双击时
+  // 设上的原始源码，失焦时把当前 textContent 和它比对，有差异就写回 node[field]。
+  // 关键差异：大纲/文档走 this.render(this.data)（重建整页），mindmap 改走就地 applyMdHtml(el)
+  // —— 避免整页重渲把 body popup 一起清掉。
+  onFocusOut(e) {
+    const el = e.target;
+    if (!el || !el.dataset) return;
+    if (el.dataset.refEditing === undefined) return;
+    const orig = el.dataset.refEditing;
+    const node = (el.dataset.path && typeof getNodeByPath === 'function')
+      ? getNodeByPath(this.data, el.dataset.path) : null;
+    if (node && el.dataset.field) {
+      const edited = el.textContent;
+      const normOrig = orig.replace(/[\s​-‏﻿]+/g, '');
+      const normEdited = edited.replace(/[\s​-‏﻿]+/g, '');
+      if (normEdited !== normOrig) {
+        node[el.dataset.field] = edited;
+        if (typeof app !== 'undefined') app.markDirty();
+      }
+    }
+    delete el.dataset.refEditing;
+    if (typeof applyMdHtml === 'function' && document.contains(el)) {
+      applyMdHtml(el, app, { inline: false });
+    }
+  }
+
+  onFocusIn(e) {
+    // 清掉可能残留的旧 uddPreMd / uddCePrev（比如视图重渲后 el 重建，udd-mdhtml.js 自己有兜底
+    // 但这里不主动清，避免破坏新 applyMdHtml 留下的状态）。保持空实现作为对称即可。
   }
 
   _getVisiblePaths() {

@@ -616,15 +616,6 @@ function resolveNodeForRender(data, node, path, level) {
     desc.displayContent = desc.inlineSegments.map(s => s.type === 'ref' ? s.resolved : s.value).join('');
     desc.displayBody = node.body || '';
     desc.hasBody = !!(node.body);
-    const rawBody = node.body || '';
-    if (hasInlineRefs(rawBody)) {
-      desc.bodyInlineSegments = resolveInlineRefs(data, rawBody);
-      desc.displayBody = desc.bodyInlineSegments.map(s => s.type === 'ref' ? s.resolved : s.value).join('');
-      desc.bodyEditable = false;
-    } else if (isRef(rawBody)) {
-      desc.bodyEditable = false;
-      desc.displayBody = resolveRef(data, rawBody);
-    }
   } else if (fullRef && sourceNode) {
     // 全节点引用成功: 用源节点的 content/body 渲染，子节点也用源节点的
     desc.displayContent = sourceNode.content || '';
@@ -641,15 +632,29 @@ function resolveNodeForRender(data, node, path, level) {
     desc.displayContent = resolveRef(data, raw);
     desc.displayBody = node.body || '';
     desc.hasBody = !!(node.body);
-    const rawBody = node.body || '';
-    if (isRef(rawBody)) {
-      desc.bodyEditable = false;
-      desc.displayBody = resolveRef(data, rawBody);
-    }
   } else {
     desc.displayContent = raw;
     desc.displayBody = node.body || '';
     desc.hasBody = !!(node.body);
+  }
+
+  // body 自身的引用解析（与上面的分支无关）：
+  //   {{=ref}} 内联引用 → 替换为解析值（含可能的媒体 tag 一并交给后续 stripMediaTags
+  //                       与媒体 collector 处理）。
+  //   纯 =ref           → 替换为解析值。
+  // 之前只有 if (hasInline) 分支里才处理 body 的内联引用，导致 content 是普通
+  // 文本但 body 含 {{=ref}} 的节点（用户的"媒体引用联动"用法）渲染时残留字面 tag、
+  // 引用文本也没有展开。
+  if (!fullRef) {
+    const rawBody = node.body || '';
+    if (hasInlineRefs(rawBody)) {
+      desc.bodyInlineSegments = resolveInlineRefs(data, rawBody);
+      desc.displayBody = desc.bodyInlineSegments.map(s => s.type === 'ref' ? s.resolved : s.value).join('');
+      desc.bodyEditable = false;
+    } else if (isRef(rawBody)) {
+      desc.bodyEditable = false;
+      desc.displayBody = resolveRef(data, rawBody);
+    }
   }
 
   return desc;

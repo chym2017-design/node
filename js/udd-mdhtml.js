@@ -159,7 +159,15 @@
           }
         }
         delete el.dataset.refEditing;
-        if (typeof window.app.renderCurrentView === 'function') {
+        // 思维导图 body popup 这类"独立浮层 + 不能被整页重渲清掉"的场景：
+        // 就地调 applyMdHtml 把 el 自身从源码态切回渲染态即可，popup 自然保留。
+        // 其它场景（大纲/文档视图的 body / content）继续走整页 render，与 ref-edit 路径一致。
+        const inPopup = el.closest && el.closest('.mm-body-popup');
+        if (inPopup) {
+          if (typeof applyMdHtml === 'function' && document.contains(el)) {
+            applyMdHtml(el, window.app, { inline: false });
+          }
+        } else if (typeof window.app.renderCurrentView === 'function') {
           window.app.renderCurrentView();
         }
       });

@@ -139,10 +139,16 @@ class App {
     const s = this._activeSession;
     if (!s) return;
     if (this.sheetView && this.sheetView.workbook) {
-      try {
-        const bin = this.sheetView.toBinary();
-        if (bin) s.xlsxBin = bin;
-      } catch (e) { /* skip */ }
+      // 关键：仅在用户真改过 workbook 时才走 toBinary —— sheetjs 社区版的
+      // XLSX.read → XLSX.write roundtrip 会丢失公式 / 单元格格式 / 图表 / 共享字符串等。
+      // 没改过的会话保留 parseUDDBlob 给的原始 binary，避免浏览器刷新后表格"看起来变空"。
+      if (this.sheetView._workbookDirty) {
+        try {
+          const bin = this.sheetView.toBinary();
+          if (bin) s.xlsxBin = bin;
+        } catch (e) { /* skip */ }
+        this.sheetView._workbookDirty = false;
+      }
       s.sheetActiveSheet = this.sheetView.activeSheet || null;
     }
     if (this.pptView && this.pptView.getFormat) {
@@ -320,6 +326,10 @@ class App {
     this._renderOpenDocs();
     this._updateSourceBtn();
     this._ensureEmbeddedMediaLoaded();
+    // 打开新会话后立刻落盘，避免用户在 5-30s autoSave 间隔内刷新页面导致
+    // sessions_index 已写但 session_<id> 没写 → 刷新后表格数据丢失。
+    // fire-and-forget：不阻塞打开流程。
+    this.autoSave().catch(() => {});
   }
 
   _renderOpenDocs() {
@@ -427,6 +437,74 @@ class App {
     } catch (e) { /* ignore */ }
     this.renderCurrentView();
     this._renderOpenDocs();
+    // 刷新 = 重新打开：检测到仓库服务器后，把所有有 filePath 的会话从磁盘重新读一遍，
+    // 用磁盘原始 binary 覆盖 IndexedDB 里可能丢过信息的旧版本（sheetjs roundtrip 会丢公式 / 格式 / 图表）。
+    // 没 filePath 的会话（新建未保存）继续使用 IndexedDB 数据。
+    // 用 fire-and-forget：先让 IndexedDB 数据立刻显示，磁盘版本到货后再替换 + 重渲。
+    this._refreshSessionsFromDisk().catch(() => {});
+  }
+
+  // 浏览器刷新后用磁盘原文件覆盖 IndexedDB 的会话数据。
+  // 等价于"逐个重新打开"，但保留打开顺序和 active session。
+  // 必须先有 repoServerUrl（_detectServer 自动检测，或用户手动配置过）；否则 fallback 到 IndexedDB。
+  async _refreshSessionsFromDisk() {
+    // 先尝试自动连接服务器（如果还没连接过）。失败就放弃磁盘刷新，沿用 IndexedDB。
+    if (!this.repoServerUrl) {
+      const saved = localStorage.getItem('udd_server_url');
+      if (saved) this.repoServerUrl = saved;
+    }
+    if (!this.repoServerUrl) {
+      // 试一下默认地址
+      const tryUrls = [window.location.origin, 'http://localhost:8080', 'http://localhost:3000', 'http://127.0.0.1:8080'];
+      for (const base of tryUrls) {
+        try {
+          const resp = await fetch(base + '/api/root', { signal: AbortSignal.timeout(800) });
+          if (resp.ok) {
+            const json = await resp.json();
+            this.repoServerUrl = base;
+            this.repoDir = json.root;
+            localStorage.setItem('udd_server_url', base);
+            localStorage.setItem('udd_repo_dir', this.repoDir);
+            break;
+          }
+        } catch (e) { /* try next */ }
+      }
+    }
+    if (!this.repoServerUrl) return;
+
+    let anyRefreshed = false;
+    for (const s of this.sessions) {
+      if (!s.filePath) continue;
+      try {
+        const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(s.filePath));
+        if (!resp.ok) continue;
+        let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
+        if (s.filePath.endsWith('.json')) {
+          const text = await resp.text();
+          data = JSON.parse(text);
+        } else {
+          const blob = await resp.blob();
+          ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
+        }
+        // 用磁盘原始数据覆盖会话
+        s.data = data;
+        s.xlsxBin = xlsxBin || null;
+        s.pptFormat = pptFormat || null;
+        s.embeddedMedia = embeddedMedia || {};
+        s.embeddedRefDocs = embeddedRefDocs || {};
+        s.dirty = false; // 磁盘版本=已保存
+        if (s.id === this.activeSessionId) {
+          this._applySessionSheetState(s);
+          this._invalidateAllViews();
+        }
+        anyRefreshed = true;
+      } catch (e) { /* skip 该会话，保留 IndexedDB 版本 */ }
+    }
+    if (anyRefreshed) {
+      this.renderCurrentView();
+      this._renderOpenDocs();
+      this.markClean();
+    }
   }
 
   // 视图实例按名字映射（便于复用 invalidate/render 逻辑）
@@ -1814,8 +1892,11 @@ ${clone.innerHTML}
     let anyDirty = false;
     try {
       for (const s of this.sessions) {
-        if (!s.dirty) continue;
-        anyDirty = true;
+        // 之前这里是 if (!s.dirty) continue —— 但即使是没编辑的会话也要落盘到 IndexedDB，
+        // 否则浏览器刷新时 sessions_index 有这条记录、session_<id> 不存在，
+        // 导致刚打开的 .udd 在刷新后丢失（表格数据尤其明显，因为 xlsxBin 必须从 session_<id> 恢复）。
+        // 之后 dirty 状态只决定 markDirty/markClean 的 UI 显示，不再影响 IndexedDB 持久化。
+        if (s.dirty) anyDirty = true;
         s.data.meta.modified = new Date().toISOString();
         // 新格式：把表格簿 / PPT 格式一起持久化，避免页面刷新后表格列空白
         await dbSave('session_' + s.id, {

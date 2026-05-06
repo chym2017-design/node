@@ -41,6 +41,10 @@ class SheetView {
     try {
       this.workbook = XLSX.read(binaryData, { type: 'array' });
       this.activeSheet = this.workbook.SheetNames[0] || 'Sheet1';
+      // 刚从磁盘/IndexedDB 的原始 binary 加载：workbook 还未被用户改动，
+      // 不要让 _captureActiveSessionSheetState 立刻走 toBinary 的有损 roundtrip
+      // 覆盖掉原始 xlsxBin（sheetjs 社区版会丢失公式 / 格式 / 图表等信息）。
+      this._workbookDirty = false;
     } catch (e) {
       console.error('Failed to load sheets.xlsx:', e);
       this._initDefaultWorkbook();
@@ -453,6 +457,7 @@ class SheetView {
     const value = editor ? editor.value : '';
     this.editingCell = null;
     this._writeCell(addr, value);
+    this._workbookDirty = true;
     if (typeof app !== 'undefined') app.markDirty();
     this.render(this.data);
   }
@@ -465,6 +470,7 @@ class SheetView {
   _applyFormulaBar(value) {
     const addr = this.selectedCell;
     this._writeCell(addr, value);
+    this._workbookDirty = true;
     if (typeof app !== 'undefined') app.markDirty();
     this.render(this.data);
   }
@@ -543,6 +549,7 @@ class SheetView {
         if (this.data._sheetRefs) delete this.data._sheetRefs[refKey];
       }
     }
+    this._workbookDirty = true;
     if (typeof app !== 'undefined') app.markDirty();
     this.render(this.data);
   }
@@ -594,6 +601,7 @@ class SheetView {
         this._writeCell(addr, cols[ci]);
       }
     }
+    this._workbookDirty = true;
     if (typeof app !== 'undefined') app.markDirty();
     this.render(this.data);
   }
@@ -661,6 +669,7 @@ class SheetView {
       }
       this._updateSheetRange(ws, newAddr);
     }
+    this._workbookDirty = true;
     if (typeof app !== 'undefined') app.markDirty();
     this.render(this.data);
   }
@@ -688,6 +697,7 @@ class SheetView {
     this.selectedCell = 'A1';
     this.rangeStart = { r: 0, c: 0 };
     this.rangeEnd = { r: 0, c: 0 };
+    this._workbookDirty = true;
     if (typeof app !== 'undefined') app.markDirty();
     this.render(this.data);
   }
@@ -715,6 +725,7 @@ class SheetView {
             this.data._sheetRefs = newRefs;
           }
           if (this.activeSheet === sheetName) this.activeSheet = newName;
+          this._workbookDirty = true;
           if (typeof app !== 'undefined') app.markDirty();
           this.render(this.data);
         }
@@ -726,6 +737,7 @@ class SheetView {
         this.workbook.SheetNames.splice(idx, 1);
         delete this.workbook.Sheets[sheetName];
         if (this.activeSheet === sheetName) this.activeSheet = this.workbook.SheetNames[0];
+        this._workbookDirty = true;
         if (typeof app !== 'undefined') app.markDirty();
         this.render(this.data);
       }]

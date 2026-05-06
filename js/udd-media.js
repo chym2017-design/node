@@ -556,9 +556,29 @@ function showMediaEditor(mediaEl, mediaInfo, item) {
   popup.innerHTML = html;
 
   const rect = mediaEl.getBoundingClientRect();
-  popup.style.top = (rect.bottom + window.scrollY + 4) + 'px';
-  popup.style.left = (rect.left + window.scrollX) + 'px';
+  // 先放进 DOM 才能量自身尺寸；初始位置随便给个，后面再夹到视口内。
+  popup.style.top = '0px';
+  popup.style.left = '0px';
   document.body.appendChild(popup);
+  // 量出 popup 自身宽高（display 后才有 layout），把它锚定到媒体元素正下方，
+  // 并夹紧到视口可见范围；下方放不下时翻到上方。
+  // 之前固定写 rect.bottom + scrollY，遇到媒体在视口底部、popup 较高时会被裁切。
+  const popRect = popup.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  const margin = 8;
+  let topVp = rect.bottom + 4; // 视口坐标
+  if (topVp + popRect.height > vh - margin) {
+    // 下方放不下，尝试放到媒体元素上方
+    const above = rect.top - 4 - popRect.height;
+    if (above >= margin) topVp = above;
+    else topVp = Math.max(margin, vh - margin - popRect.height); // 仍然贴到视口底部
+  }
+  let leftVp = rect.left;
+  if (leftVp + popRect.width > vw - margin) leftVp = vw - margin - popRect.width;
+  if (leftVp < margin) leftVp = margin;
+  popup.style.top = (topVp + window.scrollY) + 'px';
+  popup.style.left = (leftVp + window.scrollX) + 'px';
 
   popup.onclick = (e) => e.stopPropagation();
 
