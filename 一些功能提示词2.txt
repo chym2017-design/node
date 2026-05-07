@@ -3,6 +3,21 @@
 
   手机端的适应性按键，例如tab
 
+那是给极客用户的可选包，跟单 HTML 是两套交付，互不影响：
+Copy code to clipboard
+（A）双击即用版：
+  └─ udd-app.standalone.html        ← 1 个文件
+
+（B）极客离线包：
+  ├─ udd-app.standalone.html        ← 同上那个文件
+  ├─ server.js                       ← 单独提供
+  └─ start.bat / start.sh
+
+（C）Cloudflare Pages：
+  ├─ udd-app.standalone.html        ← 同上
+  ├─ manifest.json
+  └─ icon-*.png
+  
 表格的行高，能否调整
 
 

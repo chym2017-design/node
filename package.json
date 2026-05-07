@@ -1,0 +1,13 @@
+{
+  "name": "udd-build",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UDD standalone HTML build (terser + javascript-obfuscator)",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "terser": "^5.36.0",
+    "javascript-obfuscator": "^4.1.1"
+  }
+}

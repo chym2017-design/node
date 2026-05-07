@@ -545,6 +545,10 @@ class App {
     if (typeof _refDocCache !== 'undefined') {
       for (const k of Object.keys(_refDocCache)) delete _refDocCache[k];
     }
+    // 同步清空跨文档表格 workbook 缓存，否则被引用 .udd 改了 sheets.xlsx 后视图仍显示旧表数据
+    if (typeof _refDocSheets !== 'undefined') {
+      for (const k of Object.keys(_refDocSheets)) delete _refDocSheets[k];
+    }
     const v = this._getViewByName(this.currentView);
     if (v) v._rendered = false;
     // 仓库面板若已连上服务器，顺手把目录里的 .udd 重新预加载到引用缓存

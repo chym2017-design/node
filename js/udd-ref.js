@@ -17,19 +17,39 @@ function isRef(value) {
   const isAscii = (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39) || c === 0x5f;
   const isCJK = c >= 0x4e00 && c <= 0x9fff;
   if (!isAscii && !isCJK) return false;
-  // 结构校验（内联 SheetRef / parseRef，避免与 isSheetRef 互相递归）
-  const dotIdx = value.indexOf('.');
-  if (dotIdx > 1) {
-    const maybeSheet = value.slice(1, dotIdx);
-    const maybeAddr = value.slice(dotIdx + 1);
-    if (/^[A-Za-z][A-Za-z0-9_]*$/.test(maybeSheet) && /^[A-Z]{1,3}\d{1,7}$/.test(maybeAddr) && !/^t\d+$/.test(maybeSheet)) {
-      return true;
-    }
-  }
+  // 结构校验（统一走 parseSheetRef，覆盖本档 + 跨档单元格引用，不依赖首字符是否拉丁）
+  if (parseSheetRef(value)) return true;
   try {
     const r = parseRef(value);
     return !!r.nodePath;
   } catch (e) { return false; }
+}
+
+// 解析单元格引用（本档 / 跨档），统一返回 {docName, sheetName, addr} 或 null。
+//   本档:  =Sheet1.A1                       → {docName: null, sheetName: 'Sheet1', addr: 'A1'}
+//   跨档:  =path/file.udd.Sheet1.A1          → {docName: 'path/file.udd', sheetName: 'Sheet1', addr: 'A1'}
+//   跨档:  =D:/x/file.udd.Sheet1.A1          → 同上（绝对路径）
+// 单元格区间 (A1:B2) 不在这里处理；那是 `{{"table":"..."}}` 媒体语义，由 parseTableRef 负责。
+function parseSheetRef(refStr) {
+  if (typeof refStr !== 'string' || refStr.length < 2 || refStr[0] !== '=') return null;
+  const body = refStr.slice(1);
+  // 跨档：检测 .udd. 边界，前为 docName，后为 SheetName.Addr
+  const uddPos = body.indexOf('.udd.');
+  if (uddPos > 0) {
+    const docName = body.slice(0, uddPos) + '.udd';
+    const after = body.slice(uddPos + 5);
+    const m = after.match(/^([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/);
+    if (m && !/^t\d+$/.test(m[1])) {
+      return { docName, sheetName: m[1], addr: m[2] };
+    }
+    return null;
+  }
+  // 本档：SheetName.Addr，且 SheetName 必须以拉丁字母开头（与中文节点路径区分）
+  const m = body.match(/^([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/);
+  if (m && !/^t\d+$/.test(m[1])) {
+    return { docName: null, sheetName: m[1], addr: m[2] };
+  }
+  return null;
 }
 
 // Check if content has inline {{=ref}} patterns
@@ -194,11 +214,30 @@ function nodeToText(node) {
 function resolveRef(data, refStr) {
   if (!isRef(refStr)) return refStr;
 
-  // Sheet reference: =Sheet1.B2
-  if (isSheetRef(refStr)) {
+  // Sheet reference: =Sheet1.B2 (本档) 或 =doc.udd.Sheet1.B2 (跨档)
+  const sr = parseSheetRef(refStr);
+  if (sr) {
+    if (sr.docName) {
+      // 跨档单元格：从 _refDocSheets 同步取 workbook；未加载则触发懒加载，返回 #LOADING...
+      const wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(sr.docName) : null;
+      if (!wb) {
+        if (typeof loadCrossDocSheetsAsync === 'function') {
+          loadCrossDocSheetsAsync(sr.docName, () => {
+            if (typeof app !== 'undefined' && app.renderCurrentView) {
+              requestAnimationFrame(() => app.renderCurrentView());
+            }
+          });
+        }
+        return '#LOADING...';
+      }
+      const ws = wb.Sheets[sr.sheetName];
+      if (!ws) return '#REF!';
+      const cell = ws[sr.addr];
+      return cell ? String(cell.w || (cell.v !== undefined ? cell.v : '')) : '';
+    }
+    // 本档
     if (typeof app !== 'undefined' && app.sheetView) {
-      const dotIdx = refStr.indexOf('.');
-      return String(app.sheetView.getCellValue(refStr.slice(1, dotIdx), refStr.slice(dotIdx + 1)) ?? '');
+      return String(app.sheetView.getCellValue(sr.sheetName, sr.addr) ?? '');
     }
     return '';
   }
@@ -458,14 +497,61 @@ function findNodeRecursive(obj, targetKey) {
 }
 
 const _refDocCache = {};
+// 跨文档表格用：docName -> 已 XLSX.read 后的 workbook（或 null 表示已尝试但无 sheets.xlsx）。
+// 与 _refDocCache 解耦，避免一次表格请求触发整个 ref 解析路径，且让多次 buildInlineTable 命中缓存。
+const _refDocSheets = {};
+// 标记某 docName 的跨文档 sheets 正在异步加载，避免并发重复 fetch。
+const _refDocSheetsLoading = {};
+
+// 同步获取跨文档 workbook（已加载则返回，否则返回 null）。
+function getCrossDocWorkbook(docName) {
+  if (!docName) return null;
+  return _refDocSheets[docName] || null;
+}
+
+// 触发跨文档 sheets 的异步加载（懒加载）；加载完成后调用 onLoaded()，
+// 通常用于让占位元素重新渲染。同一 docName 多次触发只发起一次实际 fetch。
+function loadCrossDocSheetsAsync(docName, onLoaded) {
+  if (!docName) return;
+  if (_refDocSheets[docName] !== undefined) {
+    // 已经加载过（成功 workbook 或 null 失败），无需再 fetch
+    if (typeof onLoaded === 'function') onLoaded(_refDocSheets[docName]);
+    return;
+  }
+  if (_refDocSheetsLoading[docName]) {
+    // 已有加载在途；累加回调
+    if (typeof onLoaded === 'function') _refDocSheetsLoading[docName].callbacks.push(onLoaded);
+    return;
+  }
+  const callbacks = onLoaded ? [onLoaded] : [];
+  _refDocSheetsLoading[docName] = { callbacks };
+  (async () => {
+    try {
+      await _loadDocFromServer(docName);
+    } catch (e) { /* skip */ }
+    const wb = _refDocSheets[docName] || null;
+    const cbs = _refDocSheetsLoading[docName].callbacks;
+    delete _refDocSheetsLoading[docName];
+    for (const cb of cbs) {
+      try { cb(wb); } catch (e) { /* skip */ }
+    }
+  })();
+}
 
 function isSheetRef(refStr) {
-  if (!isRef(refStr)) return false;
-  const dotIdx = refStr.indexOf('.');
-  if (dotIdx <= 1) return false;
-  const maybeSheet = refStr.slice(1, dotIdx);
-  const maybeAddr = refStr.slice(dotIdx + 1);
-  return /^[A-Za-z][A-Za-z0-9_]*$/.test(maybeSheet) && /^[A-Z]{1,3}\d{1,7}$/.test(maybeAddr) && !/^t\d+$/.test(maybeSheet);
+  return !!parseSheetRef(refStr);
+}
+
+// 判定一个 ref 字符串是否需要异步加载才能完整解析（用来决定渲染时挂不挂 data-ref-async）。
+//   sheet ref：本档 ws 永远在内存中 → 不需要；跨档 ws 来自 _refDocSheets，可能尚未拉取 → 需要。
+//   node ref：跨档 / 嵌入 → 需要；本档 → 不需要。
+function refNeedsAsyncLoad(refStr) {
+  const sr = parseSheetRef(refStr);
+  if (sr) return !!sr.docName;
+  try {
+    const r = parseRef(refStr);
+    return !!(r.docName || r.isUddEmbed);
+  } catch (e) { return false; }
 }
 
 // ================================================================
@@ -474,7 +560,21 @@ function isSheetRef(refStr) {
 // ================================================================
 async function resolveRefAsync(data, refStr) {
   if (!isRef(refStr)) return refStr;
-  if (isSheetRef(refStr)) return resolveRef(data, refStr);
+  // Sheet ref（本档同步直接走；跨档先 await 加载，再同步取值）
+  const sr = parseSheetRef(refStr);
+  if (sr) {
+    if (!sr.docName) return resolveRef(data, refStr);
+    let wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(sr.docName) : null;
+    if (!wb && typeof loadCrossDocSheetsAsync === 'function') {
+      await new Promise(resolve => loadCrossDocSheetsAsync(sr.docName, resolve));
+      wb = getCrossDocWorkbook(sr.docName);
+    }
+    if (!wb) return '#REF!';
+    const ws = wb.Sheets[sr.sheetName];
+    if (!ws) return '#REF!';
+    const cell = ws[sr.addr];
+    return cell ? String(cell.w || (cell.v !== undefined ? cell.v : '')) : '';
+  }
   const ref = parseRef(refStr);
   if (!ref.nodePath) return '#REF!';
   if (!ref.docName) return resolveRef(data, refStr);
@@ -560,14 +660,30 @@ async function _loadDocFromServer(docName) {
       if (!resp.ok) continue;
       if (filePath.endsWith('.json')) {
         const text = await resp.text();
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        // .json 文件没有 sheets.xlsx；标记 null 让后续 getCrossDocWorkbook 不再重复加载
+        _refDocSheets[docName] = null;
+        return parsed;
       } else {
         const blob = await resp.blob();
         const result = await parseUDDBlob(blob);
+        // 顺手把 sheets.xlsx 解析成 workbook 缓存到 _refDocSheets，
+        // 让 buildInlineTable 在跨文档表格场景下能直接命中。
+        if (result && result.xlsxBin && typeof XLSX !== 'undefined') {
+          try {
+            _refDocSheets[docName] = XLSX.read(result.xlsxBin, { type: 'array' });
+          } catch (e) {
+            _refDocSheets[docName] = null;
+          }
+        } else {
+          _refDocSheets[docName] = null;
+        }
         return result && result.data ? result.data : result;
       }
     } catch (e) { continue; }
   }
+  // 所有候选都失败：明确标记 null，避免后续重复触发加载（直到下次手动刷新）
+  if (_refDocSheets[docName] === undefined) _refDocSheets[docName] = null;
   return null;
 }
 
@@ -590,6 +706,10 @@ function resolveNodeForRender(data, node, path, level) {
   const isContentRef = _renderOn && !hasInline && isRef(raw);
   const fullRef = _renderOn && isFullNodeRef(raw);
   const sourceNode = fullRef ? getFullRefNode(data, raw) : null;
+  // 用户设计：如果是有引用等渲染的，不能直接编辑；双击后显示原文进入源码编辑模式。
+  // "渲染的" 包括：=ref / {{=ref}} 内联引用、媒体 tag {{...}}（非 =ref 形式）。
+  // hasOwnMedia 标记 content 自身含媒体 tag（不算引用），让渲染层把这种 content 也走源码编辑。
+  const hasOwnMedia = _renderOn && hasMediaTag(raw) && !hasInline && !isContentRef && !fullRef;
 
   const desc = {
     // 渲染用的显示内容（文本部分，去掉 media tag 后由渲染函数处理）
@@ -603,8 +723,9 @@ function resolveNodeForRender(data, node, path, level) {
     refStr: isContentRef ? raw : null,
     hasInlineRefs: hasInline,
     inlineSegments: null,
-    contentEditable: !isContentRef && !hasInline,
+    contentEditable: !isContentRef && !hasInline && !hasOwnMedia,
     bodyEditable: true,
+    hasOwnMedia: hasOwnMedia,
     // hide/hide_body 始终取自当前节点（引用宿主控制折叠）
     hide: node.hide || 0,
     hide_body: node.hide_body || 0,
@@ -654,6 +775,9 @@ function resolveNodeForRender(data, node, path, level) {
     } else if (isRef(rawBody)) {
       desc.bodyEditable = false;
       desc.displayBody = resolveRef(data, rawBody);
+    } else if (hasMediaTag(rawBody)) {
+      // body 仅含媒体 tag（非引用形式）：与"渲染内容不可直接编辑"原则一致 → 改走双击源码编辑
+      desc.bodyEditable = false;
     }
   }
 
@@ -674,11 +798,8 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
       refSpan.className = 'inline-ref';
       refSpan.dataset.ref = seg.raw;
       refSpan.title = seg.raw;
-      // Mark for async resolution: cross-doc or embedded refs that need loading
-      const ref = parseRef(seg.raw);
-      if ((ref.docName || ref.isUddEmbed) && !isSheetRef(seg.raw)) {
-        refSpan.dataset.refAsync = seg.raw;
-      }
+      // Mark for async resolution: 跨档/嵌入的节点引用，或跨档单元格引用 — 都需要懒加载
+      if (refNeedsAsyncLoad(seg.raw)) refSpan.dataset.refAsync = seg.raw;
       refSpan.textContent = seg.resolved;
       if (seg.resolved.startsWith('#')) refSpan.classList.add('ref-error');
       if (viewInstance) {
@@ -705,8 +826,9 @@ function createRefIcon(data, refStr, viewInstance) {
     icon.classList.add('ref-icon-error');
     icon.title = '引用错误: ' + resolved;
   } else if (isSheetRef(refStr)) {
-    const dotIdx = refStr.indexOf('.');
-    icon.title = '跳转到表格: ' + refStr.slice(1, dotIdx) + '!' + refStr.slice(dotIdx + 1);
+    const sr = parseSheetRef(refStr);
+    const docPart = sr.docName ? (sr.docName + '.') : '';
+    icon.title = '跳转到表格: ' + docPart + sr.sheetName + '!' + sr.addr;
   } else if (ref.docName) {
     icon.title = '跳转到: ' + ref.docName + '.' + (ref.nodePath || '');
   } else {
@@ -716,13 +838,11 @@ function createRefIcon(data, refStr, viewInstance) {
   icon.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
-    // 表格引用：最高优先级（与 resolveRef 一致，isSheetRef 先判）
+    // 表格引用：最高优先级（与 resolveRef 一致，sheet 先判）。docName 非空 → gotoSheetCell 内部会先打开目标 .udd
     if (isSheetRef(refStr)) {
-      const dotIdx = refStr.indexOf('.');
-      const sheetName = refStr.slice(1, dotIdx);
-      const addr = refStr.slice(dotIdx + 1);
+      const sr = parseSheetRef(refStr);
       if (typeof app !== 'undefined' && app.gotoSheetCell) {
-        app.gotoSheetCell(sheetName, addr, viewInstance);
+        app.gotoSheetCell(sr.sheetName, sr.addr, viewInstance, sr.docName || null);
       }
       return;
     }
@@ -813,6 +933,17 @@ function refreshRefs(viewEl, data) {
     }
     el.classList.toggle('ref-error', resolved.startsWith('#'));
   });
+  // 全节点引用 (=t1-1.t2-1) 的宿主 body：渲染时只克隆源节点 body，没有 data-ref（那是给 content 的），
+  // 单独用 data-ref-body 标记。源节点 body 改动后这里把宿主 body 文本同步过来，
+  // 与内联引用 ({{=t1-1.t2-1.body}}) 享有相同的实时刷新策略。
+  viewEl.querySelectorAll('[data-ref-body]').forEach(el => {
+    const refStr = el.dataset.refBody;
+    const sourceNode_ = isFullNodeRef(refStr) ? getFullRefNode(data, refStr) : null;
+    if (!sourceNode_) return;
+    const newBody = stripMediaTags(sourceNode_.body || '');
+    // body 没有挂 ref-icon（renderStyledText 直接重写 innerHTML），可直接 textContent 替换
+    el.textContent = newBody;
+  });
   // Handle async refs
   viewEl.querySelectorAll('[data-ref-async]').forEach(async el => {
     const refStr = el.dataset.refAsync;
@@ -872,11 +1003,11 @@ function normalizeMediaTags(text) {
   return tags.join('');
 }
 function mergeEditableTextAndMedia(originalRaw, editedText) {
-  const media = normalizeMediaTags(originalRaw);
-  if (!media) return editedText || '';
-  let cleanText = editedText || '';
-  media.replace(/\{\{(?!=)(.*?)\}\}/g, m => { cleanText = cleanText.split(m).join(''); return ''; });
-  return cleanText + media;
+  // 用户设计：不自动填充。任何含 ref / 媒体 tag 的 content / body 都已在 resolveNodeForRender
+  // 里被标记为 bodyEditable=false / contentEditable=false（hasOwnMedia / hasInlineRefs / isRef），
+  // 走 ref-display + 双击源码编辑路径；普通可编辑路径只面向"无 tag 的纯文本"，不需要把媒体
+  // tag 重新拼回来。直接把 editedText 原样写回 → 用户敲什么就存什么，不会出现"自动追加"。
+  return editedText || '';
 }
 function hasMediaTag(text) {
   return text && text.indexOf('{{') !== -1 && text.indexOf('}}') !== -1;

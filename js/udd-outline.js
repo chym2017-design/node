@@ -142,9 +142,13 @@ class OutlineView {
       if (desc.refStr) {
         content.classList.add('ref-display');
         content.dataset.ref = desc.refStr;
-        if (!isSheetRef(desc.refStr) && parseRef(desc.refStr).docName) content.dataset.refAsync = desc.refStr;
+        if (refNeedsAsyncLoad(desc.refStr)) content.dataset.refAsync = desc.refStr;
         const refIcon = createRefIcon(this.data, desc.refStr, this);
         content.appendChild(refIcon);
+      } else if (desc.hasOwnMedia) {
+        // 仅含媒体 tag 的 content：双击进入源码编辑（与 body 一致），不再走 mergeEditableTextAndMedia
+        content.classList.add('ref-display');
+        content.dataset.hasRef = '1';
       }
     }
     this.applyStyle(content, style);
@@ -217,7 +221,7 @@ class OutlineView {
       const bodyText = stripMediaTags(desc.displayBody);
 
       if (desc.bodyEditable) {
-        // Editable body (normal node or non-ref body)
+        // Editable body (normal node, no refs/media in body)
         bodyEl.contentEditable = 'plaintext-only';
         if (!bodyEl.contentEditable || bodyEl.contentEditable === 'inherit') bodyEl.contentEditable = 'true';
         renderStyledText(bodyEl, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
@@ -225,21 +229,39 @@ class OutlineView {
         bodyEl.dataset.path = path;
         bodyEl.dataset.field = 'body';
         bodyEl.spellcheck = false;
-        // Check if body itself is a field-ref
+      } else {
+        // Read-only body：根据 body 的具体形态挂上能让 onRefDblClick 进入源码编辑的标记。
+        //   1) {{=ref}} 内联引用 → renderInlineSegments，挂 ref-display + data-hasRef='1'
+        //   2) 整段 =ref           → ref-display + data-ref + ↗ 图标
+        //   3) 全节点引用宿主克隆 body（desc.sourceNode）→ 普通文本 + data-ref-body（refreshRefs 用）
+        //   4) 仅含媒体 tag 的 body → ref-display + data-hasRef='1'，双击即可改源码
         const rawBody = node.body || '';
-        if (isRef(rawBody)) {
+        bodyEl.contentEditable = 'false';
+        bodyEl.dataset.path = path;
+        bodyEl.dataset.field = 'body';
+        bodyEl.spellcheck = false;
+        if (desc.bodyInlineSegments) {
+          renderInlineSegments(bodyEl, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), bodyStyle);
+          if (typeof applyMdHtml === 'function') applyMdHtml(bodyEl, app, {inline:false});
+          bodyEl.classList.add('ref-display');
+          bodyEl.dataset.hasRef = '1';
+        } else if (isRef(rawBody)) {
+          renderStyledText(bodyEl, bodyText, node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
+          if (typeof applyMdHtml === 'function') applyMdHtml(bodyEl, app, {inline:false});
           bodyEl.classList.add('ref-display');
           bodyEl.dataset.ref = rawBody;
-          if (parseRef(rawBody).docName) bodyEl.dataset.refAsync = rawBody;
-          bodyEl.contentEditable = 'false';
-          const bodyRefIcon = createRefIcon(this.data, rawBody, this);
-          bodyEl.appendChild(bodyRefIcon);
+          if (refNeedsAsyncLoad(rawBody)) bodyEl.dataset.refAsync = rawBody;
+          bodyEl.appendChild(createRefIcon(this.data, rawBody, this));
+        } else {
+          // 全节点引用克隆体或普通含媒体 body：渲染成纯文本，再视情况挂 ref-display 让双击可入源码
+          renderStyledText(bodyEl, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
+          if (typeof applyMdHtml === 'function') applyMdHtml(bodyEl, app, {inline:false});
+          if (desc.refStr) bodyEl.dataset.refBody = desc.refStr;
+          if (hasMediaTag(rawBody) && !desc.sourceNode) {
+            bodyEl.classList.add('ref-display');
+            bodyEl.dataset.hasRef = '1';
+          }
         }
-      } else {
-        // Read-only body (from full-node ref source — pure visual clone)
-        bodyEl.contentEditable = 'false';
-        renderStyledText(bodyEl, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyStyle(el, runStyle));
-        if (typeof applyMdHtml === 'function') applyMdHtml(bodyEl, app, {inline:false});
       }
       bodyEl.style.marginLeft = (Math.max(0, level - 1) * 24 + 22) + 'px';
       this.applyStyle(bodyEl, bodyStyle);

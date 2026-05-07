@@ -230,11 +230,17 @@ class DocumentView {
         renderStyledText(contentSpan, contentText, node, 'content', style, (el, runStyle) => this.applyInlineStyle(el, runStyle));
         if (typeof applyMdHtml === 'function') applyMdHtml(contentSpan, app, {inline:true});
         contentSpan.contentEditable = 'false';
-        contentSpan.classList.add('ref-display');
-        contentSpan.dataset.ref = desc.refStr;
-        if (!isSheetRef(desc.refStr) && parseRef(desc.refStr).docName) contentSpan.dataset.refAsync = desc.refStr;
-        const docRefIcon = createRefIcon(this.data, desc.refStr, this);
-        contentSpan.appendChild(docRefIcon);
+        if (desc.refStr) {
+          contentSpan.classList.add('ref-display');
+          contentSpan.dataset.ref = desc.refStr;
+          if (refNeedsAsyncLoad(desc.refStr)) contentSpan.dataset.refAsync = desc.refStr;
+          const docRefIcon = createRefIcon(this.data, desc.refStr, this);
+          contentSpan.appendChild(docRefIcon);
+        } else if (desc.hasOwnMedia) {
+          // 仅含媒体 tag 的 content：双击进入源码编辑（与 outline 一致）
+          contentSpan.classList.add('ref-display');
+          contentSpan.dataset.hasRef = '1';
+        }
       }
       this.applyInlineStyle(contentSpan, style);
       heading.appendChild(contentSpan);
@@ -306,19 +312,38 @@ class DocumentView {
           bodyDiv.dataset.path = path;
           bodyDiv.dataset.field = 'body';
           bodyDiv.spellcheck = false;
+        } else {
+          // 与 outline 一致：根据 body 形态分别挂上能让 onRefDblClick 进入源码编辑的标记。
+          //   1) {{=ref}} 内联引用 → renderInlineSegments + ref-display + data-hasRef='1'
+          //   2) 整段 =ref           → ref-display + data-ref + ↗ 图标
+          //   3) 全节点引用宿主克隆 body → 普通文本 + data-ref-body
+          //   4) 仅含媒体 tag 的 body → ref-display + data-hasRef='1'，双击改源码
           const rawDocBody = node.body || '';
-          if (isRef(rawDocBody)) {
+          bodyDiv.contentEditable = 'false';
+          bodyDiv.dataset.path = path;
+          bodyDiv.dataset.field = 'body';
+          bodyDiv.spellcheck = false;
+          if (desc.bodyInlineSegments) {
+            renderInlineSegments(bodyDiv, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), bodyStyle);
+            if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
+            bodyDiv.classList.add('ref-display');
+            bodyDiv.dataset.hasRef = '1';
+          } else if (isRef(rawDocBody)) {
+            renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
+            if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
             bodyDiv.classList.add('ref-display');
             bodyDiv.dataset.ref = rawDocBody;
-            if (!isSheetRef(rawDocBody) && parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
-            bodyDiv.contentEditable = 'false';
-            const docBodyRefIcon = createRefIcon(this.data, rawDocBody, this);
-            bodyDiv.appendChild(docBodyRefIcon);
+            if (refNeedsAsyncLoad(rawDocBody)) bodyDiv.dataset.refAsync = rawDocBody;
+            bodyDiv.appendChild(createRefIcon(this.data, rawDocBody, this));
+          } else {
+            renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
+            if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
+            if (desc.refStr) bodyDiv.dataset.refBody = desc.refStr;
+            if (hasMediaTag(rawDocBody) && !desc.sourceNode) {
+              bodyDiv.classList.add('ref-display');
+              bodyDiv.dataset.hasRef = '1';
+            }
           }
-        } else {
-          bodyDiv.contentEditable = 'false';
-          renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, runStyle) => this.applyInlineStyle(el, runStyle));
-          if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
         }
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
@@ -427,8 +452,12 @@ class DocumentView {
     if (desc.refStr) {
       contentSpan.classList.add('ref-display');
       contentSpan.dataset.ref = desc.refStr;
-      if (!isSheetRef(desc.refStr) && parseRef(desc.refStr).docName) contentSpan.dataset.refAsync = desc.refStr;
+      if (refNeedsAsyncLoad(desc.refStr)) contentSpan.dataset.refAsync = desc.refStr;
       contentSpan.appendChild(createRefIcon(this.data, desc.refStr, this));
+    } else if (desc.hasOwnMedia && !readOnly) {
+      // 仅含媒体 tag 的 content：双击进入源码编辑
+      contentSpan.classList.add('ref-display');
+      contentSpan.dataset.hasRef = '1';
     }
     this.applyInlineStyle(contentSpan, style);
     heading.appendChild(contentSpan);
@@ -475,27 +504,44 @@ class DocumentView {
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);
       } else {
-        bodyDiv.contentEditable = desc.bodyEditable ? 'plaintext-only' : 'false';
-        if (!desc.bodyEditable && !bodyDiv.contentEditable) bodyDiv.contentEditable = 'false';
         const bodyText = stripMediaTags(desc.displayBody);
-        renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
-        if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
+        const rawDocBody = node.body || '';
         bodyDiv.dataset.path = path;
         bodyDiv.dataset.field = 'body';
         bodyDiv.spellcheck = false;
-        // 标记 ref-display：当本节点 body 自身是引用、或宿主整体走全节点引用（desc.sourceNode），
-        // 都让 bodyDiv 成为可双击源码编辑的引用单元（与大纲一致）。
-        const rawDocBody = node.body || '';
-        if (isRef(rawDocBody)) {
-          bodyDiv.classList.add('ref-display');
-          bodyDiv.dataset.ref = rawDocBody;
-          if (!isSheetRef(rawDocBody) && parseRef(rawDocBody).docName) bodyDiv.dataset.refAsync = rawDocBody;
+        if (desc.bodyEditable && !readOnly) {
+          // 普通可编辑 body
+          bodyDiv.contentEditable = 'plaintext-only';
+          if (!bodyDiv.contentEditable || bodyDiv.contentEditable === 'inherit') bodyDiv.contentEditable = 'true';
+          renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
+          if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
+        } else {
+          // 与 outline / _renderMainNode 一致：按 body 形态挂 ref-display 标记，让双击进入源码编辑。
           bodyDiv.contentEditable = 'false';
-          bodyDiv.appendChild(createRefIcon(this.data, rawDocBody, this));
-        } else if (desc.sourceNode) {
-          bodyDiv.classList.add('ref-display');
-          bodyDiv.dataset.hasRef = '1';
-          bodyDiv.contentEditable = 'false';
+          if (desc.bodyInlineSegments) {
+            renderInlineSegments(bodyDiv, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), bodyStyle);
+            if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
+            bodyDiv.classList.add('ref-display');
+            bodyDiv.dataset.hasRef = '1';
+          } else if (isRef(rawDocBody)) {
+            renderStyledText(bodyDiv, bodyText, node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
+            if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
+            bodyDiv.classList.add('ref-display');
+            bodyDiv.dataset.ref = rawDocBody;
+            if (refNeedsAsyncLoad(rawDocBody)) bodyDiv.dataset.refAsync = rawDocBody;
+            bodyDiv.appendChild(createRefIcon(this.data, rawDocBody, this));
+          } else {
+            renderStyledText(bodyDiv, bodyText, desc.sourceNode || node, 'body', bodyStyle, (el, rs) => this.applyInlineStyle(el, rs));
+            if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
+            if (desc.sourceNode) {
+              bodyDiv.classList.add('ref-display');
+              bodyDiv.dataset.hasRef = '1';
+              if (desc.refStr) bodyDiv.dataset.refBody = desc.refStr;
+            } else if (hasMediaTag(rawDocBody) && !readOnly) {
+              bodyDiv.classList.add('ref-display');
+              bodyDiv.dataset.hasRef = '1';
+            }
+          }
         }
         this.applyInlineStyle(bodyDiv, bodyStyle);
         nodeDiv.appendChild(bodyDiv);

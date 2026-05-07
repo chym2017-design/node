@@ -47,9 +47,30 @@ function renderInlineTable(container, ref) {
 function buildInlineTable(ref) {
   const table = document.createElement('table');
   table.className = 'inline-table';
-  // Get cell data from sheetView workbook
+  // Get cell data from the appropriate workbook:
+  //   ref.docName 非空 → 跨文档表格，从 _refDocSheets 取 cross-doc workbook；
+  //   ref.docName 空 → 本档，从 app.sheetView.workbook 取。
+  // 跨文档表格如果尚未加载，先返回"加载中"占位符并触发懒加载，加载完后重渲染当前视图。
   let ws = null;
-  if (typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook) {
+  let isCrossDoc = !!ref.docName;
+  if (isCrossDoc) {
+    const wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(ref.docName) : null;
+    if (wb) ws = wb.Sheets[ref.sheetName];
+    if (!wb) {
+      // 触发异步加载；完成后让当前视图重渲染（命中 _refDocSheets 后即可正常出表）。
+      if (typeof loadCrossDocSheetsAsync === 'function') {
+        loadCrossDocSheetsAsync(ref.docName, () => {
+          if (typeof app !== 'undefined' && app.renderCurrentView) {
+            requestAnimationFrame(() => app.renderCurrentView());
+          }
+        });
+      }
+      const placeholder = document.createElement('span');
+      placeholder.className = 'ref-error';
+      placeholder.textContent = '跨文档表格加载中 (' + ref.docName + ' / ' + ref.sheetName + ')';
+      return placeholder;
+    }
+  } else if (typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook) {
     ws = app.sheetView.workbook.Sheets[ref.sheetName];
   }
   if (!ws) {
@@ -57,14 +78,18 @@ function buildInlineTable(ref) {
     const placeholder = document.createElement('span');
     placeholder.className = 'ref-error';
     placeholder.style.cursor = 'pointer';
-    placeholder.title = '点击加载表格数据';
-    placeholder.textContent = '表格未加载 (' + ref.sheetName + ')';
-    placeholder.onclick = () => {
-      if (typeof app !== 'undefined') {
-        app.switchView('sheet');
-        setTimeout(() => app.switchView(app.currentView === 'sheet' ? 'outline' : app.currentView), 100);
-      }
-    };
+    placeholder.title = isCrossDoc ? '跨文档表格不存在或尚未读取' : '点击加载表格数据';
+    placeholder.textContent = isCrossDoc
+      ? ('跨文档表格未找到 (' + ref.docName + ' / ' + ref.sheetName + ')')
+      : ('表格未加载 (' + ref.sheetName + ')');
+    if (!isCrossDoc) {
+      placeholder.onclick = () => {
+        if (typeof app !== 'undefined') {
+          app.switchView('sheet');
+          setTimeout(() => app.switchView(app.currentView === 'sheet' ? 'outline' : app.currentView), 100);
+        }
+      };
+    }
     return placeholder;
   }
   const startR = parseInt(ref.startAddr.match(/\d+/)[0]) - 1;
@@ -77,15 +102,16 @@ function buildInlineTable(ref) {
     for (let c = startC; c <= endC; c++) {
       const td = document.createElement(r === startR ? 'th' : 'td');
       const addr = colName(c) + (r + 1);
+      // _sheetRefs（UDD 引用大纲数据回填到表格）只属于本档，跨文档场景不适用。
       const refKey = ref.sheetName + '!' + addr;
-      const sheetRefs = (typeof app !== 'undefined' && app.data && app.data._sheetRefs) ? app.data._sheetRefs : {};
+      const sheetRefs = (!isCrossDoc && typeof app !== 'undefined' && app.data && app.data._sheetRefs) ? app.data._sheetRefs : {};
       if (sheetRefs[refKey] && typeof resolveRef === 'function') {
         td.textContent = resolveRef(app.data, sheetRefs[refKey]);
         if (app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(td, app, {inline:true});
       } else {
         const cell = ws[addr];
         td.textContent = cell ? (cell.w || (cell.v !== undefined ? String(cell.v) : '')) : '';
-        if (app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(td, app, {inline:true});
+        if (typeof app !== 'undefined' && app.renderMode && typeof applyMdHtml === 'function') applyMdHtml(td, app, {inline:true});
       }
       tr.appendChild(td);
     }

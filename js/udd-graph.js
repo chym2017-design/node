@@ -172,6 +172,9 @@ class GraphView {
       if (typeof _refDocCache !== 'undefined') {
         for (const k of Object.keys(_refDocCache)) delete _refDocCache[k];
       }
+      if (typeof _refDocSheets !== 'undefined') {
+        for (const k of Object.keys(_refDocSheets)) delete _refDocSheets[k];
+      }
       this.render(this.data);
     };
   }
