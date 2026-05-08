@@ -46,27 +46,42 @@ const RESERVED_BASE = [
   'markdownit', 'markdownIt',
 ];
 
+// 这些是 vendor 库已经在前面 <script> 里挂上 window 的名字，
+// 即便源文件里出现 `const JSZip = ...` 之类，也不要在 IIFE 末尾再 expose 一次
+// 否则会用本文件作用域内同名的（很可能是 undefined）覆盖掉 vendor 实例。
+const VENDOR_GLOBALS = new Set(['JSZip', 'XLSX', 'PptxGenJS', 'markdownit', 'markdownIt']);
+
 // 跑时填充：扫描所有 own 文件的顶层声明（function / class / const / let / var）
 let RESERVED = [...RESERVED_BASE];
 
 // 是否启用 obfuscator（默认关：先验证 terser-only 能跑通，再加混淆）
-//   不加任何环境变量 → 只跑 terser，所有 own 文件都只压缩、不混淆
-//   设 OBFUSCATE=1 → 对三个核心文件 (udd-data / udd-ref / udd-mindmap) 启用重度混淆
-//   设 RAW=1       → 完全不处理，所有文件按原样合并 (诊断用)
-const OBFUSCATE = process.env.OBFUSCATE === '1';
+//   不加任何环境变量      → 只跑 terser，所有 own 文件都只压缩、不混淆
+//   OBFUSCATE=1          → 对三个核心文件 (udd-data / udd-ref / udd-mindmap) 启用重度混淆
+//   OBFUSCATE=udd-data    → 仅混淆 udd-data.js（bisect 用：定位是哪个文件的混淆导致问题）
+//   OBFUSCATE=udd-ref     → 仅混淆 udd-ref.js
+//   OBFUSCATE=udd-mindmap → 仅混淆 udd-mindmap.js
+//   RAW=1                → 完全不处理，所有文件按原样合并 (诊断用)
+const OBFUSCATE = process.env.OBFUSCATE || '';
 const RAW = process.env.RAW === '1';
+
+function shouldObfuscate(file) {
+  if (!OBFUSCATE) return false;
+  if (OBFUSCATE === '1') return CORE_FILES.has(file);
+  return file.includes(OBFUSCATE);  // 允许 'udd-data' / 'udd-ref' / 'udd-mindmap'
+}
 
 /**
  * 从一段 JS 源码里提取所有"顶层声明"的标识符。
- * 仅匹配每行起始（无缩进）位置的 function / class / const / let / var 声明，
- * 不会进入函数体内部局部变量。
+ * 严格只匹配列 0 起始的 function / class / const / let / var 声明，
+ * 不带前导空白——避免把函数体里 `  const num = ...` 这种局部变量误识别为顶层。
+ * 如果项目里有 `\t` 缩进或 BOM，需要在调用前先 normalize。
  */
 function extractTopLevelIdentifiers(code) {
   const ids = new Set();
   const patterns = [
-    /^\s*function\s+([A-Za-z_$][\w$]*)/gm,
-    /^\s*class\s+([A-Za-z_$][\w$]*)/gm,
-    /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:=|,|;|\s)/gm,
+    /^function\s+([A-Za-z_$][\w$]*)/gm,
+    /^class\s+([A-Za-z_$][\w$]*)/gm,
+    /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:=|,|;|\s)/gm,
   ];
   for (const re of patterns) {
     let m;
@@ -94,32 +109,46 @@ async function terserPass(code, file) {
   return result.code;
 }
 
-function obfuscatePass(code) {
+function hashSeed(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h) || 1;
+}
+
+function obfuscatePass(code, file) {
+  // 每个文件用基于文件名的不同 seed：避免多文件混淆时 stringArray 等 var _0xXXXX 全局名撞车
+  // （撞名会导致后加载文件覆盖前一个的常量数组，前一个运行时拿到错的字符串 → 二进制路径输出乱字节
+  //  → XLSX 看到非 ZIP 头报 "Unsupported ZIP file"。和 identifiersPrefix 等价但不进 obfuscator 慢路径。）
   const result = JsObfuscator.obfuscate(code, {
     compact: true,
     target: 'browser',
     renameGlobals: false,                    // ← 关键：不改全局名
     reservedNames: RESERVED,
+    seed: hashSeed(file),                    // ← 关键：每个文件不同 seed，避免跨文件 var 撞名
 
-    // 控制流平坦化（核心防护）
+    // 控制流平坦化（核心防护）—— 阈值不要给到 1.0，会显著拖慢运行
     controlFlowFlattening: true,
-    controlFlowFlatteningThreshold: 0.7,
+    controlFlowFlatteningThreshold: 0.5,
 
-    // 死代码注入（中度，避免体积过大）
-    deadCodeInjection: true,
-    deadCodeInjectionThreshold: 0.3,
+    // 死代码注入：性能杀手 / 防护废物 比例最高的开关，关闭。
+    //   - 成本：每个函数体被插入垃圾分支，热路径（递归 / 每次 render 触发的引用解析）
+    //          会被显著拖慢，曾观察到跨文档引用从 2s 拖到 10s+ 甚至超过 fetch 的 3s 超时
+    //          导致"有时找不到"。
+    //   - 收益：AI 一眼识别死代码模板（if(!![]){...} 之类），保护价值很低。
+    deadCodeInjection: false,
+    deadCodeInjectionThreshold: 0.2,
 
-    // 字符串加密
+    // 字符串加密（保留：这是混淆的主要价值）
     stringArray: true,
     stringArrayEncoding: ['rc4'],
-    stringArrayThreshold: 0.8,
-    splitStrings: true,
+    stringArrayThreshold: 0.7,
+    splitStrings: false,                     // ← 关闭：曾观察到偶发问题，价值低
     splitStringsChunkLength: 8,
 
     // 标识符与数字变形
     identifierNamesGenerator: 'mangled-shuffled',
     transformObjectKeys: false,              // ← 关键：保留对象键名（核心模块可能向外暴露常量对象，例如 UDD_STYLE_FIELDS）
-    numbersToExpressions: true,
+    numbersToExpressions: false,             // ← 关闭：这个变换在某些边界情况会破坏 typed-array / 二进制数据相关代码路径
 
     // 关闭兼容性敏感项（见文件头注释）
     selfDefending: false,
@@ -136,8 +165,24 @@ function escapeForScript(code) {
 async function processOwnJs(file, content) {
   if (RAW) return content;
   const t = await terserPass(content, file);
-  if (OBFUSCATE && CORE_FILES.has(file)) return obfuscatePass(t);
-  return t;
+  if (!shouldObfuscate(file)) return t;
+
+  // —— IIFE 包裹 + 显式 expose ——
+  // obfuscator 生成的 var _0xXXXX (stringArray、RC4 解码器、CFF dispatcher state 等)
+  // 默认是 top-level var，会挂到 window。当多个文件都被混淆时，这些短名极易撞车
+  //（mangled-shuffled 字母表就 a-zA-Z0-9，撞名概率随文件数指数增长），
+  // 后加载文件的 var iV = ... 覆盖 window.iV，前一个文件运行时调到错的解码器
+  // → 解码出错的方法名 → "regex[xxx] is not a function" 等怪异报错。
+  //
+  // 修法：把整个混淆产物包进 IIFE，所有 obfuscator 内部 var 留在闭包里、不进 window。
+  // 然后把"本文件"用户定义的顶层符号显式挂回 window，让其他文件能继续以全局名引用。
+  const ownIds = [...extractTopLevelIdentifiers(content)]
+    .filter((id) => !VENDOR_GLOBALS.has(id));
+  const obfuscated = obfuscatePass(t, file);
+  const expose = ownIds.length > 0
+    ? `\n;Object.assign(typeof window!=='undefined'?window:globalThis,{${ownIds.join(',')}});`
+    : '';
+  return `(function(){\n${obfuscated}${expose}\n})();`;
 }
 
 function readText(p) { return fs.readFileSync(p, 'utf8'); }
@@ -171,8 +216,9 @@ async function build() {
   }
   RESERVED = [...allIds];
   const mode = RAW ? 'RAW (no terser, no obfuscator)'
-                   : OBFUSCATE ? 'TERSER + OBFUSCATE'
-                               : 'TERSER only (set OBFUSCATE=1 to enable obfuscator, RAW=1 to disable all)';
+                   : OBFUSCATE === '1' ? 'TERSER + OBFUSCATE (all core)'
+                   : OBFUSCATE ? `TERSER + OBFUSCATE only [${OBFUSCATE}]`
+                   : 'TERSER only (set OBFUSCATE=1 to enable, OBFUSCATE=udd-data to isolate, RAW=1 to skip all)';
   console.log(`  Total reserved: ${RESERVED.length}   Mode: ${mode}`);
 
   // 2. 处理每个脚本（保留每个源文件一个 <script> 标签的原始边界，
@@ -190,7 +236,7 @@ async function build() {
       out = raw; tag = 'VENDOR  ';
     } else {
       out = await processOwnJs(file, raw);
-      tag = RAW ? 'RAW     ' : (OBFUSCATE && CORE_FILES.has(file)) ? 'OBFUSC  ' : 'TERSER  ';
+      tag = RAW ? 'RAW     ' : shouldObfuscate(file) ? 'OBFUSC  ' : 'TERSER  ';
     }
     console.log(`  [${tag}] ${file.padEnd(22)} ${fmtSize(before).padStart(9)} → ${fmtSize(out.length).padStart(9)}`);
     scriptBlocks.push(`<script>/* ${file} */\n${escapeForScript(out)}\n</script>`);

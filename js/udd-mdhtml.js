@@ -117,12 +117,12 @@
     // 走的是同一条函数，行为一致。
     el.dataset.refEditing = raw;
     el.focus();
-    // 与 ref 的 onRefDblClick 完全一致：selectNodeContents 全选源码（蓝色高亮），
-    // 让用户能立刻看到"已进入编辑态"，并避免浏览器在原坐标 select-word 默认行为
-    // 把光标 / 焦点搞乱。
+    // 与 ref 的 onRefDblClick 完全一致：光标定位到末尾（不全选），并避免浏览器
+    // 在原坐标 select-word 默认行为把光标 / 焦点搞乱。
     try {
       const range = document.createRange();
       range.selectNodeContents(el);
+      range.collapse(false);
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);

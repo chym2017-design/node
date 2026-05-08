@@ -652,6 +652,7 @@ class DocumentView {
     refEl.focus();
     const range = document.createRange();
     range.selectNodeContents(refEl);
+    range.collapse(false);
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);

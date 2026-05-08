@@ -666,19 +666,26 @@ class App {
       if (!el.isConnected) continue;
       const refStr = el.dataset.refAsync;
       try {
-        const resolved = await resolveRefAsync(this.data, refStr);
+        let resolved = await resolveRefAsync(this.data, refStr);
         if (!el.isConnected) continue;
-        el.classList.toggle('ref-error', resolved.startsWith('#'));
+        // 与 refreshRefs 保持一致：内联引用做完整清理（剥媒体 tag + 折换行），
+        // 整段 =ref 仅剥媒体 tag。否则刷新会把 resolveInlineRefs 的清理覆盖掉，
+        // 导致 inline body 渲染再次出现"值 → 大空白 → ↗"的换行 gap。
+        const isInline = el.classList.contains('inline-ref');
+        const cleanResolved = typeof resolved === 'string'
+          ? (isInline ? inlineRefDisplay(resolved) : stripMediaTags(resolved))
+          : resolved;
+        el.classList.toggle('ref-error', cleanResolved.startsWith('#'));
         // 保留已挂载的 ref-icon（↗ 跳转箭头），只替换文本节点。
         // 直接 el.textContent = resolved 会连同子 .ref-icon 一并被擦掉。
         const existingIcon = el.querySelector('.ref-icon');
         if (existingIcon) {
           Array.from(el.childNodes).forEach(c => { if (c !== existingIcon) el.removeChild(c); });
-          el.insertBefore(document.createTextNode(resolved), existingIcon);
+          el.insertBefore(document.createTextNode(cleanResolved), existingIcon);
         } else {
-          el.textContent = resolved;
+          el.textContent = cleanResolved;
         }
-        // If resolved contains media, flag for a single deferred re-render
+        // If resolved (清理前) contains media, flag for a single deferred re-render
         if (hasMediaTag(resolved)) needsRerender = true;
       } catch (e) { /* skip */ }
     }

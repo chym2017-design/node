@@ -107,9 +107,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* 引用背景色：默认 var(--blue-50)，被 data.type_global.ref_color 覆盖（统一通过 #editor 上的 --ref-color 变量） */
 .ref-display{background:var(--ref-color,var(--blue-50));border-radius:3px;position:relative}
 .ref-display:focus{background:var(--bg)}
+/* 整段 =ref / {{=ref}} body：让 body 块的蓝底紧贴文本与 ↗（与 content 的 flex shrink-to-fit 视觉一致），
+   不再把蓝底拖到整行右边形成"大空白" gap。max-width 兜住父容器宽度，避免长文本溢出。 */
+.outline-body.ref-display,.doc-body.ref-display{width:fit-content;max-width:100%}
 .ref-error{color:#ef4444;font-style:italic;font-size:90%}
-.ref-icon{display:inline-block;font-size:9px;color:var(--blue-400);margin-left:2px;opacity:0;cursor:pointer;user-select:none;vertical-align:middle;text-decoration:none;transition:opacity .15s}
-.outline-content:hover .ref-icon,.doc-content:hover .ref-icon,.ref-icon:focus{opacity:.7}
+/* text-indent:0 — .ref-icon 是 inline-block，会继承父级 paragraph_first_indent
+   作为自身首行缩进，把 ↗ 推到 ~2em 右侧，造成 content(8x8) vs body(40x8) 的差异。
+   显式归零，让 ↗ 始终紧贴前面的引用值，与父容器的段落首行缩进解耦。 */
+.ref-icon{display:inline-block;font-size:9px;line-height:1;color:var(--blue-400);margin-left:2px;opacity:0;cursor:pointer;user-select:none;vertical-align:middle;text-decoration:none;transition:opacity .15s;text-indent:0}
+/* hover 显形规则：content 与 body 都覆盖（之前只有 content 有，body 里 ↗ 永远不显形，
+   user 移鼠标找 ↗ 时偶然命中位置才看到，视觉上像"value 后面凭空冒出 ↗"）。 */
+.outline-content:hover .ref-icon,.doc-content:hover .ref-icon,.outline-body:hover .ref-icon,.doc-body:hover .ref-icon,.ref-icon:focus{opacity:.7}
 .ref-icon:hover{opacity:1;color:var(--blue-600);transform:scale(1.15)}
 .ref-icon.ref-icon-error{color:#ef4444;opacity:.6}
 /* 行内引用：背景同样受 --ref-color 控制；字体颜色不再硬编码蓝色，与块级 .ref-display 统一跟随节点样式 */

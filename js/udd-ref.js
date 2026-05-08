@@ -58,17 +58,31 @@ function hasInlineRefs(value) {
 }
 
 // Parse content with {{=ref}} into segments: [{type:'text',value:...}, {type:'ref',raw:...,resolved:...}]
+// 渲染规则：
+//   - text 段：剥掉用户写在文本里的媒体 tag（{{"image":...}} / {{"table":...}} 等）。这些 tag
+//     由独立的媒体 collector 单独渲染成块级图/视/表，不应在 inline 文本里再以字面 {{...}} 出现。
+//   - ref 段：resolved 同样剥媒体 tag（避免被引用的源 body 里夹带的媒体 tag 被当作字面文本写出来），
+//     并把换行折成空格 —— 防止 markdown-it 的 breaks:true 把源字段里的 \n 转成 <br>，导致内联引用
+//     渲染后出现"值 → 大空白 → ↗"的换行 gap。
+//   该清理逻辑被 refreshRefs / _resolveAsyncRefs 复用（见 inlineRefDisplay），保证 DOM 刷新路径
+//   不会用未清理的原始 resolveRef 结果覆盖掉初次渲染时的清理。
+function inlineRefDisplay(s) {
+  if (typeof s !== 'string') return '';
+  return stripMediaTags(s).replace(/[\r\n]+/g, ' ');
+}
+
 function resolveInlineRefs(data, text) {
   const segments = [];
   const re = /\{\{(=[^}]+)\}\}/g;
   let lastIdx = 0, m;
+  const cleanText = (s) => (typeof s === 'string' ? stripMediaTags(s) : '');
   while ((m = re.exec(text)) !== null) {
-    if (m.index > lastIdx) segments.push({ type: 'text', value: text.slice(lastIdx, m.index) });
+    if (m.index > lastIdx) segments.push({ type: 'text', value: cleanText(text.slice(lastIdx, m.index)) });
     const refStr = m[1];
-    segments.push({ type: 'ref', raw: refStr, resolved: resolveRef(data, refStr) });
+    segments.push({ type: 'ref', raw: refStr, resolved: inlineRefDisplay(resolveRef(data, refStr)) });
     lastIdx = re.lastIndex;
   }
-  if (lastIdx < text.length) segments.push({ type: 'text', value: text.slice(lastIdx) });
+  if (lastIdx < text.length) segments.push({ type: 'text', value: cleanText(text.slice(lastIdx)) });
   return segments;
 }
 
@@ -105,19 +119,56 @@ function getRefTargetPath(data, refStr) {
   return findFullPath(data, ref.nodePath);
 }
 
+// 拿/建 path index（lazy）。tree 编辑后调用方应把 data._pathIndex 置 null。
+// idx 是 Object.create(null) 字典，用属性访问 idx[key] 而非 Map.get(key)，
+// 避免混淆器对方法名 get/set 的 stringArray 编码出错。
+function _getPathIndex(data) {
+  const m = data._pathIndex;
+  // 健壮检测：null / undefined / 不是字典对象 → 重建
+  if (!m || typeof m !== 'object' || Array.isArray(m)) {
+    return data._pathIndex = buildPathIndex(data);
+  }
+  return m;
+}
+
+// 按段走树取节点。任何一段 miss 返回 null。
+function _walkPath(obj, segments) {
+  let cur = obj;
+  for (const seg of segments) {
+    if (!cur || typeof cur !== 'object' || !cur[seg]) return null;
+    cur = cur[seg];
+  }
+  return cur;
+}
+
 // Find the full path of a node key in the data tree
 function findFullPath(data, nodeKey) {
   if (nodeKey.includes('.')) {
     const parts = nodeKey.split('.');
-    // Find the full path of the first segment recursively
-    const rootPath = _findPathRecursive(data, parts[0], '');
-    if (!rootPath) return null;
-    // Build and verify the full path
-    const fullPath = rootPath + '.' + parts.slice(1).join('.');
+    let idx = _getPathIndex(data);
+    let rootPath = idx[parts[0]];
+    if (!rootPath) {
+      // 索引可能因 tree 编辑变 stale；重建一次再试
+      data._pathIndex = idx = buildPathIndex(data);
+      rootPath = idx[parts[0]];
+      if (!rootPath) return null;
+    }
+    const fullPath = parts.length > 1 ? rootPath + '.' + parts.slice(1).join('.') : rootPath;
     if (getNodeByPath(data, fullPath)) return fullPath;
-    return null;
+    // fullPath miss：再重建一次（中间段也可能动了）
+    data._pathIndex = idx = buildPathIndex(data);
+    rootPath = idx[parts[0]];
+    if (!rootPath) return null;
+    const fullPath2 = parts.length > 1 ? rootPath + '.' + parts.slice(1).join('.') : rootPath;
+    return getNodeByPath(data, fullPath2) ? fullPath2 : null;
   }
-  return _findPathRecursive(data, nodeKey, '');
+  // 单段：索引一查到底
+  let idx = _getPathIndex(data);
+  let p = idx[nodeKey];
+  if (p && getNodeByPath(data, p)) return p;
+  data._pathIndex = idx = buildPathIndex(data);
+  p = idx[nodeKey];
+  return (p && getNodeByPath(data, p)) ? p : null;
 }
 
 function _findPathRecursive(obj, targetKey, prefix) {
@@ -132,71 +183,79 @@ function _findPathRecursive(obj, targetKey, prefix) {
   return null;
 }
 
-function parseRef(refStr) {
-  const raw = refStr.slice(1); // remove leading '='
-  const result = { docName: null, nodePath: null, field: null, slice: null, matchExpr: null, isUddEmbed: false };
+// ================================================================
+//  parseRef 性能优化基础：正则提到模块顶层（避免每次调用重新构造）
+//  + memo cache（refStr 是纯输入，结果可永久缓存）
+//  + .udd 快路径（同档引用直接跳过 docName 检测循环）
+// ================================================================
+const REF_MATCH_RE = /\.match\(\/(.+?)\/([gimsuy]*)\)\.\[(\d+)\]$/;
+const REF_SLICE_RE = /\((\d+),(\d+)\)$/;
+const REF_TNODE_RE = /^t\d+-\d+$/;
+const REF_UDD_EMBED_PREFIX = 'udd.ref-docs.';
+const _parseRefCache = new Map();
 
-  // Extract .match(/pattern/).[index] if present
-  let work = raw;
-  const matchRe = /\.match\(\/(.+?)\/([gimsuy]*)\)\.\[(\d+)\]$/;
-  const mm = work.match(matchRe);
-  if (mm) {
-    result.matchExpr = { pattern: new RegExp(mm[1], mm[2]), index: parseInt(mm[3]) };
-    work = work.slice(0, mm.index);
-  }
-
-  // Extract (start,end) slice if present
-  const sliceRe = /\((\d+),(\d+)\)$/;
-  const sm = work.match(sliceRe);
-  if (sm) {
-    result.slice = [parseInt(sm[1]), parseInt(sm[2])];
-    work = work.slice(0, sm.index);
-  }
-
-  // Handle udd.ref-docs. prefix (embedded cross-doc ref)
-  const UDD_PREFIX = 'udd.ref-docs.';
-  if (work.startsWith(UDD_PREFIX)) {
-    result.isUddEmbed = true;
-    work = work.slice(UDD_PREFIX.length);
-  }
-
-  // Split remaining by '.'
+// 把 work 字符串（已经剥掉 docName 部分）解析成 { nodePath, field }，写入 result。
+// 也兼容旧语法：当 result.docName 还是 null、首段非 tNode 时把首段当 docName。
+function _parseRefRest(result, work) {
   const parts = work.split('.');
-  const tNodeRe = /^t\d+-\d+$/;
-
-  // Determine docName.
-  // 新语法（推荐）：docName 必须以 .udd 段结尾，例如 "report.udd.t1-1.content"
-  //                 或带路径 "../sub/report.udd.t1-1"。docName = "../sub/report.udd"。
-  // 旧语法（向后兼容）：embedded ref 或首段非 tNode 时，把首段作为 docName。
   let idx = 0;
-  let uddIdx = -1;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (parts[i] === 'udd') { uddIdx = i; break; }
-  }
-  if (uddIdx >= 0) {
-    const before = parts.slice(0, uddIdx).join('.');
-    result.docName = before ? before + '.udd' : 'udd';
-    idx = uddIdx + 1;
-  } else if (parts.length >= 2 && !tNodeRe.test(parts[0])) {
+  if (!result.docName && !result.isUddEmbed && parts.length >= 2 && !REF_TNODE_RE.test(parts[0])) {
     result.docName = parts[0];
     idx = 1;
   }
-
-  // Collect consecutive tNode segments as the node path
   const pathParts = [];
-  while (idx < parts.length && tNodeRe.test(parts[idx])) {
+  while (idx < parts.length && REF_TNODE_RE.test(parts[idx])) {
     pathParts.push(parts[idx]);
     idx++;
   }
-  if (pathParts.length > 0) {
-    result.nodePath = pathParts.join('.');
+  if (pathParts.length > 0) result.nodePath = pathParts.join('.');
+  if (idx < parts.length) result.field = parts[idx];
+}
+
+function parseRef(refStr) {
+  const cached = _parseRefCache.get(refStr);
+  if (cached) return cached;
+
+  const result = { docName: null, nodePath: null, field: null, slice: null, matchExpr: null, isUddEmbed: false };
+  let raw = refStr.slice(1); // remove leading '='
+
+  // 后缀 .match(/pattern/).[idx]（少见，先 strip）
+  const matchM = raw.match(REF_MATCH_RE);
+  if (matchM) {
+    result.matchExpr = { pattern: new RegExp(matchM[1], matchM[2]), index: parseInt(matchM[3]) };
+    raw = raw.slice(0, matchM.index);
   }
 
-  // Remaining part (if any) is the field name
-  if (idx < parts.length) {
-    result.field = parts[idx];
+  // 后缀 (start,end) slice
+  const sliceM = raw.match(REF_SLICE_RE);
+  if (sliceM) {
+    result.slice = [parseInt(sliceM[1]), parseInt(sliceM[2])];
+    raw = raw.slice(0, sliceM.index);
   }
 
+  // —— 三种形态分发，避免每次都 split + 循环找 udd 段 ——
+
+  // (1) 嵌入引用：udd.ref-docs.<docKey>.<rest>
+  if (raw.startsWith(REF_UDD_EMBED_PREFIX)) {
+    result.isUddEmbed = true;
+    _parseRefRest(result, raw.slice(REF_UDD_EMBED_PREFIX.length));
+    _parseRefCache.set(refStr, result);
+    return result;
+  }
+
+  // (2) 跨档引用：<path>.udd.<rest>  ← 你提到的 .udd 快路径
+  //   indexOf 是 O(n) 的简单字符串扫描，比 split + 数组扫描快得多
+  const uddSep = raw.indexOf('.udd.');
+  if (uddSep >= 0) {
+    result.docName = raw.slice(0, uddSep + 4);   // "...path/file.udd"
+    _parseRefRest(result, raw.slice(uddSep + 5)); // 5 = '.udd.' 长度
+    _parseRefCache.set(refStr, result);
+    return result;
+  }
+
+  // (3) 同档引用 + 旧语法兜底
+  _parseRefRest(result, raw);
+  _parseRefCache.set(refStr, result);
   return result;
 }
 
@@ -293,30 +352,31 @@ function _resolveLocalRef(data, ref) {
 
 function findRefNode(data, nodePath) {
   if (!nodePath) return null;
-  // Try direct path from root first (e.g. t0-1.t1-1.t2-1)
-  if (nodePath.includes('.')) {
-    const segments = nodePath.split('.');
-    let current = data;
-    let ok = true;
-    for (const seg of segments) {
-      if (!current || typeof current !== 'object' || !current[seg]) { ok = false; break; }
-      current = current[seg];
+  const segments = nodePath.includes('.') ? nodePath.split('.') : [nodePath];
+
+  // ① 直接路径（命中场景：=t0-1.xxx 形式的根级引用）
+  const direct = _walkPath(data, segments);
+  if (direct !== null) return direct;
+
+  // ② 路径索引（命中场景：=t1-1.xxx 形式的子节点引用，最常见）
+  let idx = _getPathIndex(data);
+  let fullPath = idx[segments[0]];
+  if (fullPath) {
+    const fullSegs = fullPath.split('.');
+    for (let i = 1; i < segments.length; i++) fullSegs.push(segments[i]);
+    const found = _walkPath(data, fullSegs);
+    if (found !== null) return found;
+
+    // ③ 索引 stale（tree 刚编辑过）：重建后重试
+    data._pathIndex = idx = buildPathIndex(data);
+    fullPath = idx[segments[0]];
+    if (fullPath) {
+      const fullSegs2 = fullPath.split('.');
+      for (let i = 1; i < segments.length; i++) fullSegs2.push(segments[i]);
+      return _walkPath(data, fullSegs2);
     }
-    if (ok) return current;
-    // Direct path failed — search for the first segment recursively, then walk the rest
-    const rootKey = segments[0];
-    const found = findNodeRecursive(data, rootKey);
-    if (!found) return null;
-    current = found;
-    for (let i = 1; i < segments.length; i++) {
-      if (!current || typeof current !== 'object' || !current[segments[i]]) return null;
-      current = current[segments[i]];
-    }
-    return current;
   }
-  // Single segment: try direct key first, then recursive search
-  if (data[nodePath]) return data[nodePath];
-  return findNodeRecursive(data, nodePath);
+  return null;
 }
 
 // ================================================================
@@ -916,11 +976,27 @@ function ensureNodeVisible(data, targetPath) {
 
 function refreshRefs(viewEl, data) {
   if (!viewEl) return;
-  viewEl.querySelectorAll('[data-ref]').forEach(el => {
-    const refStr = el.dataset.ref;
-    const isFullRef_ = isFullNodeRef(refStr);
+
+  // 单 pass 缓存：同一次 refreshRefs 内，相同 refStr 只解析一次。
+  // 文档里大量重复引用（同一个 =t1-1.content 在多处出现）时，把 N 次
+  // parseRef + findRefNode + nodeToText 折叠成 1 次，N→1 倍速。
+  const passCache = new Map();
+  function resolveOnce(refStr, isFullRef_) {
+    if (passCache.has(refStr)) return passCache.get(refStr);
     const sourceNode_ = isFullRef_ ? getFullRefNode(data, refStr) : null;
     const resolved = isFullRef_ && sourceNode_ ? (sourceNode_.content || '') : resolveRef(data, refStr);
+    passCache.set(refStr, resolved);
+    return resolved;
+  }
+
+  viewEl.querySelectorAll('[data-ref]').forEach(el => {
+    const refStr = el.dataset.ref;
+    let resolved = resolveOnce(refStr, isFullNodeRef(refStr));
+    // 内联引用（.inline-ref）做完整清理：剥媒体 tag + 折换行；
+    // 整段 =ref（无 .inline-ref 类，块级显示）仅剥媒体 tag，保留多行结构由 CSS / md 处理。
+    if (typeof resolved === 'string') {
+      resolved = el.classList.contains('inline-ref') ? inlineRefDisplay(resolved) : stripMediaTags(resolved);
+    }
     // 保留现有 ref-icon（↗），让它始终位于文本之后（右下角）
     const existingIcon = el.querySelector('.ref-icon');
     if (existingIcon) {
@@ -944,10 +1020,14 @@ function refreshRefs(viewEl, data) {
     // body 没有挂 ref-icon（renderStyledText 直接重写 innerHTML），可直接 textContent 替换
     el.textContent = newBody;
   });
-  // Handle async refs
+  // Handle async refs（异步路径暂不复用 passCache：await 期间 DOM 可能已切换，
+  // 而且多数情况下异步 ref 在文档里出现次数远少于同步 ref，重复解析的乘数效应弱）
   viewEl.querySelectorAll('[data-ref-async]').forEach(async el => {
     const refStr = el.dataset.refAsync;
-    const resolved = await resolveRefAsync(data, refStr);
+    let resolved = await resolveRefAsync(data, refStr);
+    if (typeof resolved === 'string') {
+      resolved = el.classList.contains('inline-ref') ? inlineRefDisplay(resolved) : stripMediaTags(resolved);
+    }
     const existingIcon = el.querySelector('.ref-icon');
     if (existingIcon) {
       Array.from(el.childNodes).forEach(child => {
@@ -1173,6 +1253,7 @@ function indentNodeData(data, path) {
   }
   prevNode.hide = 0;
   const prevPath = parts.length === 1 ? prevKey : parts.slice(0,-1).join('.') + '.' + prevKey;
+  data._pathIndex = null;  // tree shape changed → 失效路径索引
   return prevPath + '.' + newKey;
 }
 
@@ -1201,6 +1282,7 @@ function outdentNodeData(data, path) {
     }
     for (const k of Object.keys(data)) delete data[k];
     Object.assign(data, temp);
+    data._pathIndex = null;  // tree shape changed
     return newKey;
   }
   const parentPath = parts.slice(0, -1).join('.');
@@ -1222,6 +1304,7 @@ function outdentNodeData(data, path) {
     if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
   }
   insertAfter(grandParent, parentKey, newKey, newNode);
+  data._pathIndex = null;  // tree shape changed
   return parentParts.length === 1 ? newKey : parentParts.slice(0,-1).join('.') + '.' + newKey;
 }
 
@@ -1254,6 +1337,7 @@ function moveNodeData(data, srcPath, dstPath, mode) {
     const newKey = `t${newLevel}-${seq}`;
     target[newKey] = leveled;
     target.hide = 0;
+    data._pathIndex = null;  // tree shape changed
     return dstPath + '.' + newKey;
   }
   // before / after: same level as target
@@ -1267,6 +1351,7 @@ function moveNodeData(data, srcPath, dstPath, mode) {
   const newKey = `t${targetLevel}-${seq}`;
   if (mode === 'before') insertBefore(dstParent, dstKey, newKey, leveled);
   else insertAfter(dstParent, dstKey, newKey, leveled);
+  data._pathIndex = null;  // tree shape changed
   return dstParts.length === 1 ? newKey : dstParts.slice(0,-1).join('.') + '.' + newKey;
 }
 

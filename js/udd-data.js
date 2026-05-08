@@ -314,6 +314,25 @@ function getNodeByPath(data, path) {
   for (const p of parts) { if (!n || typeof n !== 'object') return null; n = n[p]; }
   return n;
 }
+
+// 一次性扫一棵 data 树，建立 tNodeKey -> 完整路径 的反查表。
+// 用于 findRefNode / findFullPath 把 O(N) 兜底 DFS 替换成 O(1) 属性查找。
+// 用 Object.create(null) 而不是 Map：避免被混淆器的 stringArray 把 .get / .set 等
+// 方法名编码成密文（曾观察到 IIFE 跨模块调用时方法名解码错位 → "X.get is not a function"）。
+function buildPathIndex(data) {
+  const map = Object.create(null);
+  function walk(obj, prefix) {
+    if (!obj || typeof obj !== 'object') return;
+    for (const k of Object.keys(obj)) {
+      if (!isTNode(k)) continue;
+      const full = prefix ? prefix + '.' + k : k;
+      if (!(k in map)) map[k] = full;
+      walk(obj[k], full);
+    }
+  }
+  walk(data, '');
+  return map;
+}
 function getParentAndKey(data, path) {
   const parts = path.split('.');
   const key = parts.pop();
