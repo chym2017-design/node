@@ -72,14 +72,14 @@ function shouldObfuscate(file) {
 
 /**
  * 从一段 JS 源码里提取所有"顶层声明"的标识符。
- * 严格只匹配列 0 起始的 function / class / const / let / var 声明，
+ * 严格只匹配列 0 起始的 function / async function / class / const / let / var 声明，
  * 不带前导空白——避免把函数体里 `  const num = ...` 这种局部变量误识别为顶层。
  * 如果项目里有 `\t` 缩进或 BOM，需要在调用前先 normalize。
  */
 function extractTopLevelIdentifiers(code) {
   const ids = new Set();
   const patterns = [
-    /^function\s+([A-Za-z_$][\w$]*)/gm,
+    /^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/gm,  // function / async function / function*
     /^class\s+([A-Za-z_$][\w$]*)/gm,
     /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:=|,|;|\s)/gm,
   ];

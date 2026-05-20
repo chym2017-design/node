@@ -28,7 +28,7 @@ function createDefaultData() {
       "t3-*.font": "微软雅黑", "t3-*.font_size": 12,
       "t3-*.paragraph_line": 1.3,
       "body.font": "微软雅黑", "body.font_size": 12, "body.color": "51,65,85",
-      "body.paragraph_line": 1.8, "body.paragraph_first_indent": 2,
+      "body.paragraph_line": 1.8,
       hide_t: "t>3", numbering_style: "1.1.1"
     },
     // 表格 → 大纲引用（表格 A 列单元格取自大纲节点）
@@ -43,7 +43,7 @@ function createDefaultData() {
     // ── 根节点 ──
     "t0-1": {
       content: "UDD 统一数据文档 · 功能总览", hide: 0, hide_body: 0,
-      body: "UDD 的核心理念：一份数据，多种视图。大纲、思维导图、文档、表格、演示共享同一棵数据树，通过引用实现数据联动。本文档演示了引用系统、跨文档联动、表格互引、多媒体嵌入、编号控制等核心能力。",
+      body: "UDD 的两大核心思想：\n① 一份数据，多种视图——大纲、思维导图、文档、表格、演示共享同一棵数据树，通过引用实现联动。\n② 天地与我并生，万物与我为一 · 数据的物化——取庄子《齐物论》之境，万物本无界，故一段文字、一张表、一帧图、一段视频，皆是同一份数据在不同形相上的「物化」。改其一处，万象同迁；正如庄周梦蝶，蝶我无别，唯「道通为一」。\n本文档演示了引用系统、跨文档联动、表格互引、多媒体嵌入、Markdown / HTML 渲染、编号控制等核心能力。",
 
       // ── 1. 引用基础 ──
       "t1-1": {
@@ -139,8 +139,26 @@ function createDefaultData() {
         "t2-5": { content: "重新编号后的 2", hide: 0, hide_body: 0 }
       },
 
-      // ── 9. 设计理念 ──
+      // ── 9. Markdown / HTML 渲染 ──
       "t1-9": {
+        content: "Markdown / HTML 渲染", hide: 0, hide_body: 0,
+        body: "正文与标题支持 Markdown 与内联 HTML 渲染——在工具栏「更多渲染」面板勾选 **Markdown** 与 **HTML** 即可开关。单击保留渲染态、双击回到源码编辑，所见与所改两不相误。",
+        "t2-1": {
+          content: "Markdown 语法示例", hide: 0, hide_body: 0,
+          body: "支持常见语法：**加粗**、*斜体*、`行内代码`、[链接](https://example.com)，以及列表、引用块、标题等。\n\n- 项目一\n- 项目二\n- 项目三\n\n> 子非鱼，安知鱼之乐？——《庄子·秋水》"
+        },
+        "t2-2": {
+          content: "HTML 内联示例", hide: 0, hide_body: 0,
+          body: "可直接书写 HTML 标签：<span style=\"color:#c2410c;font-weight:600\">朱砂色强调</span>、<u>下划线</u>、<kbd>Ctrl</kbd>+<kbd>S</kbd>。Markdown 与 HTML 同时开启时可混排。"
+        },
+        "t2-3": {
+          content: "渲染与引用联动", hide: 0, hide_body: 0,
+          body: "Markdown / HTML 渲染发生在引用解析之后，因此 {{=t1-1.t2-1.content}} 这类引用同样会按当前开关渲染——数据物化为何种形相，由视图决定。"
+        }
+      },
+
+      // ── 10. 设计理念 ──
+      "t1-10": {
         content: "UDD 设计特点", hide: 0, hide_body: 0,
         "t2-1": { content: "一份数据，五种视图", hide: 0, hide_body: 0, body: "大纲、思维导图、文档、表格、演示共享同一棵 JSON 数据树，无需重复录入。" },
         "t2-2": { content: "引用即联动", hide: 0, hide_body: 0, body: "修改源节点，所有引用处自动同步。支持节点级、字段级、切片、正则、跨文档、跨表格引用。" },

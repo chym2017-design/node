@@ -1760,7 +1760,7 @@ h1,h2,h3,h4,h5,h6 { font-family: '微软雅黑'; color: #1e293b; }
 .doc-h2 { font-size: 14pt; font-weight: 600; margin: 14pt 0 8pt; }
 .doc-h3 { font-size: 12pt; font-weight: 600; margin: 10pt 0 6pt; }
 .doc-h4, .doc-h5, .doc-h6 { font-size: 12pt; font-weight: 600; margin: 8pt 0 4pt; }
-.doc-body { font-size: 12pt; line-height: 1.8; text-indent: 2em; margin: 4pt 0 10pt; }
+.doc-body { font-size: 12pt; line-height: 1.8; margin: 4pt 0 10pt; }
 .doc-num { margin-right: 6px; font-weight: 400; }
 .inline-table { border-collapse: collapse; margin: 6pt 0; font-size: 11pt; }
 .inline-table th, .inline-table td { border: 1px solid #cbd5e1; padding: 3pt 6pt; }

@@ -1106,7 +1106,6 @@ function applyFmtStyle(el, style, fmt) {
   if (fmt.background_color && style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
   if (fmt.text_align && style.text_align) el.style.textAlign = style.text_align;
   if (style.paragraph_line) el.style.lineHeight = style.paragraph_line;
-  if (style.paragraph_first_indent) el.style.textIndent = style.paragraph_first_indent + 'em';
 }
 
 function buildNodeStyle(data, path, level, opts = {}) {
