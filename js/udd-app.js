@@ -63,8 +63,10 @@ class App {
 
     // Format switches
     this.outlineFmt = { font: true, font_size: true, color: true, bold: true,
+      ref_icon: true,
       italic: false, underline: false, strikethrough: false, background_color: false, text_align: false, tree_lines: false, body_border: false };
     this.documentFmt = { font: true, font_size: true, color: true, bold: true,
+      ref_icon: true,
       italic: true, underline: true, strikethrough: true, background_color: true, text_align: true, tree_lines: false };
     this.initFmtSwitches();
     this._initRenderMore();
@@ -1386,9 +1388,11 @@ class App {
       cb.onchange = () => {
         const fmt = this.currentView === 'outline' ? this.outlineFmt : this.documentFmt;
         fmt[cb.dataset.fmt] = cb.checked;
+        this.applyFmtClasses();
         this.renderCurrentView();
       };
     });
+    this.applyFmtClasses();
   }
 
   syncFmtCheckboxes() {
@@ -1396,6 +1400,17 @@ class App {
     document.querySelectorAll('#fmt-switches input[data-fmt]').forEach(cb => {
       cb.checked = !!fmt[cb.dataset.fmt];
     });
+    this.applyFmtClasses();
+  }
+
+  // Single control point for fmt-driven CSS classes on #editor.
+  // ref_icon=false → 加 .no-ref-mark：所有视图共用，引用 ↗ 隐藏、引用背景去除，
+  // 引用内容与普通文本视觉一致。
+  applyFmtClasses() {
+    const editor = document.getElementById('editor');
+    if (!editor) return;
+    const fmt = this.currentView === 'outline' ? this.outlineFmt : this.documentFmt;
+    editor.classList.toggle('no-ref-mark', fmt && fmt.ref_icon === false);
   }
 
   // Insert table reference

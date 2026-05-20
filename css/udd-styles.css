@@ -123,7 +123,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* 行内引用：背景同样受 --ref-color 控制；字体颜色不再硬编码蓝色，与块级 .ref-display 统一跟随节点样式 */
 .inline-ref{display:inline;background:var(--ref-color,var(--blue-50));border-radius:2px;padding:0 2px;cursor:default}
 .inline-ref:hover{filter:brightness(.95)}
-.inline-ref .ref-icon{font-size:8px;margin-left:1px}
+.inline-ref .ref-icon{font-size:8px;margin-left:0}
+
+/* 引用标识开关：取消勾选 → #editor.no-ref-mark 生效，
+   ↗ 隐藏、块级/行内引用背景去除，引用内容与普通文本视觉一致。
+   每个视图（大纲/思维导图/文档/表格/演示）都嵌在 #editor 内，统一受控。 */
+#editor.no-ref-mark .ref-icon{display:none}
+#editor.no-ref-mark .ref-display{background:transparent;border-radius:0}
+#editor.no-ref-mark .inline-ref{background:transparent;padding:0}
 
 /* Inline table */
 .inline-table{border-collapse:collapse;margin:8px 0;font-size:12px;width:auto}
