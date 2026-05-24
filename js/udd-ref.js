@@ -1159,13 +1159,20 @@ function applyFmtStyle(el, style, fmt) {
   if (fmt.font && style.font) el.style.fontFamily = style.font;
   if (fmt.font_size && style.font_size) el.style.fontSize = style.font_size + 'pt';
   if (fmt.color && style.color) el.style.color = rgbToHex(String(style.color));
+  // 以下几项与 bold 对齐：都做"无条件 set 或 reset"。否则 per-character run
+  // 中"取消斜体 / 取消下划线"的段会因 fontStyle/textDecoration 没被显式清空而
+  // 继承父元素的样式，肉眼上看起来是"per-char range 没生效"。
   el.style.fontWeight = (fmt.bold && style.bold) ? '700' : 'normal';
-  if (fmt.italic && style.italic) el.style.fontStyle = 'italic';
-  if (fmt.underline && style.underline) el.style.textDecoration = 'underline';
-  if (fmt.strikethrough && style.strikethrough) {
-    el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
+  el.style.fontStyle = (fmt.italic && style.italic) ? 'italic' : 'normal';
+  const decos = [];
+  if (fmt.underline && style.underline) decos.push('underline');
+  if (fmt.strikethrough && style.strikethrough) decos.push('line-through');
+  el.style.textDecoration = decos.length ? decos.join(' ') : 'none';
+  if (fmt.background_color && style.background_color) {
+    el.style.backgroundColor = rgbToHex(String(style.background_color));
+  } else {
+    el.style.backgroundColor = '';
   }
-  if (fmt.background_color && style.background_color) el.style.backgroundColor = rgbToHex(String(style.background_color));
   if (fmt.text_align && style.text_align) el.style.textAlign = style.text_align;
   if (style.paragraph_line) el.style.lineHeight = style.paragraph_line;
 }

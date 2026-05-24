@@ -62,9 +62,11 @@ class App {
     this._repoFiles = [];
 
     // Format switches
+    // 大纲视图与文档视图对齐：默认全开，让 per-character range 样式（斜体/下划线/
+    // 删除线/背景色）开箱即用。用户仍可通过工具栏顶部的格式开关行勾选/取消。
     this.outlineFmt = { font: true, font_size: true, color: true, bold: true,
       ref_icon: true,
-      italic: false, underline: false, strikethrough: false, background_color: false, text_align: false, tree_lines: false, body_border: false };
+      italic: true, underline: true, strikethrough: true, background_color: true, text_align: false, tree_lines: false, body_border: false };
     this.documentFmt = { font: true, font_size: true, color: true, bold: true,
       ref_icon: true,
       italic: true, underline: true, strikethrough: true, background_color: true, text_align: true, tree_lines: false };
