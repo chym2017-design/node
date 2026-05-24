@@ -37,16 +37,34 @@ class SheetView {
   }
 
   loadFromBinary(binaryData) {
-    if (!binaryData || typeof XLSX === 'undefined') return;
+    if (!binaryData || typeof XLSX === 'undefined') {
+      console.warn('[sheet] loadFromBinary skipped:', { hasBin: !!binaryData, hasXLSX: typeof XLSX !== 'undefined' });
+      return;
+    }
+    // 诊断：偶发"表格空白"问题——把 binary 类型 / 长度记下来。
+    // Uint8Array.length / ArrayBuffer.byteLength 不同；IndexedDB 序列化偶尔会变。
+    const binInfo = {
+      ctor: binaryData && binaryData.constructor && binaryData.constructor.name,
+      len: binaryData && (binaryData.length != null ? binaryData.length : binaryData.byteLength)
+    };
     try {
       this.workbook = XLSX.read(binaryData, { type: 'array' });
-      this.activeSheet = this.workbook.SheetNames[0] || 'Sheet1';
+      const sheetNames = (this.workbook && this.workbook.SheetNames) || [];
+      // sheetjs 解析"成功"但实际是空的：当作失败处理，否则用户看到一片空白格子，
+      // 且 _captureActiveSessionSheetState 会把这份空壳 toBinary 写回 IndexedDB，
+      // 污染下次 loadFromBinary。
+      if (sheetNames.length === 0) {
+        console.warn('[sheet] loadFromBinary: workbook has no sheets', binInfo);
+        this._initDefaultWorkbook();
+        return;
+      }
+      this.activeSheet = sheetNames[0] || 'Sheet1';
       // 刚从磁盘/IndexedDB 的原始 binary 加载：workbook 还未被用户改动，
       // 不要让 _captureActiveSessionSheetState 立刻走 toBinary 的有损 roundtrip
       // 覆盖掉原始 xlsxBin（sheetjs 社区版会丢失公式 / 格式 / 图表等信息）。
       this._workbookDirty = false;
     } catch (e) {
-      console.error('Failed to load sheets.xlsx:', e);
+      console.error('[sheet] loadFromBinary parse failed:', e, binInfo);
       this._initDefaultWorkbook();
     }
   }

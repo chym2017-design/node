@@ -136,6 +136,16 @@ class PptView {
         depth = group.depth || override.depth || defaultDepth;
       }
       const bullets = [], mediaItems = [], orderedItems = [];
+      // 与 _buildContentSlide 对齐：主节点 body 作为第一条 bullet
+      if (node.body) {
+        const bodyText = await this._resolveContent(node.body);
+        const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
+        if (bodyDisplay) {
+          const b = { text: bodyDisplay, level: 0, isBody: true, path, typeLevel: 1 };
+          bullets.push(b);
+          orderedItems.push({ kind: 'bullet', ...b });
+        }
+      }
       for (const itemKey of items) {
         const child = node[itemKey];
         if (!child) continue;
@@ -154,6 +164,18 @@ class PptView {
 
   async _buildContentSlide(node, path, depth, layout, theme, baseLevel) {
     const bullets = [], mediaItems = [], orderedItems = [];
+    // 主节点自身的 body 作为第一条 bullet（level 0）展示在标题与子节点之间。
+    // 之前只把它塞进 notes（演讲者备注），与 _collectBullets 对子节点 body 的处理
+    // 不对称——content 显示了 body 也应显示，这才是大纲/文档/演示三视图一致的行为。
+    if (node.body) {
+      const bodyText = await this._resolveContent(node.body);
+      const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
+      if (bodyDisplay) {
+        const b = { text: bodyDisplay, level: 0, isBody: true, path, typeLevel: baseLevel };
+        bullets.push(b);
+        orderedItems.push({ kind: 'bullet', ...b });
+      }
+    }
     const childKeys = getChildTKeys(node, baseLevel + 1);
     for (const ck of childKeys) {
       const child = node[ck];

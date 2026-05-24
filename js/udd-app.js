@@ -149,7 +149,9 @@ class App {
       if (this.sheetView._workbookDirty) {
         try {
           const bin = this.sheetView.toBinary();
-          if (bin) s.xlsxBin = bin;
+          // 防御：toBinary 返回 null / 空数组 / 过短的数据（空壳）时不回写，
+          // 避免 sheetjs roundtrip 有损结果或 parse 失败产物污染 IndexedDB。
+          if (bin && bin.length > 100) s.xlsxBin = bin;
         } catch (e) { /* skip */ }
         this.sheetView._workbookDirty = false;
       }
@@ -1222,12 +1224,16 @@ class App {
     const canRange = RANGEABLE_STYLE_FIELDS.has(field);
     const isTextField = focusField === 'content' || focusField === 'body';
     if (selection && selection.end > selection.start && canRange && isTextField) {
-      // textLength 必须与 selection.start/end 同坐标系：selection 来自 DOM Range
-      // 的 toString().length，含 {{=ref}} 的 body 在 DOM 里 ref 已被解析成实际文本
-      // 长度，与 stripMediaTags(rawText) 的"字面 ref"长度不一致。这里以当前焦点
-      // DOM 元素的 textContent.length 为准，与渲染端 buildStyledRuns 的 fullText
-      // 长度严格对齐（renderStyledText / renderInlineSegments 都基于已解析文本）。
-      const textLength = activeEl ? activeEl.textContent.length : stripMediaTags(node[focusField] || '').length;
+      // textLength 必须与 selection.start/end 同坐标系：getSelectionOffsetsWithin
+      // / getOffsetWithin 跳过 .ref-icon 子树（"↗" 不计入 offset），而
+      // renderStyledText / renderInlineSegments 的 fullText 也不含图标字符。
+      // 因此 writer 端的 textLength 必须用同口径的 walker，否则 body 含 ref 时
+      // 会比 selection 坐标多出每个 ref 的 1 个字符，导致 range 整体偏移。
+      const textLength = activeEl
+        ? (typeof getTextLengthExcludingRefIcons === 'function'
+            ? getTextLengthExcludingRefIcons(activeEl)
+            : activeEl.textContent.length)
+        : stripMediaTags(node[focusField] || '').length;
       let targetValue = value;
       if (opts.mode === 'toggle') {
         const descriptor = getRangeStyleDescriptor(node[key], baseValue);

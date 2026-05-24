@@ -830,7 +830,7 @@ function resolveNodeForRender(data, node, path, level) {
     const rawBody = node.body || '';
     if (hasInlineRefs(rawBody)) {
       desc.bodyInlineSegments = resolveInlineRefs(data, rawBody);
-      desc.displayBody = desc.bodyInlineSegments.map(s => s.type === 'ref' ? s.resolved : s.value).join('');
+      desc.displayBody = desc.bodyInlineSegments.map(s => s.type === 'ref' ? (typeof inlineRefDisplay === 'function' ? inlineRefDisplay(s.resolved) : s.resolved) : s.value).join('');
       desc.bodyEditable = false;
     } else if (isRef(rawBody)) {
       desc.bodyEditable = false;
@@ -852,7 +852,15 @@ function resolveNodeForRender(data, node, path, level) {
 // 否则该属性回退到 baseStyle，避免把单个 .inline-ref 拆成多个、破坏 ref-icon。
 function renderInlineSegments(container, segments, data, viewInstance, applyStyleFn, baseStyle, node, fieldKey) {
   container.innerHTML = '';
-  const fullText = segments.map(s => s.type === 'text' ? s.value : s.resolved).join('');
+  // ref 段在 DOM 里挂的是 .inline-ref，refreshRefs 会把其 textContent 规范成
+  // inlineRefDisplay(resolved)（剥媒体 tag + 折换行）。fullText 必须用同一口径，
+  // 否则写入端按 DOM（含 inlineRefDisplay）测量、读取端按 seg.resolved（未规范）
+  // 切片，含跨文档/带媒体 tag 的 ref 时两侧坐标系就会差出 N 个字符（实测 t1-4
+  // 的 ;1(117,121) 由此偏移到 "文档并定位"）。
+  const segText = (s) => s.type === 'text'
+    ? s.value
+    : (typeof inlineRefDisplay === 'function' ? inlineRefDisplay(s.resolved) : s.resolved);
+  const fullText = segments.map(segText).join('');
   const runs = (node && fieldKey && fullText) ? buildStyledRuns(node, fieldKey, fullText, baseStyle) : null;
   // 同 renderStyledText：本容器内填了 styled span，applyMdHtml 必须跳过，否则
   // innerHTML 被 md 重写、per-char 样式 + .inline-ref 结构都会丢。
@@ -885,13 +893,13 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
 
   let offset = 0;
   for (const seg of segments) {
-    const segText = seg.type === 'text' ? seg.value : seg.resolved;
-    const segEnd = offset + segText.length;
+    const segValue = segText(seg);
+    const segEnd = offset + segValue.length;
 
     if (seg.type === 'text') {
       if (!runs) {
         const span = document.createElement('span');
-        span.textContent = segText;
+        span.textContent = segValue;
         if (applyStyleFn && baseStyle) applyStyleFn(span, baseStyle);
         container.appendChild(span);
       } else {
@@ -917,7 +925,7 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
       refSpan.title = seg.raw;
       // Mark for async resolution: 跨档/嵌入的节点引用，或跨档单元格引用 — 都需要懒加载
       if (refNeedsAsyncLoad(seg.raw)) refSpan.dataset.refAsync = seg.raw;
-      refSpan.textContent = seg.resolved;
+      refSpan.textContent = segValue;
       if (seg.resolved.startsWith('#')) refSpan.classList.add('ref-error');
       // ref 段作为原子单位应用样式：跨段统一的属性叠加到 baseStyle 之上
       const segStyle = uniformStyleOver(offset, segEnd);
@@ -1084,23 +1092,59 @@ function refreshRefs(viewEl, data) {
   });
   // Handle async refs（异步路径暂不复用 passCache：await 期间 DOM 可能已切换，
   // 而且多数情况下异步 ref 在文档里出现次数远少于同步 ref，重复解析的乘数效应弱）
-  viewEl.querySelectorAll('[data-ref-async]').forEach(async el => {
+  //
+  // 关键：异步解析完成后，如果首次拿到了真实值（之前 _refDocCache / _refDocSheets 没有，
+  // 现在被 resolveRefAsync 填充了），需要触发一次整页重渲——因为初次渲染时
+  // buildStyledRuns 用的 fullText 是基于 '#LOADING...' 占位符长度切的 per-char range，
+  // 仅把 .inline-ref 的 textContent 换成真值并不能修正包裹周围 text-segment 的 styled
+  // span 的边界（它们已被 renderInlineSegments 一次性写死）。重渲会在 _refDocCache
+  // 已填充的状态下重新跑 resolveInlineRefs → fullText 长度与最终 DOM 一致 → range 命中。
+  const asyncEls = viewEl.querySelectorAll('[data-ref-async]');
+  if (asyncEls.length === 0) return;
+  // 用 refreshRefs 自身的 in-flight 标志去重，避免与 resolveRef 内部 loadCrossDocSheetsAsync
+  // 的 onLoaded → renderCurrentView 形成多次重入。
+  if (refreshRefs._asyncResolvePending) return;
+  refreshRefs._asyncResolvePending = true;
+  const tasks = [];
+  asyncEls.forEach(el => {
     const refStr = el.dataset.refAsync;
-    let resolved = await resolveRefAsync(data, refStr);
-    if (typeof resolved === 'string') {
-      resolved = el.classList.contains('inline-ref') ? inlineRefDisplay(resolved) : stripMediaTags(resolved);
-    }
-    const existingIcon = el.querySelector('.ref-icon');
-    if (existingIcon) {
-      Array.from(el.childNodes).forEach(child => {
-        if (child !== existingIcon) el.removeChild(child);
-      });
-      el.insertBefore(document.createTextNode(resolved), existingIcon);
-    } else {
-      el.textContent = resolved;
-    }
-    el.classList.toggle('ref-error', resolved.startsWith('#'));
+    const ref = (() => { try { return parseRef(refStr); } catch (e) { return null; } })();
+    const sr = parseSheetRef(refStr);
+    const cacheKeyDoc = sr ? sr.docName : (ref && ref.docName);
+    const wasCached = sr
+      ? (cacheKeyDoc ? !!getCrossDocWorkbook(cacheKeyDoc) : true)
+      : (cacheKeyDoc ? !!_refDocCache[cacheKeyDoc] : true);
+    const p = (async () => {
+      let resolved = await resolveRefAsync(data, refStr);
+      if (typeof resolved === 'string') {
+        resolved = el.classList.contains('inline-ref') ? inlineRefDisplay(resolved) : stripMediaTags(resolved);
+      }
+      const existingIcon = el.querySelector('.ref-icon');
+      if (existingIcon) {
+        Array.from(el.childNodes).forEach(child => {
+          if (child !== existingIcon) el.removeChild(child);
+        });
+        el.insertBefore(document.createTextNode(resolved), existingIcon);
+      } else {
+        el.textContent = resolved;
+      }
+      el.classList.toggle('ref-error', resolved.startsWith('#'));
+      // 该 ref 在本次 refreshRefs 调用前没有缓存命中——说明它走了真正的 async load，
+      // 之前同步渲染用的是 '#LOADING...' / '#REF!' 占位符长度。
+      return !wasCached;
+    })();
+    tasks.push(p);
   });
+  Promise.all(tasks).then(results => {
+    refreshRefs._asyncResolvePending = false;
+    const anyNewlyLoaded = results.some(Boolean);
+    if (!anyNewlyLoaded) return;
+    // 重渲会再次跑 refreshRefs，但这次所有 async ref 都已在缓存里（wasCached=true）→
+    // results 全 false → 不再触发递归 render。
+    if (typeof app !== 'undefined' && typeof app.renderCurrentView === 'function') {
+      requestAnimationFrame(() => app.renderCurrentView());
+    }
+  }).catch(() => { refreshRefs._asyncResolvePending = false; });
 }
 
 function setFoldByLevel(data, maxLevel) {
@@ -1231,11 +1275,55 @@ function getSelectionOffsetsWithin(el) {
   return { start: Math.min(start, end), end: Math.max(start, end) };
 }
 
+// 计算 (node, offset) 在 root 的"已渲染可见文本"中的字符偏移，但**跳过 .ref-icon
+// 子树**——renderInlineSegments 给每个 {{=ref}} 末尾追加了一个 .ref-icon span（"↗"），
+// 它是渲染装饰、不属于 per-character range 样式的坐标系。reader 端 fullText
+// (segments 拼接) 也不含 ↗，写入端必须用同一口径，否则保存的 range 会比 fullText
+// 多 N（N = 选区之前出现的内联引用数）。同时 ref-icon 内是 1 字 "↗"，
+// 视觉上偏移 1 位即足以让用户感觉"加粗错位"。
 function getOffsetWithin(root, node, offset) {
-  const pre = document.createRange();
-  pre.selectNodeContents(root);
-  pre.setEnd(node, offset);
-  return pre.toString().length;
+  let count = 0;
+  let done = false;
+  function walk(current) {
+    if (done) return;
+    if (current.nodeType === 3) {
+      if (current === node) { count += offset; done = true; return; }
+      count += current.length;
+      return;
+    }
+    if (current.nodeType !== 1) return;
+    if (current.classList && current.classList.contains('ref-icon')) return;
+    if (current === node) {
+      const lim = Math.min(offset, current.childNodes.length);
+      for (let i = 0; i < lim; i++) {
+        walk(current.childNodes[i]);
+        if (done) return;
+      }
+      done = true;
+      return;
+    }
+    for (const child of current.childNodes) {
+      walk(child);
+      if (done) return;
+    }
+  }
+  walk(root);
+  return count;
+}
+
+// 对应的 textContent 长度计算，跳过 .ref-icon 子树。供 writer 端 applyStyleChange
+// 取 textLength 用，与 getOffsetWithin / fullText 严格同坐标系。
+function getTextLengthExcludingRefIcons(root) {
+  if (!root) return 0;
+  let count = 0;
+  function walk(node) {
+    if (node.nodeType === 3) { count += node.length; return; }
+    if (node.nodeType !== 1) return;
+    if (node.classList && node.classList.contains('ref-icon')) return;
+    for (const child of node.childNodes) walk(child);
+  }
+  walk(root);
+  return count;
 }
 
 // ================================================================
