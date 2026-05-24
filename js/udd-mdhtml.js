@@ -53,6 +53,11 @@
     const md = !!app.renderMd;
     const htmlOn = !!app.renderHtml;
     if (!md && !htmlOn) return;
+    // 跳过已被 renderStyledText / renderInlineSegments 填充了 per-character
+    // styled span 的元素：md/html 渲染基于 textContent 重写 innerHTML，会把
+    // body.bold / body.color 等 range 样式以及 .inline-ref 结构整片抹掉。
+    // 同字段上 per-char 样式与 md 渲染互斥。
+    if (el.dataset && el.dataset.uddStyledRuns === '1') return;
     const src = el.textContent;
     if (!src) return;
     const hasHtmlChars = /[<&]/.test(src);

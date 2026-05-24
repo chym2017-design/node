@@ -844,15 +844,72 @@ function resolveNodeForRender(data, node, path, level) {
   return desc;
 }
 
-// Render inline segments (text + {{=ref}}) into a container element
-function renderInlineSegments(container, segments, data, viewInstance, applyStyleFn, baseStyle) {
+// Render inline segments (text + {{=ref}}) into a container element.
+// node / fieldKey 可选——传入后会基于 node[`${fieldKey}.<style>`] 的 range 样式
+// 在 segments 拼出的"显示文本"坐标系下切片应用 per-character 样式（与
+// renderStyledText 的坐标系保持一致：DOM 选区给出的 offset 也是 segments 拼出的
+// 已解析文本的偏移）。ref 段视为原子单位：若整段在某属性上样式统一就一并应用，
+// 否则该属性回退到 baseStyle，避免把单个 .inline-ref 拆成多个、破坏 ref-icon。
+function renderInlineSegments(container, segments, data, viewInstance, applyStyleFn, baseStyle, node, fieldKey) {
   container.innerHTML = '';
+  const fullText = segments.map(s => s.type === 'text' ? s.value : s.resolved).join('');
+  const runs = (node && fieldKey && fullText) ? buildStyledRuns(node, fieldKey, fullText, baseStyle) : null;
+  // 同 renderStyledText：本容器内填了 styled span，applyMdHtml 必须跳过，否则
+  // innerHTML 被 md 重写、per-char 样式 + .inline-ref 结构都会丢。
+  container.dataset.uddStyledRuns = '1';
+
+  // 用 run 序列在区间 [a, b) 上聚合样式：每个字段若整个区间内同值就采用该值，
+  // 否则该字段不写入（让调用方继承 baseStyle）。
+  function uniformStyleOver(a, b) {
+    if (!runs || a >= b) return null;
+    const out = {};
+    const seen = {};
+    let cursor = 0;
+    for (const run of runs) {
+      const rEnd = cursor + run.text.length;
+      if (rEnd <= a) { cursor = rEnd; continue; }
+      if (cursor >= b) break;
+      for (const k of Object.keys(run.style)) {
+        if (seen[k] === undefined) {
+          seen[k] = true;
+          out[k] = run.style[k];
+        } else if (out[k] !== run.style[k]) {
+          delete out[k];
+          seen[k] = 'mixed';
+        }
+      }
+      cursor = rEnd;
+    }
+    return out;
+  }
+
+  let offset = 0;
   for (const seg of segments) {
+    const segText = seg.type === 'text' ? seg.value : seg.resolved;
+    const segEnd = offset + segText.length;
+
     if (seg.type === 'text') {
-      const span = document.createElement('span');
-      span.textContent = seg.value;
-      if (applyStyleFn && baseStyle) applyStyleFn(span, baseStyle);
-      container.appendChild(span);
+      if (!runs) {
+        const span = document.createElement('span');
+        span.textContent = segText;
+        if (applyStyleFn && baseStyle) applyStyleFn(span, baseStyle);
+        container.appendChild(span);
+      } else {
+        // 按 run 边界切分该 text segment
+        let cursor = 0;
+        for (const run of runs) {
+          const rEnd = cursor + run.text.length;
+          if (rEnd <= offset) { cursor = rEnd; continue; }
+          if (cursor >= segEnd) break;
+          const a = Math.max(cursor, offset);
+          const b = Math.min(rEnd, segEnd);
+          const span = document.createElement('span');
+          span.textContent = fullText.substring(a, b);
+          if (applyStyleFn) applyStyleFn(span, Object.assign({}, baseStyle, run.style));
+          container.appendChild(span);
+          cursor = rEnd;
+        }
+      }
     } else {
       const refSpan = document.createElement('span');
       refSpan.className = 'inline-ref';
@@ -862,12 +919,17 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
       if (refNeedsAsyncLoad(seg.raw)) refSpan.dataset.refAsync = seg.raw;
       refSpan.textContent = seg.resolved;
       if (seg.resolved.startsWith('#')) refSpan.classList.add('ref-error');
+      // ref 段作为原子单位应用样式：跨段统一的属性叠加到 baseStyle 之上
+      const segStyle = uniformStyleOver(offset, segEnd);
+      const finalStyle = segStyle ? Object.assign({}, baseStyle, segStyle) : baseStyle;
+      if (applyStyleFn && finalStyle) applyStyleFn(refSpan, finalStyle);
       if (viewInstance) {
         const icon = createRefIcon(data, seg.raw, viewInstance);
         refSpan.appendChild(icon);
       }
       container.appendChild(refSpan);
     }
+    offset = segEnd;
   }
 }
 

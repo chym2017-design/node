@@ -214,7 +214,7 @@ class DocumentView {
         contentSpan.contentEditable = 'plaintext-only';
         if (!contentSpan.contentEditable || contentSpan.contentEditable === 'inherit') contentSpan.contentEditable = 'true';
       } else if (desc.hasInlineRefs && desc.inlineSegments) {
-        renderInlineSegments(contentSpan, desc.inlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), style);
+        renderInlineSegments(contentSpan, desc.inlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), style, node, 'content');
         if (typeof applyMdHtml === 'function') applyMdHtml(contentSpan, app, {inline:true});
         contentSpan.contentEditable = 'false';
         contentSpan.classList.add('ref-display');
@@ -324,7 +324,7 @@ class DocumentView {
           bodyDiv.dataset.field = 'body';
           bodyDiv.spellcheck = false;
           if (desc.bodyInlineSegments) {
-            renderInlineSegments(bodyDiv, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), bodyStyle);
+            renderInlineSegments(bodyDiv, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), bodyStyle, node, 'body');
             if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
             bodyDiv.classList.add('ref-display');
             bodyDiv.dataset.hasRef = '1';
@@ -436,7 +436,7 @@ class DocumentView {
     const rawContent = desc.displayContent;
     const contentText = stripMediaTags(rawContent);
     if (desc.hasInlineRefs && desc.inlineSegments) {
-      renderInlineSegments(contentSpan, desc.inlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), style);
+      renderInlineSegments(contentSpan, desc.inlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), style, node, 'content');
       contentSpan.contentEditable = 'false';
       contentSpan.classList.add('ref-display');
       contentSpan.dataset.hasRef = '1';
@@ -519,7 +519,7 @@ class DocumentView {
           // 与 outline / _renderMainNode 一致：按 body 形态挂 ref-display 标记，让双击进入源码编辑。
           bodyDiv.contentEditable = 'false';
           if (desc.bodyInlineSegments) {
-            renderInlineSegments(bodyDiv, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), bodyStyle);
+            renderInlineSegments(bodyDiv, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyInlineStyle(el, rs), bodyStyle, node, 'body');
             if (typeof applyMdHtml === 'function') applyMdHtml(bodyDiv, app, {inline:false});
             bodyDiv.classList.add('ref-display');
             bodyDiv.dataset.hasRef = '1';

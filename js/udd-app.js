@@ -1215,13 +1215,17 @@ class App {
     const style = buildNodeStyle(this.data, path, level, { isBody });
     const baseValue = style[field];
     const selection = this.getCurrentTextSelection();
+    const activeEl = this.getActiveEditableEl();
     this.savedSelection = null;
     const canRange = RANGEABLE_STYLE_FIELDS.has(field);
     const isTextField = focusField === 'content' || focusField === 'body';
     if (selection && selection.end > selection.start && canRange && isTextField) {
-      const rawText = node[focusField] || '';
-      const text = stripMediaTags(rawText);
-      const textLength = text.length;
+      // textLength 必须与 selection.start/end 同坐标系：selection 来自 DOM Range
+      // 的 toString().length，含 {{=ref}} 的 body 在 DOM 里 ref 已被解析成实际文本
+      // 长度，与 stripMediaTags(rawText) 的"字面 ref"长度不一致。这里以当前焦点
+      // DOM 元素的 textContent.length 为准，与渲染端 buildStyledRuns 的 fullText
+      // 长度严格对齐（renderStyledText / renderInlineSegments 都基于已解析文本）。
+      const textLength = activeEl ? activeEl.textContent.length : stripMediaTags(node[focusField] || '').length;
       let targetValue = value;
       if (opts.mode === 'toggle') {
         const descriptor = getRangeStyleDescriptor(node[key], baseValue);

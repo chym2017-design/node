@@ -139,6 +139,7 @@ function mergeRanges(ranges) {
 function applyRangeStyleValue(currentValue, newValue, selection, baseValue, textLength) {
   if (!selection || selection.end <= selection.start) return currentValue;
   const { start, end } = clampRange(selection.start, selection.end, textLength);
+  if (end <= start) return currentValue;
   if (start === 0 && end === textLength) {
     return newValue;
   }
@@ -254,6 +255,10 @@ function renderStyledText(targetEl, text, node, fieldKey, baseStyle, applyFn) {
     return;
   }
   targetEl.innerHTML = '';
+  // 标记：本元素已被 per-character range 样式（body.bold / body.color / ...）
+  // 切成多个 styled span。applyMdHtml 见此标记即跳过，避免 innerHTML 被 md 输出
+  // 覆盖、把 per-char 样式抹掉。per-char 样式与 markdown 渲染在同一字段上互斥。
+  targetEl.dataset.uddStyledRuns = '1';
   for (const run of runs) {
     const span = document.createElement('span');
     span.textContent = run.text;

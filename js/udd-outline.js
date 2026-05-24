@@ -123,7 +123,7 @@ class OutlineView {
       content.contentEditable = 'plaintext-only';
       if (!content.contentEditable || content.contentEditable === 'inherit') content.contentEditable = 'true';
     } else if (desc.hasInlineRefs && desc.inlineSegments) {
-      renderInlineSegments(content, desc.inlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), style);
+      renderInlineSegments(content, desc.inlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), style, node, 'content');
       if (typeof applyMdHtml === 'function') applyMdHtml(content, app, {inline:true});
       content.contentEditable = 'false';
       content.classList.add('ref-display');
@@ -241,7 +241,7 @@ class OutlineView {
         bodyEl.dataset.field = 'body';
         bodyEl.spellcheck = false;
         if (desc.bodyInlineSegments) {
-          renderInlineSegments(bodyEl, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), bodyStyle);
+          renderInlineSegments(bodyEl, desc.bodyInlineSegments, this.data, this, (el, rs) => this.applyStyle(el, rs), bodyStyle, node, 'body');
           if (typeof applyMdHtml === 'function') applyMdHtml(bodyEl, app, {inline:false});
           bodyEl.classList.add('ref-display');
           bodyEl.dataset.hasRef = '1';
