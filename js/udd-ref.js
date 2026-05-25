@@ -77,12 +77,36 @@ function resolveInlineRefs(data, text) {
   let lastIdx = 0, m;
   const cleanText = (s) => (typeof s === 'string' ? stripMediaTags(s) : '');
   while ((m = re.exec(text)) !== null) {
-    if (m.index > lastIdx) segments.push({ type: 'text', value: cleanText(text.slice(lastIdx, m.index)) });
+    if (m.index > lastIdx) {
+      const rawSlice = text.slice(lastIdx, m.index);
+      segments.push({
+        type: 'text',
+        rawStart: lastIdx,
+        rawEnd: m.index,
+        rawValue: rawSlice,
+        value: cleanText(rawSlice)
+      });
+    }
     const refStr = m[1];
-    segments.push({ type: 'ref', raw: refStr, resolved: inlineRefDisplay(resolveRef(data, refStr)) });
+    segments.push({
+      type: 'ref',
+      raw: refStr,
+      rawStart: m.index,
+      rawEnd: re.lastIndex,
+      resolved: inlineRefDisplay(resolveRef(data, refStr))
+    });
     lastIdx = re.lastIndex;
   }
-  if (lastIdx < text.length) segments.push({ type: 'text', value: cleanText(text.slice(lastIdx)) });
+  if (lastIdx < text.length) {
+    const rawSlice = text.slice(lastIdx);
+    segments.push({
+      type: 'text',
+      rawStart: lastIdx,
+      rawEnd: text.length,
+      rawValue: rawSlice,
+      value: cleanText(rawSlice)
+    });
+  }
   return segments;
 }
 
@@ -852,22 +876,17 @@ function resolveNodeForRender(data, node, path, level) {
 // 否则该属性回退到 baseStyle，避免把单个 .inline-ref 拆成多个、破坏 ref-icon。
 function renderInlineSegments(container, segments, data, viewInstance, applyStyleFn, baseStyle, node, fieldKey) {
   container.innerHTML = '';
-  // ref 段在 DOM 里挂的是 .inline-ref，refreshRefs 会把其 textContent 规范成
-  // inlineRefDisplay(resolved)（剥媒体 tag + 折换行）。fullText 必须用同一口径，
-  // 否则写入端按 DOM（含 inlineRefDisplay）测量、读取端按 seg.resolved（未规范）
-  // 切片，含跨文档/带媒体 tag 的 ref 时两侧坐标系就会差出 N 个字符（实测 t1-4
-  // 的 ;1(117,121) 由此偏移到 "文档并定位"）。
-  const segText = (s) => s.type === 'text'
-    ? s.value
-    : (typeof inlineRefDisplay === 'function' ? inlineRefDisplay(s.resolved) : s.resolved);
-  const fullText = segments.map(segText).join('');
-  const runs = (node && fieldKey && fullText) ? buildStyledRuns(node, fieldKey, fullText, baseStyle) : null;
-  // 同 renderStyledText：本容器内填了 styled span，applyMdHtml 必须跳过，否则
-  // innerHTML 被 md 重写、per-char 样式 + .inline-ref 结构都会丢。
+  // 关键设计：以 node[fieldKey] 的**原始文本**作为 per-character range 的坐标系。
+  // 这样存储的 range（如 body.bold ";1(140,143)"）对应原始字面位置——
+  //   - {{=ref}} 字面计 28 字符（含括号和等号），不因解析结果长短而漂移
+  //   - {{...}} 媒体 tag 也按字面计入
+  //   - 异步加载、刷新都不影响 range 命中
+  // 源码编辑态（双击后 textContent === raw）与渲染态共享同一坐标系，无需双向坐标转换。
+  const rawText = (node && fieldKey) ? (node[fieldKey] || '') : '';
+  const runs = (node && fieldKey && rawText) ? buildStyledRuns(node, fieldKey, rawText, baseStyle) : null;
   container.dataset.uddStyledRuns = '1';
 
-  // 用 run 序列在区间 [a, b) 上聚合样式：每个字段若整个区间内同值就采用该值，
-  // 否则该字段不写入（让调用方继承 baseStyle）。
+  // 用 raw 坐标区间 [a, b) 上聚合样式（ref 段视为原子，整段一并应用统一属性）
   function uniformStyleOver(a, b) {
     if (!runs || a >= b) return null;
     const out = {};
@@ -891,30 +910,36 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
     return out;
   }
 
-  let offset = 0;
   for (const seg of segments) {
-    const segValue = segText(seg);
-    const segEnd = offset + segValue.length;
-
     if (seg.type === 'text') {
+      // text 段：raw 坐标 [seg.rawStart, seg.rawEnd) 与 run 边界相交后切分。
+      // 每个 sub-span：raw 范围 = [a, b)，显示文本 = stripMediaTags(rawText.substring(a, b))
+      // —— DOM 中只显示清理后的字符，但 data-raw-start/end 记录原始坐标，
+      // 让 getOffsetWithin 把 DOM 选区映射回 raw 坐标。
       if (!runs) {
         const span = document.createElement('span');
-        span.textContent = segValue;
+        span.textContent = seg.value;
+        span.dataset.rawStart = String(seg.rawStart);
+        span.dataset.rawEnd = String(seg.rawEnd);
         if (applyStyleFn && baseStyle) applyStyleFn(span, baseStyle);
         container.appendChild(span);
       } else {
-        // 按 run 边界切分该 text segment
         let cursor = 0;
         for (const run of runs) {
           const rEnd = cursor + run.text.length;
-          if (rEnd <= offset) { cursor = rEnd; continue; }
-          if (cursor >= segEnd) break;
-          const a = Math.max(cursor, offset);
-          const b = Math.min(rEnd, segEnd);
-          const span = document.createElement('span');
-          span.textContent = fullText.substring(a, b);
-          if (applyStyleFn) applyStyleFn(span, Object.assign({}, baseStyle, run.style));
-          container.appendChild(span);
+          if (rEnd <= seg.rawStart) { cursor = rEnd; continue; }
+          if (cursor >= seg.rawEnd) break;
+          const a = Math.max(cursor, seg.rawStart);
+          const b = Math.min(rEnd, seg.rawEnd);
+          const sliceDisplay = stripMediaTags(rawText.substring(a, b));
+          if (sliceDisplay) {
+            const span = document.createElement('span');
+            span.textContent = sliceDisplay;
+            span.dataset.rawStart = String(a);
+            span.dataset.rawEnd = String(b);
+            if (applyStyleFn) applyStyleFn(span, Object.assign({}, baseStyle, run.style));
+            container.appendChild(span);
+          }
           cursor = rEnd;
         }
       }
@@ -922,13 +947,15 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
       const refSpan = document.createElement('span');
       refSpan.className = 'inline-ref';
       refSpan.dataset.ref = seg.raw;
+      refSpan.dataset.rawStart = String(seg.rawStart);
+      refSpan.dataset.rawEnd = String(seg.rawEnd);
       refSpan.title = seg.raw;
-      // Mark for async resolution: 跨档/嵌入的节点引用，或跨档单元格引用 — 都需要懒加载
       if (refNeedsAsyncLoad(seg.raw)) refSpan.dataset.refAsync = seg.raw;
-      refSpan.textContent = segValue;
+      refSpan.textContent = (typeof inlineRefDisplay === 'function')
+        ? inlineRefDisplay(seg.resolved) : seg.resolved;
       if (seg.resolved.startsWith('#')) refSpan.classList.add('ref-error');
-      // ref 段作为原子单位应用样式：跨段统一的属性叠加到 baseStyle 之上
-      const segStyle = uniformStyleOver(offset, segEnd);
+      // ref 段：raw 范围 [seg.rawStart, seg.rawEnd) 内 run 样式聚合 → 原子应用
+      const segStyle = uniformStyleOver(seg.rawStart, seg.rawEnd);
       const finalStyle = segStyle ? Object.assign({}, baseStyle, segStyle) : baseStyle;
       if (applyStyleFn && finalStyle) applyStyleFn(refSpan, finalStyle);
       if (viewInstance) {
@@ -937,7 +964,6 @@ function renderInlineSegments(container, segments, data, viewInstance, applyStyl
       }
       container.appendChild(refSpan);
     }
-    offset = segEnd;
   }
 }
 
@@ -1275,13 +1301,52 @@ function getSelectionOffsetsWithin(el) {
   return { start: Math.min(start, end), end: Math.max(start, end) };
 }
 
-// 计算 (node, offset) 在 root 的"已渲染可见文本"中的字符偏移，但**跳过 .ref-icon
-// 子树**——renderInlineSegments 给每个 {{=ref}} 末尾追加了一个 .ref-icon span（"↗"），
-// 它是渲染装饰、不属于 per-character range 样式的坐标系。reader 端 fullText
-// (segments 拼接) 也不含 ↗，写入端必须用同一口径，否则保存的 range 会比 fullText
-// 多 N（N = 选区之前出现的内联引用数）。同时 ref-icon 内是 1 字 "↗"，
-// 视觉上偏移 1 位即足以让用户感觉"加粗错位"。
+// 计算 (node, offset) 在 root 内的字符偏移。
+//
+// 两种坐标系：
+//   A. raw 坐标（首选）：root 内子孙 span 带有 data-raw-start/end 标注时
+//      （renderInlineSegments 渲染态），返回值是 node[fieldKey] **原始文本**中的位置。
+//      这样保存的 range（如 body.bold ";1(140,143)"）对应原始字面位置，不因
+//      ref 解析长度、媒体 tag 剥离、异步加载漂移。
+//   B. textContent 坐标（兜底）：源码编辑态（双击后 textContent === raw 文本）或
+//      renderStyledText 简单态——textContent 直接就是 raw 字符串，offset 同义。
+// 两种模式下，writer 的 textLength 都应取 node[fieldKey].length（raw 长度），
+// applyRangeStyleValue 的 clamp / range 比较才能与 reader 的 buildStyledRuns 一致。
+//
+// .ref-icon 子树（↗）跨两种模式都跳过——它是渲染装饰、不属于任何坐标系。
 function getOffsetWithin(root, node, offset) {
+  // 找 (node, offset) 所在的最近 data-raw-start 祖先
+  let ancestor = node.nodeType === 1 ? node : node.parentNode;
+  let annotated = null;
+  while (ancestor && ancestor !== root) {
+    if (ancestor.dataset && ancestor.dataset.rawStart !== undefined) {
+      annotated = ancestor;
+      break;
+    }
+    ancestor = ancestor.parentNode;
+  }
+  if (annotated) {
+    const rawStart = +annotated.dataset.rawStart;
+    const rawEnd = +annotated.dataset.rawEnd;
+    // ref 段：DOM 显示文本与 raw 长度通常不等，作为原子处理。
+    // 点在前半 → 取 rawStart，否则 rawEnd。
+    if (annotated.classList && annotated.classList.contains('inline-ref')) {
+      const within = _walkOffsetSkipRefIcon(annotated, node, offset);
+      const displayLen = _walkOffsetSkipRefIcon(annotated, annotated, annotated.childNodes.length);
+      return within * 2 < displayLen ? rawStart : rawEnd;
+    }
+    // text 段：display offset → raw offset。
+    // sub-span 的 display 文本 = stripMediaTags(rawText.substring(a,b))；当 sub-span 内
+    // 不含媒体 tag 时（renderInlineSegments 的常见场景），display 长度 == b-a，1:1。
+    const within = _walkOffsetSkipRefIcon(annotated, node, offset);
+    return rawStart + within;
+  }
+  // 兜底：源码编辑 / renderStyledText 简单态——textContent offset == raw offset
+  return _walkOffsetSkipRefIcon(root, node, offset);
+}
+
+// 共享 walker：在 root 的子树中数 (node, offset) 之前的字符数，跳过 .ref-icon。
+function _walkOffsetSkipRefIcon(root, node, offset) {
   let count = 0;
   let done = false;
   function walk(current) {

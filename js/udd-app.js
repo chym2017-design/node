@@ -1224,16 +1224,26 @@ class App {
     const canRange = RANGEABLE_STYLE_FIELDS.has(field);
     const isTextField = focusField === 'content' || focusField === 'body';
     if (selection && selection.end > selection.start && canRange && isTextField) {
-      // textLength 必须与 selection.start/end 同坐标系：getSelectionOffsetsWithin
-      // / getOffsetWithin 跳过 .ref-icon 子树（"↗" 不计入 offset），而
-      // renderStyledText / renderInlineSegments 的 fullText 也不含图标字符。
-      // 因此 writer 端的 textLength 必须用同口径的 walker，否则 body 含 ref 时
-      // 会比 selection 坐标多出每个 ref 的 1 个字符，导致 range 整体偏移。
-      const textLength = activeEl
-        ? (typeof getTextLengthExcludingRefIcons === 'function'
-            ? getTextLengthExcludingRefIcons(activeEl)
-            : activeEl.textContent.length)
-        : stripMediaTags(node[focusField] || '').length;
+      // textLength 必须与 selection.start/end 同坐标系：
+      //   - renderInlineSegments 渲染态：buildStyledRuns 用 node[field] 原始文本切；
+      //     getOffsetWithin 通过 data-raw-start 把 DOM 偏移翻译成 raw 偏移 → textLength = raw 长度。
+      //   - 源码编辑态（双击后 textContent === raw）：textContent 就是 raw → textLength = raw 长度。
+      //   - renderStyledText 简单态（无 inline ref、可能有媒体 tag）：buildStyledRuns 用调用方
+      //     传入的清理后文本切；DOM 也是清理后文本 → textLength = activeEl.textContent.length（清理后长度）。
+      // 判定方式：activeEl 子孙是否带 data-raw-start。带 → raw 模式，否则 cleaned 模式。
+      const usesRawCoords =
+        !!(activeEl && activeEl.querySelector && activeEl.querySelector('[data-raw-start]')) ||
+        // 源码编辑态（直接显示 raw）：识别 dataset.refEditing 标记
+        !!(activeEl && activeEl.dataset && activeEl.dataset.refEditing !== undefined);
+      const rawSrc = (node && focusField && node[focusField] !== undefined)
+        ? String(node[focusField] || '') : '';
+      const textLength = usesRawCoords
+        ? rawSrc.length
+        : (activeEl
+            ? (typeof getTextLengthExcludingRefIcons === 'function'
+                ? getTextLengthExcludingRefIcons(activeEl)
+                : activeEl.textContent.length)
+            : stripMediaTags(rawSrc).length);
       let targetValue = value;
       if (opts.mode === 'toggle') {
         const descriptor = getRangeStyleDescriptor(node[key], baseValue);
