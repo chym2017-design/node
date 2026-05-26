@@ -79,6 +79,34 @@ class App {
     // Keyboard shortcuts
     document.addEventListener('keydown', e => this.onGlobalKey(e));
 
+    // IME composition tracking：拼音输入法在 compositionstart..compositionend 之间
+    // 浏览器把"未上屏的拼音字符串"挂在元素的 textContent 里。期间一旦发生 render
+    // → DOM 重建 → IME 与原 DOM 失联 → 候选框消失、未上屏的字母被当作普通文本入库。
+    // 配合 isUserEditing() 让所有"被动触发的重渲染"（async ref 解析完成、媒体加载完成、
+    // refreshRefs 等）在此期间一律暂缓。
+    this._imeComposing = false;
+    document.addEventListener('compositionstart', () => { this._imeComposing = true; }, true);
+    document.addEventListener('compositionend', () => {
+      this._imeComposing = false;
+      if (this._pendingPassiveRender) {
+        this._pendingPassiveRender = false;
+        requestAnimationFrame(() => this.renderCurrentViewIfIdle());
+      }
+    }, true);
+    // 非 IME 编辑（普通英文/数字输入）结束：光标离开 contenteditable 时补上被压住的刷新
+    document.addEventListener('focusout', (e) => {
+      if (!this._pendingPassiveRender) return;
+      const el = e.target;
+      if (!el || !el.isContentEditable) return;
+      // 延迟一帧：让浏览器先完成焦点转移，避免误判（如点击另一个 contenteditable）
+      requestAnimationFrame(() => {
+        if (!this._pendingPassiveRender) return;
+        if (this.isUserEditing()) return;
+        this._pendingPassiveRender = false;
+        this.renderCurrentViewIfIdle();
+      });
+    }, true);
+
     // Close palettes on outside click
     document.addEventListener('click', e => {
       if (!e.target.closest('.tool-color-wrap')) this.closeAllPalettes();
@@ -565,6 +593,35 @@ class App {
     toast('已刷新');
   }
 
+  // 判断"用户正在编辑"：被动触发的整页重渲（async ref 解析完、媒体加载完、refreshRefs
+  // 等）应在此期间暂缓——重渲会重建 DOM，导致：
+  //   1) IME 拼音输入失联：未上屏的字母被当作普通文本入库
+  //   2) contenteditable 焦点丢失，光标跳到末尾
+  //   3) 当前选区丢失，加粗等基于选区的操作失效
+  // 用户主动触发的渲染（toolbar 按钮、新建/打开、切视图、撤销/重做、保存等）走
+  // renderCurrentView() 直通；被动渲染走 renderCurrentViewIfIdle()，等到空闲再补。
+  isUserEditing() {
+    if (this._imeComposing) return true;
+    const ae = document.activeElement;
+    if (!ae) return false;
+    if (ae.isContentEditable) return true;
+    const tag = ae.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+    return false;
+  }
+
+  // 等空闲（非 IME / 非编辑中）再 render。被动路径专用：
+  //   - 当前在编辑：标记 _pendingPassiveRender，待 compositionend 或下一次 idle 再补
+  //   - 当前空闲：与 renderCurrentView 等价
+  // 注意：复用同一个标记，期间多次调用会被合并成一次。
+  renderCurrentViewIfIdle() {
+    if (this.isUserEditing()) {
+      this._pendingPassiveRender = true;
+      return;
+    }
+    this.renderCurrentView();
+  }
+
   renderCurrentView() {
     const cur = this._getViewByName(this.currentView);
     // 同步"引用色"CSS 变量到 #editor（数据侧设置→视觉即时生效，各视图无需各自处理）
@@ -698,7 +755,8 @@ class App {
     this._asyncRefsResolving = false;
     // Single deferred re-render after all async refs resolved (not per-element)
     if (needsRerender) {
-      requestAnimationFrame(() => this.renderCurrentView());
+      // 走 idle 路径：用户正在输入（含 IME 拼音）时不打断 → compositionend 时再补
+      requestAnimationFrame(() => this.renderCurrentViewIfIdle());
     }
   }
 
@@ -852,7 +910,8 @@ class App {
       const { embeddedMedia, embeddedRefDocs } = await parseUDDBlob(blob);
       if (embeddedMedia) session.embeddedMedia = embeddedMedia; // keep for fileHandle fallback
       session.embeddedRefDocs = embeddedRefDocs || {};
-      this.renderCurrentView();
+      // 走 idle 路径：嵌入数据在用户敲字时加载完，不该打断输入
+      this.renderCurrentViewIfIdle();
     } catch (e) { /* skip */ }
     finally { session._embeddedLoading = false; }
   }

@@ -306,7 +306,10 @@ function resolveRef(data, refStr) {
       if (!wb) {
         if (typeof loadCrossDocSheetsAsync === 'function') {
           loadCrossDocSheetsAsync(sr.docName, () => {
-            if (typeof app !== 'undefined' && app.renderCurrentView) {
+            if (typeof app !== 'undefined' && app.renderCurrentViewIfIdle) {
+              // idle 路径：用户敲字时不打断（IME 中或 contenteditable 焦点中）
+              requestAnimationFrame(() => app.renderCurrentViewIfIdle());
+            } else if (typeof app !== 'undefined' && app.renderCurrentView) {
               requestAnimationFrame(() => app.renderCurrentView());
             }
           });
@@ -1167,7 +1170,10 @@ function refreshRefs(viewEl, data) {
     if (!anyNewlyLoaded) return;
     // 重渲会再次跑 refreshRefs，但这次所有 async ref 都已在缓存里（wasCached=true）→
     // results 全 false → 不再触发递归 render。
-    if (typeof app !== 'undefined' && typeof app.renderCurrentView === 'function') {
+    if (typeof app !== 'undefined' && typeof app.renderCurrentViewIfIdle === 'function') {
+      // idle 路径：用户正在编辑/输入法拼音中时不打断 DOM；compositionend / 失焦后再补。
+      requestAnimationFrame(() => app.renderCurrentViewIfIdle());
+    } else if (typeof app !== 'undefined' && typeof app.renderCurrentView === 'function') {
       requestAnimationFrame(() => app.renderCurrentView());
     }
   }).catch(() => { refreshRefs._asyncResolvePending = false; });
