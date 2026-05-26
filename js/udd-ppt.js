@@ -462,6 +462,47 @@ class PptView {
     this._renderControls();
   }
 
+  // 把节点 type_global 样式（与 outline / document 的 buildNodeStyle 同源）拼成 HTML 内联 style。
+  // PPT 视图里 content / body 的字体大小/颜色/加粗/斜体/下划线/删除线/背景/对齐都和大纲保持一致。
+  // 之前 body 一律 opacity:.6 + italic 是"视觉区分"——用户要求与大纲一致，彻底去除。
+  _bulletInlineStyle(b) {
+    if (typeof buildNodeStyle !== 'function') return '';
+    const styleObj = buildNodeStyle(this.data, b.path || '',
+      (typeof b.typeLevel === 'number') ? b.typeLevel : (b.level || 0),
+      { isBody: !!b.isBody });
+    const parts = [];
+    if (styleObj.font) parts.push(`font-family:${styleObj.font}`);
+    if (styleObj.font_size) parts.push(`font-size:${styleObj.font_size}pt`);
+    if (styleObj.color) parts.push(`color:${typeof rgbToHex === 'function' ? rgbToHex(String(styleObj.color)) : styleObj.color}`);
+    if (styleObj.bold) parts.push('font-weight:700');
+    if (styleObj.italic) parts.push('font-style:italic');
+    const decos = [];
+    if (styleObj.underline) decos.push('underline');
+    if (styleObj.strikethrough) decos.push('line-through');
+    if (decos.length) parts.push('text-decoration:' + decos.join(' '));
+    if (styleObj.background_color) {
+      parts.push(`background-color:${typeof rgbToHex === 'function' ? rgbToHex(String(styleObj.background_color)) : styleObj.background_color}`);
+    }
+    if (styleObj.text_align) parts.push(`text-align:${styleObj.text_align}`);
+    return parts.join(';');
+  }
+
+  _titleInlineStyle(slide) {
+    if (typeof buildNodeStyle !== 'function') return '';
+    const styleObj = buildNodeStyle(this.data, slide.nodePath || '',
+      (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1,
+      { isBody: false });
+    const parts = [];
+    if (styleObj.font) parts.push(`font-family:${styleObj.font}`);
+    if (styleObj.font_size) parts.push(`font-size:${styleObj.font_size}pt`);
+    if (styleObj.italic) parts.push('font-style:italic');
+    const decos = [];
+    if (styleObj.underline) decos.push('underline');
+    if (styleObj.strikethrough) decos.push('line-through');
+    if (decos.length) parts.push('text-decoration:' + decos.join(' '));
+    return parts.join(';');
+  }
+
   _renderSlideHTML(slide, isThumbnail) {
     const t = slide.theme;
     const scale = isThumbnail ? 'font-size:4px' : '';
@@ -473,12 +514,12 @@ class PptView {
       return `<div class="slide-title" style="color:${t.accent};${scale}">谢谢</div>`;
     }
 
-    let html = `<div class="slide-title" style="color:${t.accent};border-bottom:2px solid ${t.accent};padding-bottom:8px;${scale}">${this._esc(slide.title)}</div>`;
+    let html = `<div class="slide-title" style="color:${t.accent};border-bottom:2px solid ${t.accent};padding-bottom:8px;${this._titleInlineStyle(slide)};${scale}">${this._esc(slide.title)}</div>`;
 
     const layout = slide.layout || 'one_col';
     const bulletHTML = slide.bullets.map(b => {
-      const opacity = b.isBody ? 'opacity:.6;font-style:italic' : '';
-      return `<div class="slide-bullet" data-level="${b.level}" style="${opacity};${scale}">${this._esc(b.text)}</div>`;
+      const nodeStyle = this._bulletInlineStyle(b);
+      return `<div class="slide-bullet" data-level="${b.level}" style="${nodeStyle};${scale}">${this._esc(b.text)}</div>`;
     }).join('');
 
     const mediaItems = slide.mediaItems || [];
@@ -502,8 +543,8 @@ class PptView {
     // 单栏 / 双栏 都用这个，区别只是外层容器是单栏还是 column-count:2
     const buildOrderedHTML = (items) => (items || []).map(it => {
       if (it.kind === 'bullet') {
-        const opacity = it.isBody ? 'opacity:.6;font-style:italic' : '';
-        return `<div class="slide-bullet" data-level="${it.level}" style="${opacity};${scale}">${this._esc(it.text)}</div>`;
+        const nodeStyle = this._bulletInlineStyle(it);
+        return `<div class="slide-bullet" data-level="${it.level}" style="${nodeStyle};${scale}">${this._esc(it.text)}</div>`;
       }
       // media
       return buildMediaHTML([it]);
@@ -531,7 +572,7 @@ class PptView {
         // Distribute media: assign each mediaItem to a column by round-robin index
         const colMedia = mediaItems.filter((_, mi) => mi % 3 === ci);
         html += `<div class="slide-col">${cols[ci].map(b =>
-          `<div class="slide-bullet" data-level="${b.level}" style="${b.isBody ? 'opacity:.6;font-style:italic' : ''};${scale}">${this._esc(b.text)}</div>`
+          `<div class="slide-bullet" data-level="${b.level}" style="${this._bulletInlineStyle(b)};${scale}">${this._esc(b.text)}</div>`
         ).join('')}${buildMediaHTML(colMedia)}</div>`;
       }
       html += '</div>';
@@ -752,7 +793,7 @@ class PptView {
     if (styleObj.font_size) opts.fontSize = +styleObj.font_size;
     else opts.fontSize = Math.max(8, 14 - (b.level || 0));
     if (styleObj.bold) opts.bold = true;
-    if (styleObj.italic || b.isBody) opts.italic = true;
+    if (styleObj.italic) opts.italic = true;
     if (styleObj.underline) opts.underline = { style: 'sng' };
     if (styleObj.strikethrough) opts.strike = 'sngStrike';
     // color: 节点 / 类型样式优先；缺省退回主题文字色
