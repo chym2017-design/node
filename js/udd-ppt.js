@@ -267,7 +267,7 @@ class PptView {
             if (orderedItems) orderedItems.push({ kind: 'media', type: 'table', rows });
           }
         } else {
-          const m = { type: it.type, src: it.src, meta: it.meta || null };
+          const m = { type: it.type, src: it.src, meta: it.meta || null, srcRefStr: it.srcRefStr || null };
           mediaItems.push(m);
           if (orderedItems) orderedItems.push({ kind: 'media', ...m });
         }
@@ -528,12 +528,13 @@ class PptView {
     // Build ordered media HTML (images and tables in appearance order)
     // 用 data-mediasrc 占位，innerHTML 后统一绑定候选 URL + onerror 回退
     const buildMediaHTML = (items) => items.map(m => {
+      const refAttr = m.srcRefStr ? ` data-mediaref="${this._esc(m.srcRefStr)}"` : '';
       if (m.type === 'image') {
-        return `<img class="slide-img" data-mediasrc="${this._esc(m.src)}" />`;
+        return `<img class="slide-img" data-mediasrc="${this._esc(m.src)}"${refAttr} />`;
       } else if (m.type === 'video') {
-        return `<video class="slide-video" controls style="max-width:100%;max-height:60vh" data-mediasrc="${this._esc(m.src)}"></video>`;
+        return `<video class="slide-video" controls style="max-width:100%;max-height:60vh" data-mediasrc="${this._esc(m.src)}"${refAttr}></video>`;
       } else if (m.type === 'audio') {
-        return `<audio controls data-mediasrc="${this._esc(m.src)}"></audio>`;
+        return `<audio controls data-mediasrc="${this._esc(m.src)}"${refAttr}></audio>`;
       } else {
         return `<table class="slide-table">${(m.rows || []).map((row, ri) => `<tr>${row.map(cell => ri === 0 ? `<th>${this._esc(cell)}</th>` : `<td>${this._esc(cell)}</td>`).join('')}</tr>`).join('')}</table>`;
       }
@@ -577,7 +578,7 @@ class PptView {
       }
       html += '</div>';
     } else if (layout === 'image_full' && hasMedia && mediaItems[0].type === 'image') {
-      html = `<img class="slide-img" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.3" data-mediasrc="${this._esc(mediaItems[0].src)}" />
+      html = `<img class="slide-img" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.3" data-mediasrc="${this._esc(mediaItems[0].src)}"${mediaItems[0].srcRefStr ? ` data-mediaref="${this._esc(mediaItems[0].srcRefStr)}"` : ''} />
               <div style="position:relative;z-index:1">${html}<div class="slide-body"><div class="slide-col">${bulletHTML}</div></div></div>`;
     } else {
       // one_col：纯顺序展示，不区分图文，从上到下混排
@@ -592,8 +593,10 @@ class PptView {
     if (!rootEl || typeof _bindMediaSrcWithFallback !== 'function') return;
     rootEl.querySelectorAll('[data-mediasrc]').forEach(el => {
       const src = el.getAttribute('data-mediasrc');
+      const refStr = el.getAttribute('data-mediaref') || null;
       el.removeAttribute('data-mediasrc');
-      _bindMediaSrcWithFallback(el, src);
+      el.removeAttribute('data-mediaref');
+      _bindMediaSrcWithFallback(el, src, refStr);
     });
   }
 
@@ -738,12 +741,12 @@ class PptView {
 
   // 通过 app.resolveMediaSrcCandidates 获取所有候选 URL，依次 fetch 直至成功，
   // 转成 base64 data URL（含 mime）。失败返回 null。
-  async _fetchMediaAsBase64(src) {
+  async _fetchMediaAsBase64(src, refStr) {
     if (!src) return null;
     if (src.startsWith('data:')) return src;
     let candidates = [];
     if (typeof app !== 'undefined' && app.resolveMediaSrcCandidates) {
-      candidates = app.resolveMediaSrcCandidates(src);
+      candidates = app.resolveMediaSrcCandidates(src, refStr);
     } else {
       candidates = [src];
     }
@@ -773,7 +776,7 @@ class PptView {
       if (!m || !m.src) return;
       if (m.type !== 'image' && m.type !== 'video' && m.type !== 'audio') return;
       if (m._dataUrl !== undefined) return; // 已处理
-      tasks.push(this._fetchMediaAsBase64(m.src).then(d => { m._dataUrl = d || null; }));
+      tasks.push(this._fetchMediaAsBase64(m.src, m.srcRefStr).then(d => { m._dataUrl = d || null; }));
     };
     for (const slide of this.slides) {
       (slide.mediaItems || []).forEach(visit);

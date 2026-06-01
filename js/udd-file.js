@@ -355,7 +355,7 @@ function _rewriteRefToUdd(refStr) {
 // Scan all nodes for media paths, fetch them, embed in zip, rewrite paths to udd.media/xxx
 async function _embedMediaFiles(data, zip, serverUrl) {
   const mediaFolder = zip.folder('media');
-  const pathMap = {}; // original path → 'udd.media/media_N.ext'
+  const pathMap = {}; // 原始字面路径 src → { fetchPath, embedded }
   const mediaRe = /\{\{(?!=)(.*?)\}\}/g;
   const pathRe = /("(?:image|video|audio)")\s*:\s*"([^"]+)"/;
 
@@ -369,9 +369,13 @@ async function _embedMediaFiles(data, zip, serverUrl) {
           const pm = m[1].match(pathRe);
           if (!pm) continue;
           const src = pm[2];
-          // Collect local absolute paths or existing udd.media/ paths (for re-embed)
-          if (/^[A-Za-z]:[\\/]/.test(src) && !pathMap[src]) {
-            pathMap[src] = null;
+          // 绝对/相对媒体都允许嵌入：相对路径按当前文档加载路径解析到原文件。
+          const fileCandidates = (typeof app !== 'undefined' && app.resolveMediaFilePathCandidates)
+            ? app.resolveMediaFilePathCandidates(src)
+            : ((/^[A-Za-z]:[\\/]/.test(src) || src.startsWith('/')) ? [src] : []);
+          const fetchPath = fileCandidates[0];
+          if (fetchPath && !pathMap[src]) {
+            pathMap[src] = { fetchPath, embedded: null };
           }
         }
       } else if (typeof v === 'object') {
@@ -383,19 +387,20 @@ async function _embedMediaFiles(data, zip, serverUrl) {
 
   // Download/fetch each unique path
   let idx = 0;
-  for (const origPath of Object.keys(pathMap)) {
+  for (const entry of Object.values(pathMap)) {
     try {
       let fetchBlob = null;
-      if (/^[A-Za-z]:[\\/]/.test(origPath)) {
-        const resp = await fetch(serverUrl + '/api/readfile?path=' + encodeURIComponent(origPath));
+      const fetchPath = entry.fetchPath;
+      if (/^[A-Za-z]:[\\/]/.test(fetchPath) || fetchPath.startsWith('/')) {
+        const resp = await fetch(serverUrl + '/api/readfile?path=' + encodeURIComponent(fetchPath));
         if (!resp.ok) continue;
         fetchBlob = await resp.blob();
       }
       if (!fetchBlob) continue;
-      const ext = origPath.split('.').pop().toLowerCase();
+      const ext = fetchPath.split('.').pop().toLowerCase();
       const fname = 'media_' + (idx++) + '.' + ext;
       mediaFolder.file(fname, fetchBlob);
-      pathMap[origPath] = 'udd.media/' + fname;
+      entry.embedded = 'udd.media/' + fname;
     } catch (e) { /* skip */ }
   }
 
@@ -404,9 +409,9 @@ async function _embedMediaFiles(data, zip, serverUrl) {
     if (!obj || typeof obj !== 'object') return;
     for (const k of Object.keys(obj)) {
       if (typeof obj[k] === 'string') {
-        for (const [orig, embedded] of Object.entries(pathMap)) {
-          if (embedded && obj[k].includes(orig)) {
-            obj[k] = obj[k].split(orig).join(embedded);
+        for (const [orig, entry] of Object.entries(pathMap)) {
+          if (entry.embedded && obj[k].includes(orig)) {
+            obj[k] = obj[k].split(orig).join(entry.embedded);
           }
         }
       } else if (typeof obj[k] === 'object') {

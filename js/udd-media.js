@@ -274,7 +274,7 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
     let mediaEl = null;
     if (it.type === 'image') {
       mediaEl = document.createElement('img');
-      _bindMediaSrcWithFallback(mediaEl, it.src);
+      _bindMediaSrcWithFallback(mediaEl, it.src, it.srcRefStr);
       mediaEl.className = 'media-img';
       mediaEl.style.width = '100%';
       mediaEl.draggable = false;
@@ -286,19 +286,19 @@ function renderTextWithMedia(text, container, mediaInfo, opts) {
     } else if (it.type === 'video') {
       wrapper.classList.add('media-video-wrap');
       mediaEl = document.createElement('video');
-      _bindMediaSrcWithFallback(mediaEl, it.src);
+      _bindMediaSrcWithFallback(mediaEl, it.src, it.srcRefStr);
       mediaEl.className = 'media-video';
       mediaEl.controls = true;
       mediaEl.style.width = '100%';
       if (meta.autoplay) mediaEl.autoplay = true;
       if (meta.loop) mediaEl.loop = true;
-      if (meta.poster) mediaEl.poster = resolveMediaSrc(meta.poster);
+      if (meta.poster) mediaEl.poster = resolveMediaSrc(meta.poster, it.srcRefStr);
       // 不在 <video> 上挂 click/dblclick：原生控件会消化点击，
       // 编辑入口走 wrapper 上的 ✎/↗，保证进度条 seek 不被打断。
     } else if (it.type === 'audio') {
       wrapper.classList.add('media-audio-wrap');
       mediaEl = document.createElement('audio');
-      _bindMediaSrcWithFallback(mediaEl, it.src);
+      _bindMediaSrcWithFallback(mediaEl, it.src, it.srcRefStr);
       mediaEl.controls = true;
       mediaEl.className = 'media-audio';
       mediaEl.style.width = '100%';
@@ -430,9 +430,13 @@ function _legacyCollect(text) {
 //   2) 仓库服务器（需 server + filePath）
 //   3) 本机绝对路径代理（需 server）
 //   4) 原样
-function _bindMediaSrcWithFallback(el, src) {
+function _bindMediaSrcWithFallback(el, src, refStr) {
+  if (el && el.dataset) {
+    el.dataset.mediasrc = src || '';
+    if (refStr) el.dataset.mediaref = refStr;
+  }
   const candidates = (typeof app !== 'undefined' && app.resolveMediaSrcCandidates)
-    ? app.resolveMediaSrcCandidates(src)
+    ? app.resolveMediaSrcCandidates(src, refStr)
     : [resolveMediaSrc(src)];
   if (!candidates || candidates.length === 0) { el.src = ''; return; }
   let idx = 0;

@@ -1642,11 +1642,113 @@ class App {
   //   1) 本文档嵌入  udd.media/* → session.embeddedMedia blob
   //   2) 仓库服务器  udd.media/* → server /api/readfile?path=filePath&entry=...
   //                D:\xxx       → server /api/readfile?path=D:\xxx
+  //                相对路径      → 先按源文档目录解析成原文件，再走 server /api/readfile?path=...
   //   3) 本机路径    直接原样（浏览器通常无法加载，留给用户自行处理）
   //   4) http/data:  原样返回
   // 是否开 server 只是让其中某些候选能/不能成功读取，读取顺序固定不变。
   // ================================================================
-  resolveMediaSrcCandidates(src) {
+  _isFsAbsolutePath(p) {
+    return !!p && (p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p));
+  }
+
+  _pathDirname(p) {
+    return p ? p.replace(/[\\/][^\\/]+$/, '') : '';
+  }
+
+  _joinFsPath(dir, rel) {
+    if (!dir) return rel || '';
+    const sep = (/^[A-Za-z]:[\\/]/.test(dir) || dir.includes('\\')) ? '\\' : '/';
+    const base = String(dir).replace(/[\\/]+$/, '');
+    const tail = String(rel || '')
+      .replace(/^[\\/]+/, '')
+      .replace(/[\\/]+/g, sep);
+    return tail ? (base + sep + tail) : base;
+  }
+
+  _dedupeOrdered(list, keyFn) {
+    const seen = new Set();
+    const out = [];
+    for (const item of list || []) {
+      if (!item) continue;
+      const key = keyFn ? keyFn(item) : item;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+    }
+    return out;
+  }
+
+  _getCurrentDocPath() {
+    const session = this._activeSession;
+    if (!session) return '';
+    if (session.filePath) return session.filePath;
+    return this._isFsAbsolutePath(session.originPath || '') ? session.originPath : '';
+  }
+
+  _resolveDocPathCandidates(docName, baseDocPath) {
+    if (!docName) return [];
+    const repoDir = this.repoDir || localStorage.getItem('udd_repo_dir') || '';
+    const curDir = this._pathDirname(baseDocPath || '');
+    const hasUdd = docName.endsWith('.udd');
+    const candidates = [];
+
+    if (this._isFsAbsolutePath(docName)) {
+      candidates.push(docName);
+      if (!hasUdd) candidates.push(docName + '.udd');
+    } else if (docName.includes('/') || docName.includes('\\')) {
+      if (curDir) {
+        candidates.push(this._joinFsPath(curDir, docName));
+        if (!hasUdd) candidates.push(this._joinFsPath(curDir, docName + '.udd'));
+      }
+      if (repoDir) {
+        candidates.push(this._joinFsPath(repoDir, docName));
+        if (!hasUdd) candidates.push(this._joinFsPath(repoDir, docName + '.udd'));
+      }
+    } else if (repoDir) {
+      if (hasUdd) {
+        candidates.push(this._joinFsPath(repoDir, docName));
+      } else {
+        candidates.push(this._joinFsPath(repoDir, docName + '.udd'));
+        candidates.push(this._joinFsPath(repoDir, docName + '.json'));
+      }
+    }
+
+    return this._dedupeOrdered(candidates, p => String(p).replace(/[\\/]+/g, '\\').toLowerCase());
+  }
+
+  _getMediaBaseDirs(refStr) {
+    const dirs = [];
+    const curDocPath = this._getCurrentDocPath();
+
+    if (refStr && typeof parseRef === 'function') {
+      try {
+        const ref = parseRef(refStr);
+        if (ref && ref.docName) {
+          const docCandidates = this._resolveDocPathCandidates(ref.docName, curDocPath);
+          for (const fp of docCandidates) {
+            const dir = this._pathDirname(fp);
+            if (dir) dirs.push(dir);
+          }
+        }
+      } catch (e) { /* ignore bad ref */ }
+    }
+
+    if (curDocPath) dirs.push(this._pathDirname(curDocPath));
+    if (this.repoDir) dirs.push(this.repoDir);
+    return this._dedupeOrdered(dirs, p => String(p).replace(/[\\/]+/g, '\\').toLowerCase());
+  }
+
+  resolveMediaFilePathCandidates(src, refStr) {
+    if (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('udd.media/')) {
+      return [];
+    }
+    if (this._isFsAbsolutePath(src)) return [src];
+    const dirs = this._getMediaBaseDirs(refStr);
+    const paths = dirs.map(dir => this._joinFsPath(dir, src));
+    return this._dedupeOrdered(paths, p => String(p).replace(/[\\/]+/g, '\\').toLowerCase());
+  }
+
+  resolveMediaSrcCandidates(src, refStr) {
     if (!src) return [];
     const candidates = [];
     const session = this._activeSession;
@@ -1672,22 +1774,25 @@ class App {
       return candidates;
     }
 
-    // 本机绝对路径 D:\xxx — 仅能通过服务器代理
-    if (/^[A-Za-z]:[\\/]/.test(src)) {
+    // 原始文件路径（绝对/相对）—— 相对路径先按源文档目录解析成原文件，再代理读取
+    const filePaths = this.resolveMediaFilePathCandidates(src, refStr);
+    if (filePaths.length > 0) {
       if (this.repoServerUrl) {
-        candidates.push(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(src));
+        for (const fp of filePaths) {
+          candidates.push(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(fp));
+        }
       }
-      candidates.push(src); // 兜底原样（通常浏览器不支持，但保留给未来协议处理器）
-      return candidates;
+      candidates.push(...filePaths);
     }
 
-    // 其它（相对路径 / 未知）原样返回
-    return [src];
+    // 兜底原样（通常浏览器不支持，但保留给原生相对 URL / 未来协议处理器）
+    candidates.push(src);
+    return this._dedupeOrdered(candidates);
   }
 
   // 兼容接口：返回首选候选（或空串）
-  resolveMediaSrc(src) {
-    const list = this.resolveMediaSrcCandidates(src);
+  resolveMediaSrc(src, refStr) {
+    const list = this.resolveMediaSrcCandidates(src, refStr);
     return list.length > 0 ? list[0] : '';
   }
 
