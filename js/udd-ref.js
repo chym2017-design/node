@@ -1454,7 +1454,39 @@ function indentNodeData(data, path) {
   if (parts.length === 1) {
     const allRootKeys = getAllTKeys(parent);
     const idx = allRootKeys.indexOf(currentKey);
-    if (idx <= 0) return null;
+    // 顶层首节点没有"前一个兄弟"可挂靠时，Tab 表示整棵子树整体下沉一级：
+    //   t0-1  -> t1-1
+    //   t1-1  -> t2-1
+    // 同时子孙节点层级同步 +1，保持当前节点在根层的相对位置不变。
+    if (idx <= 0) {
+      const node = parent[currentKey];
+      if (!node) return null;
+      const newLevel = level + 1;
+      let newSeqNum = getSeq(currentKey);
+      const existingSameLevel = getChildTKeys(parent, newLevel).filter(k => k !== currentKey);
+      if (existingSameLevel.some(k => getSeq(k) === newSeqNum)) {
+        newSeqNum = nextSeq(parent, newLevel);
+      }
+      const newKey = `t${newLevel}-${newSeqNum}`;
+      const newNode = relevelNode(node, 1);
+      newNode.content = node.content;
+      newNode.body = node.body;
+      newNode.hide = node.hide || 0;
+      newNode.hide_body = node.hide_body || 0;
+      for (const k of Object.keys(node)) {
+        if (!isTNode(k) && newNode[k] === undefined) newNode[k] = node[k];
+      }
+      const entries = Object.entries(parent);
+      const temp = {};
+      for (const [k, v] of entries) {
+        if (k === currentKey) temp[newKey] = newNode;
+        else temp[k] = v;
+      }
+      for (const k of Object.keys(parent)) delete parent[k];
+      Object.assign(parent, temp);
+      data._pathIndex = null;
+      return newKey;
+    }
     prevKey = allRootKeys[idx - 1];
   } else {
     const siblings = getChildTKeys(parent, level);

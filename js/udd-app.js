@@ -229,6 +229,13 @@ class App {
     s.scrollTop = editorEl ? editorEl.scrollTop : 0;
   }
 
+  _focusFirstRootNode() {
+    const firstKey = getFirstTKey(this.data);
+    this.outlineView.focusPath = firstKey;
+    this.documentView.focusPath = firstKey;
+    this.mindmapView.focusPath = firstKey;
+  }
+
   switchSession(sessionId) {
     if (sessionId === this.activeSessionId) return;
     const target = this.sessions.find(s => s.id === sessionId);
@@ -2150,13 +2157,38 @@ ${clone.innerHTML}
       xlsxBin = tmp.toBinary();
     } catch (e) { /* skip if XLSX unavailable */ }
     this._addSessionAndSwitch(name, newData, null, null, null, { xlsxBin });
-    this.outlineView.focusPath = 't0-1';
+    this._focusFirstRootNode();
     // 标脏：让 autoSave 把新会话（含样板表格簿 xlsxBin）真正写进 IndexedDB。
     // 否则下次浏览器刷新时 sessions_index 有这条记录，但 session_<id> 不存在 → 会话丢失，
     // 进而被空 fallback 顶替，最终保存出来的 .udd 里 sheets.xlsx 为空。
     this.markDirty();
     this.renderCurrentView();
     toast('已新建文档');
+  }
+
+  // 新建空白文档：内容为空（空根节点、无示例引用、无 _sheetRefs），
+  // 配套表格也是空的（不调用 resetWithDefaultData，沿用 SheetView 构造函数的空 A1:A1）。
+  async newBlankFile() {
+    const newData = createBlankData();
+    const baseName = '空白文档';
+    let name = baseName;
+    let n = 1;
+    while (this.sessions.some(s => s.fileName === name)) {
+      n++;
+      name = baseName + ' ' + n;
+    }
+    newData.meta.title = name;
+    // 空白表格簿：新建一份只含空 Sheet1 的工作簿二进制（不注入示例数据）
+    let xlsxBin = null;
+    try {
+      const tmp = new SheetView(document.createElement('div'));
+      xlsxBin = tmp.toBinary();
+    } catch (e) { /* skip if XLSX unavailable */ }
+    this._addSessionAndSwitch(name, newData, null, null, null, { xlsxBin });
+    this._focusFirstRootNode();
+    this.markDirty();
+    this.renderCurrentView();
+    toast('已新建空白文档');
   }
 
   async openFile() {

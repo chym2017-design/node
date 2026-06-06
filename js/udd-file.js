@@ -170,6 +170,37 @@ function createDefaultData() {
 }
 
 // ================================================================
+//  BLANK DATA
+//  "新建空白文档"：只保留必要的 meta / type_global 与一个空根节点，
+//  正文、子节点、示例引用、_sheetRefs 全部为空。配套的表格簿也不注入
+//  示例数据（newBlankFile 中跳过 resetWithDefaultData，用构造函数的空 A1:A1）。
+// ================================================================
+function createBlankData() {
+  return {
+    meta: {
+      title: "未命名文档", author: "", created: new Date().toISOString(),
+      modified: new Date().toISOString(), version: "1.0"
+    },
+    type_global: {
+      "t*-*.font_size": 12,
+      "t0-*.font": "微软雅黑", "t0-*.font_size": 16, "t0-*.bold": 1,
+      "t1-*.font": "微软雅黑", "t1-*.font_size": 14,
+      "t1-*.bold": 1, "t1-*.paragraph_before": 1, "t1-*.paragraph_after": 0.5,
+      "t2-*.font": "微软雅黑", "t2-*.font_size": 12,
+      "t2-*.bold": 1, "t2-*.paragraph_before": 0.5, "t2-*.paragraph_after": 0.3,
+      "t3-*.font": "微软雅黑", "t3-*.font_size": 12,
+      "t3-*.paragraph_line": 1.3,
+      "body.font": "微软雅黑", "body.font_size": 12, "body.color": "51,65,85",
+      "body.paragraph_line": 1.8,
+      hide_t: "t>3", numbering_style: "1.1.1"
+    },
+    "t0-1": {
+      content: "", hide: 0, hide_body: 0, body: ""
+    }
+  };
+}
+
+// ================================================================
 //  INDEXEDDB STORAGE
 // ================================================================
 const DB_NAME = 'udd-db', DB_VER = 2, STORE = 'docs', MEDIA_STORE = 'media';

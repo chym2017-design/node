@@ -647,6 +647,7 @@ class OutlineView {
     if (!newPath) return;
     this.focusPath = newPath;
     this.focusField = 'content';
+    this.focusCursorEnd = false;
     this.render(this.data);
     app.markDirty();
   }

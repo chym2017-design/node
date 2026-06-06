@@ -1,0 +1,259 @@
+{
+  "meta": {
+    "title": "UDD 使用说明书",
+    "author": "",
+    "created": "2026-06-02T00:00:00.000Z",
+    "modified": "2026-06-02T00:00:00.000Z",
+    "version": "1.0"
+  },
+
+  "type_global": {
+    "t*-*.font_size": 12,
+    "t0-*.font": "微软雅黑", "t0-*.font_size": 18, "t0-*.bold": 1,
+    "t1-*.font": "微软雅黑", "t1-*.font_size": 15, "t1-*.bold": 1,
+    "t1-*.paragraph_before": 1, "t1-*.paragraph_after": 0.5,
+    "t2-*.font": "微软雅黑", "t2-*.font_size": 13, "t2-*.bold": 1,
+    "t2-*.paragraph_before": 0.5, "t2-*.paragraph_after": 0.3,
+    "t3-*.font": "微软雅黑", "t3-*.font_size": 12, "t3-*.paragraph_line": 1.3,
+    "body.font": "微软雅黑", "body.font_size": 12, "body.color": "51,65,85",
+    "body.paragraph_line": 1.7,
+    "hide_t": "t>3",
+    "numbering_style": "1.1.1",
+    "page_size": "A4",
+    "ref_color": "37,99,235"
+  },
+
+  "_sheetRefs": {
+    "Sheet1!A2": "=t1-6.t2-1.content",
+    "Sheet1!A3": "=t1-6.t2-2.content",
+    "Sheet1!A4": "=t1-6.t2-3.content"
+  },
+
+  "t0-1": {
+    "content": "UDD 一化文档 · 使用说明书",
+    "hide": 0, "hide_body": 0,
+    "body": "本文件本身就是一份 UDD 文档（原始数据 JSON 形式）。把整段 JSON 复制后，在 UDD 中新建文档并粘贴/导入即可直接打开阅读。\n\nUDD 的核心思想：**一份数据，多种视图**——同一棵 JSON 数据树可切换为 大纲 / 思维导图 / 文档 / 表格 / 演示，通过引用实现联动。",
+
+    "t1-1": {
+      "content": "一、快速开始",
+      "hide": 0, "hide_body": 0,
+      "body": "两步双击启动绿色版：\n1. 双击启动脚本（Windows: windows_start.bat / macOS: macos_start.command），让本地服务跑在 http://localhost:8080，**黑窗口不要关**。\n2. 双击 udd-app.html，浏览器打开后自动连上本地服务，即可读写 .udd 文件、流畅播放音视频。\n\n首次使用需安装 Node.js（nodejs.org 下载 LTS 版），否则无法读取本地 .udd 文件。",
+      "t2-1": {
+        "content": "数据三层模型",
+        "hide": 0, "hide_body": 0,
+        "body": "① 原始数据：人可读的嵌套键值对 JSON（本文件就是），编辑时始终操作它。\n② 底层数据：保存进 .udd 时经转义表压缩的短键名（content→c，body→b，type_global→tg…）。\n③ 转义表：长短键名的双向映射，软件内置。\n\n.udd 文件本质是 ZIP 包，内含 data.json（底层数据）、meta.json、view_state.json、sheets.xlsx、可选 ppt-format.json、udd.media/ 媒体目录。"
+      },
+      "t2-2": {
+        "content": "键名规则",
+        "hide": 0, "hide_body": 0,
+        "body": "节点键名格式为 t<层级>-<序号>：t0-1 是根节点，t1-1/t1-2 为一级，t2-1 为二级，依此类推，理论上无限层级。第一个数字=层级，第二个=序号。键名由系统自动生成；删除节点后序号不回收，避免引用失效。"
+      }
+    },
+
+    "t1-2": {
+      "content": "二、节点结构与必备字段",
+      "hide": 0, "hide_body": 0,
+      "body": "每个 t 节点是一个对象，常见字段：\n• content —— 标题文字（每个节点必有，可为空字符串）\n• body —— 正文，标题下方段落（可选，可为空）\n• hide —— 子节点折叠：0 展开 / 1 折叠\n• hide_body —— 正文折叠：0 显示 / 1 折叠\n• 子节点 tN-* —— 直接作为该对象的键嵌套进去",
+      "t2-1": {
+        "content": "这是一个示范子节点",
+        "hide": 0, "hide_body": 0,
+        "body": "我有自己的 content（标题）和 body（正文）。在文档视图里我会显示为「2.1 这是一个示范子节点」加下方这段正文。"
+      },
+      "t2-2": {
+        "content": "正文默认折叠的节点",
+        "hide": 0, "hide_body": 1,
+        "body": "因为我设了 hide_body:1，所以这段正文默认是折叠的，点击标题右侧的指示器才展开。"
+      }
+    },
+
+    "t1-3": {
+      "content": "三、引用语法",
+      "hide": 0, "hide_body": 0,
+      "body": "引用让「一处数据、处处同步」。两类写法：\n① 整节点引用，**不**包 {{}}：content 直接写 =t1-1（克隆整个节点含子节点）。\n② 其它一切引用，**都**包 {{}}：{{=t1-1.content}} 可混在文字中间任意位置。\n渲染开启时，引用右侧出现 ↗ 图标，点击可跳到引用源。",
+      "t2-1": {
+        "content": "被引用的原始节点",
+        "hide": 0, "hide_body": 0,
+        "body": "这是一段会被下面多个节点引用的正文，内容里藏了数字 2026 和「关键片段」三个字。修改这里，所有引用处会同步更新。"
+      },
+      "t2-2": {
+        "content": "=t1-3.t2-1",
+        "hide": 0, "hide_body": 0
+      },
+      "t2-3": {
+        "content": "字段引用（标题）：{{=t1-3.t2-1.content}}",
+        "hide": 0, "hide_body": 0
+      },
+      "t2-4": {
+        "content": "字段引用（正文）：{{=t1-3.t2-1.body}}",
+        "hide": 0, "hide_body": 0
+      },
+      "t2-5": {
+        "content": "切片取前 8 字：{{=t1-3.t2-1.body(0,8)}}",
+        "hide": 0, "hide_body": 0
+      },
+      "t2-6": {
+        "content": "正则提取数字：{{=t1-3.t2-1.body.match(/\\d+/).[0]}}",
+        "hide": 0, "hide_body": 0
+      },
+      "t2-7": {
+        "content": "混合拼接：源节点是「{{=t1-3.t2-1.content}}」，其中片段＝{{=t1-3.t2-1.body.match(/「(.+?)」/).[1]}}",
+        "hide": 0, "hide_body": 0
+      }
+    },
+
+    "t1-4": {
+      "content": "四、引用语法速查",
+      "hide": 0, "hide_body": 0,
+      "body": "下面逐条列出引擎实际支持的写法（节点路径 token 严格为 t<数字>-<数字>）：",
+      "t2-1": {
+        "content": "整节点 / 字段 / 嵌套",
+        "hide": 0, "hide_body": 0,
+        "body": "=t1-1                  整节点引用（含子节点），不包 {{}}\n=t1-1.t2-1             整嵌套节点\n{{=t1-1.content}}      字段：标题\n{{=t1-1.body}}         字段：正文\n{{=t1-1.t2-1.content}} 嵌套路径 + 字段\n无字段时取值 = content + 换行 + body"
+      },
+      "t2-2": {
+        "content": "切片与正则",
+        "hide": 0, "hide_body": 0,
+        "body": "{{=t1-1.content(0,3)}}                 取前 3 个字符（String.slice，闭区间起点 0）\n{{=t1-1.content.match(/\\d+/).[0]}}     正则匹配，取第 0 组\n{{=t1-1.content.match(/(\\d+)-(\\d+)/).[1]}} 取第 1 个捕获组\n注意：.match(...) 后的 .[索引] 是**必填**的；标志仅支持 g i m s u y。\n不支持 .count() / .length 等函数。"
+      },
+      "t2-3": {
+        "content": "跨文档引用",
+        "hide": 0, "hide_body": 0,
+        "body": "{{=路径/文件名.udd.t1-1.content}}   行内跨文档（文档名必须以 .udd 结尾，用来和表格名区分）\n=路径/文件名.udd.t1-1               整节点跨文档\n=测试文档1.udd.t1-1.content          裸文件名在仓库目录查找；也支持相对/绝对路径\n点击 ↗ 会自动打开目标文档并定位。「图谱视图」可查看文档间关联。"
+      },
+      "t2-4": {
+        "content": "表格引用",
+        "hide": 0, "hide_body": 0,
+        "body": "{{=Sheet1.B2}}                      单元格（表名须以字母开头，地址如 B2、AA100）\n{{=文件名.udd.Sheet1.B2}}            跨文档单元格\n{{\"table\":\"Sheet1.A1:C4\"}}          单元格区域（JSON 媒体标签形式）\n提示：旧的裸括号 {{Sheet1.A1:C4}} 已不再支持，区域必须用 \"table\" JSON 形式。"
+      },
+      "t2-5": {
+        "content": "错误占位符",
+        "hide": 0, "hide_body": 0,
+        "body": "解析失败时会显示：#REF!（节点/单元格找不到）、#MATCH!（正则没匹配到）、#DOC!（跨文档文件打不开）、#LOADING...（异步加载中）。"
+      }
+    },
+
+    "t1-5": {
+      "content": "五、多媒体嵌入语法",
+      "hide": 0, "hide_body": 0,
+      "body": "在 content 或 body 中用 {{...}} 嵌入媒体，花括号内是 JSON 对象的「内部」（逗号分隔的 \"键\":\"值\"）。四种类型由这几个键区分：image / video / audio / table。\n所有类型共用一套属性键（无前缀）：width、height、align、angle、caption、border、opacity、ratio、autoplay、loop、poster。",
+      "t2-1": {
+        "content": "图片",
+        "hide": 0, "hide_body": 0,
+        "body": "把下面整行（含 example 中的真实路径）替换成你的图片路径即可：\n{{\"image\":\"d:\\\\projects\\\\node\\\\node\\\\example\\\\庄周梦蝶.png\",\"width\":\"60%\",\"align\":\"center\",\"caption\":\"图片说明\",\"border\":1}}"
+      },
+      "t2-2": {
+        "content": "视频",
+        "hide": 0, "hide_body": 0,
+        "body": "video 额外支持 autoplay / loop / poster：\n{{\"video\":\"d:\\\\projects\\\\node\\\\node\\\\example\\\\逍遥游样例.mp4\",\"width\":\"70%\",\"align\":\"center\",\"caption\":\"视频样例\"}}"
+      },
+      "t2-3": {
+        "content": "音频",
+        "hide": 0, "hide_body": 0,
+        "body": "audio 支持 autoplay / loop：\n{{\"audio\":\"d:\\\\projects\\\\node\\\\node\\\\example\\\\Kalimba.mp3\",\"loop\":1}}"
+      },
+      "t2-4": {
+        "content": "内嵌表格区域",
+        "hide": 0, "hide_body": 0,
+        "body": "用 table 键嵌入工作表区域，与其它媒体共用宽度/对齐/边框等属性：\n{{\"table\":\"Sheet1.A1:C4\",\"width\":\"100%\",\"border\":1}}"
+      },
+      "t2-5": {
+        "content": "路径与开关说明",
+        "hide": 0, "hide_body": 0,
+        "body": "• 路径识别：D:\\... 这类是本机绝对路径；测试文档1.udd... 是仓库；udd.media/... 是本文件内嵌资源；http/data:/blob: 直接使用。\n• 布尔属性 border / autoplay / loop 用 1 开启、0 或省略关闭。\n• align 取 \"\"/left/center/right。\n• 查找顺序：内嵌 blob → 仓库 zip 条目 → 仓库服务器文件 → 本机路径，按序回退，不读浏览器缓存。\n• 媒体节点可被引用：{{=t1-5.t2-1.body}} 会把上面那张图一起带出来。"
+      }
+    },
+
+    "t1-6": {
+      "content": "六、表格 ↔ 大纲互引",
+      "hide": 0, "hide_body": 0,
+      "body": "大纲侧用 {{=Sheet1.B2}} 引用表格单元格；表格侧用顶层 _sheetRefs 把某些单元格反向绑到大纲节点（见本文件顶部 _sheetRefs：Sheet1!A2 = =t1-6.t2-1.content）。两边任意一侧修改，另一侧立即同步。切到「表格」视图即可看到 A 列显示下面的产品名。",
+      "t2-1": {
+        "content": "苹果",
+        "hide": 0, "hide_body": 0,
+        "body": "数量：{{=Sheet1.B2}}，单价：{{=Sheet1.C2}}，金额：{{=Sheet1.D2}}"
+      },
+      "t2-2": {
+        "content": "香蕉",
+        "hide": 0, "hide_body": 0,
+        "body": "数量：{{=Sheet1.B3}}，单价：{{=Sheet1.C3}}，金额：{{=Sheet1.D3}}"
+      },
+      "t2-3": {
+        "content": "橙子",
+        "hide": 0, "hide_body": 0,
+        "body": "数量：{{=Sheet1.B4}}，单价：{{=Sheet1.C4}}，金额：{{=Sheet1.D4}}"
+      }
+    },
+
+    "t1-7": {
+      "content": "七、格式控制（type_global 样式标签）",
+      "hide": 0, "hide_body": 0,
+      "body": "全局样式写在顶层 type_global 中，键名形如「选择器.字段」。优先级从低到高：t*-*.（所有层级） → t<层级>-*.（指定层级） → 节点自身字段。body 样式用 body. 前缀，层级化 body 样式用 t<层级>-*.body.。",
+      "t2-1": {
+        "content": "选择器与字段写法",
+        "hide": 0, "hide_body": 0,
+        "body": "t*-*.font_size : 12         所有节点字号 12\nt1-*.font : \"微软雅黑\"        一级标题字体\nt1-*.bold : 1               一级标题加粗\nt2-*.paragraph_before : 0.5 二级标题段前距\nbody.color : \"51,65,85\"     正文颜色（RGB，逗号分隔）\nbody.paragraph_line : 1.7   正文行距倍数\n节点自身直接写字段名（如某个节点单独加 \"color\":\"200,0,0\"）即覆盖全局。"
+      },
+      "t2-2": {
+        "content": "常用字段对照（字符级）",
+        "hide": 0, "hide_body": 0,
+        "body": "font 字体 | font_size 字号(磅) | color 颜色(R,G,B) | bold 加粗(1/0) | italic 斜体 | underline 下划线 | strikethrough 删除线 | background_color 背景色。\n段落级：align/text_align 对齐 | paragraph_before 段前 | paragraph_after 段后 | paragraph_line 行距。"
+      },
+      "t2-3": {
+        "content": "逐字富文本（字符级范围覆盖）",
+        "hide": 0, "hide_body": 0,
+        "body": "字符级字段（font/font_size/color/bold/italic/underline/strikethrough/background_color）支持「基础值;覆盖值(起,止)」语法，范围 1-based 闭区间。\n例：\"bold\":\"1;0(2,3)(5,10)\" 全部加粗但第2-3、5-10字不加粗；\"color\":\"0,0,0;255,0,0(1,5)\" 默认黑、前5字红。在视图中选中部分文字改格式会自动生成此语法。"
+      },
+      "t2-4": {
+        "content": "渲染开关与格式开关",
+        "hide": 0, "hide_body": 0,
+        "body": "工具栏「渲染 on/off」：off 时显示原始 =t1-1 / {{...}} 文本并可直接编辑；on 时解析渲染（单击保留渲染、双击回源码）。\n格式勾选行（大纲/文档视图）：字体、字号、颜色、加粗、引用标识、斜体、下划线、删除线、背景色、对齐、树线、正文线，可逐项开关。\n「更多 ▾」面板：Markdown、HTML 两个开关，默认都开。"
+      },
+      "t2-5": {
+        "content": "Markdown / HTML 渲染",
+        "hide": 0, "hide_body": 0,
+        "body": "渲染在引用解析**之后**进行：md off+html off 保持原样；html on 把文本当 HTML；md on 走 markdown-it；两者都开则 markdown-it 允许内联 HTML。\n示例：**加粗**、*斜体*、`行内代码`、[链接](https://example.com)、<u>下划线</u>、<kbd>Ctrl</kbd>+<kbd>S</kbd>。\n注意：逐字富文本与 md/html 在同一字段上互斥（已切分样式段的元素会跳过 md/html）。"
+      }
+    },
+
+    "t1-8": {
+      "content": "八、编号控制（Word 式）",
+      "hide": 0, "hide_body": 0,
+      "body": "全局编号样式由 type_global.numbering_style 决定，可选：\"1.1.1\"（阿拉伯层级）、\"一.1.1\"（中文一级+数字）、\"I.A.1\"（罗马+字母+数字）、\"bullet\"（层级符号 ●○■▪）、\"bullet-uniform\"（统一 ●）、\"none\"（不编号）。\nhide_t 控制序号显示深度，如 \"t>3\" 表示 4 级及以下不显示序号。",
+      "t2-1": { "content": "正常节点 A", "hide": 0, "hide_body": 0 },
+      "t2-2": {
+        "content": "不显示编号且不占位",
+        "hide": 0, "hide_body": 0, "no_number": 1,
+        "body": "设了 no_number:1，本节点没有编号，后续兄弟也不会因它占号——下一个仍是 2。"
+      },
+      "t2-3": { "content": "正常节点 B（仍是 2）", "hide": 0, "hide_body": 0 },
+      "t2-4": {
+        "content": "从此处重新编号",
+        "hide": 0, "hide_body": 0, "restart_number": 1,
+        "body": "设了 restart_number:1，本节点成为同级的 1，其后兄弟在此基础上递增。"
+      },
+      "t2-5": { "content": "重新编号后的 2", "hide": 0, "hide_body": 0 }
+    },
+
+    "t1-9": {
+      "content": "九、五种视图与常用快捷键",
+      "hide": 0, "hide_body": 0,
+      "body": "同一份数据可切换：大纲、思维导图、文档、表格、演示。切换不改数据，只换渲染方式。",
+      "t2-1": {
+        "content": "各视图要点",
+        "hide": 0, "hide_body": 0,
+        "body": "• 大纲：层级缩进 + 折叠箭头，主力编辑方式。\n• 思维导图：根节点居中向外展开，可缩放平移。\n• 文档：键名转编号（numbering_style），content 作标题、body 作正文，支持 A4 分页（page_size）。\n• 表格：Sheet 工作表，单元格可填静态值或与大纲互引。\n• 演示：按层级自动分页为幻灯片。"
+      },
+      "t2-2": {
+        "content": "编辑快捷键",
+        "hide": 0, "hide_body": 0,
+        "body": "Enter 新增同级节点 | Tab 降级 | Shift+Tab 升级 | 双击进入编辑 / 回到源码 | 单击保留渲染。\n引用/媒体写法在任何视图都通用——原始数据唯一，渲染只是「物化」的不同形相。"
+      }
+    },
+
+    "t1-10": {
+      "content": "十、如何把本文件变成可用文档",
+      "hide": 0, "hide_body": 0,
+      "body": "本 JSON 采用「原始数据」形式（长键名 content/body/type_global…）。使用方式二选一：\n① 在 UDD 中新建文档 → 打开侧边栏原始数据编辑 → 整段粘贴覆盖。\n② 通过 JSON 导入功能加载（系统会校验结构、补默认值）。\n保存为 .udd 时会自动压缩成短键名底层数据，无需手动转换。\n\n把示例里的本机媒体路径换成你自己的路径，引用里的 t 编号换成你文档里的真实节点，即可开始创作。"
+    }
+  }
+}

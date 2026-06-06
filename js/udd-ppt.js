@@ -66,7 +66,76 @@ class PptView {
     const defaultDepth = g.content_depth || 4;
     const defaultLayout = g.layout || 'one_col';
     const rootKeys = getAllTKeys(data);
+    const rootLevel = getRootTLevel(data);
     const theme = PPT_THEMES[fmt.theme] || PPT_THEMES.business_blue;
+
+    // 兼容"第一层不是 t0"的数据：顶层节点本身就是内容节点，不再要求包一层 t0 容器。
+    if (rootKeys.length > 0 && rootLevel !== 0) {
+      if (g.cover !== false) {
+        slides.push({
+          type: 'cover',
+          title: (data.meta && data.meta.title) || '演示文稿',
+          subtitle: '',
+          theme,
+          layout: 'cover',
+          nodePath: '__root__'
+        });
+      }
+      const perRoot = slidePer === 't1';
+      for (const rk of rootKeys) {
+        const rootNode = data[rk];
+        if (!rootNode || typeof rootNode !== 'object') continue;
+        const rootPath = rk;
+        const rootLevelNum = getLevel(rk);
+        if (perRoot) {
+          const override = (fmt.slides || {})[rootPath] || {};
+          if (override.split) {
+            await this._buildSplitSlides(slides, rootNode, rootPath, override, defaultDepth, defaultLayout, theme, rootLevelNum);
+          } else {
+            slides.push(await this._buildContentSlide(
+              rootNode,
+              rootPath,
+              override.depth || defaultDepth,
+              override.layout || defaultLayout,
+              theme,
+              rootLevelNum
+            ));
+          }
+          continue;
+        }
+        const childLevel = rootLevelNum + 1;
+        const childKeys = getChildTKeys(rootNode, childLevel);
+        if (childKeys.length === 0) {
+          const override = (fmt.slides || {})[rootPath] || {};
+          slides.push(await this._buildContentSlide(
+            rootNode,
+            rootPath,
+            override.depth || defaultDepth,
+            override.layout || defaultLayout,
+            theme,
+            rootLevelNum
+          ));
+          continue;
+        }
+        for (const ck of childKeys) {
+          const childNode = rootNode[ck];
+          const path = rootPath + '.' + ck;
+          const override = (fmt.slides || {})[path] || {};
+          slides.push(await this._buildContentSlide(
+            childNode,
+            path,
+            override.depth || defaultDepth,
+            override.layout || defaultLayout,
+            theme,
+            getLevel(ck)
+          ));
+        }
+      }
+      if (g.ending !== false) {
+        slides.push({ type: 'ending', title: '谢谢', subtitle: '', theme, layout: 'ending' });
+      }
+      return slides;
+    }
 
     for (const rk of rootKeys) {
       const rootNode = data[rk];
@@ -88,7 +157,7 @@ class PptView {
           const path = rk + '.' + t1k;
           const override = (fmt.slides || {})[path] || {};
           if (override.split) {
-            await this._buildSplitSlides(slides, t1Node, path, override, defaultDepth, defaultLayout, theme);
+            await this._buildSplitSlides(slides, t1Node, path, override, defaultDepth, defaultLayout, theme, 1);
           } else {
             const depth = override.depth || defaultDepth;
             const layout = override.layout || defaultLayout;
@@ -121,7 +190,7 @@ class PptView {
     return slides;
   }
 
-  async _buildSplitSlides(slides, node, path, override, defaultDepth, defaultLayout, theme) {
+  async _buildSplitSlides(slides, node, path, override, defaultDepth, defaultLayout, theme, baseLevel) {
     const splitDef = override.split;
     for (let i = 0; i < splitDef.length; i++) {
       const group = splitDef[i];
@@ -141,7 +210,7 @@ class PptView {
         const bodyText = await this._resolveContent(node.body);
         const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
         if (bodyDisplay) {
-          const b = { text: bodyDisplay, level: 0, isBody: true, path, typeLevel: 1 };
+          const b = { text: bodyDisplay, level: 0, isBody: true, path, typeLevel: baseLevel };
           bullets.push(b);
           orderedItems.push({ kind: 'bullet', ...b });
         }
@@ -150,14 +219,14 @@ class PptView {
         const child = node[itemKey];
         if (!child) continue;
         const childPath = path + '.' + itemKey;
-        await this._collectBullets(child, childPath, getLevel(itemKey), 0, depth - 2, bullets, mediaItems, orderedItems);
+        await this._collectBullets(child, childPath, getLevel(itemKey), 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
       }
       if (node.content) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
       if (node.body) await this._collectMediaAsync(node.body, mediaItems, orderedItems);
       slides.push({
         type: 'content', title: await this._resolveContent(node.content),
         notes: node.body ? await this._resolveContent(node.body) : '',
-        bullets, mediaItems, orderedItems, theme, layout, nodePath: path, titleLevel: 1, splitIndex: i
+        bullets, mediaItems, orderedItems, theme, layout, nodePath: path, titleLevel: baseLevel, splitIndex: i
       });
     }
   }

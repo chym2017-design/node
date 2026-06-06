@@ -313,6 +313,15 @@ function getAllTKeys(node) {
   if (!node || typeof node !== 'object') return [];
   return Object.keys(node).filter(k => isTNode(k));
 }
+function getRootTLevel(data) {
+  const keys = getAllTKeys(data);
+  if (!keys.length) return 0;
+  return keys.reduce((min, k) => Math.min(min, getLevel(k)), Infinity);
+}
+function getFirstTKey(node) {
+  const keys = getAllTKeys(node);
+  return keys.length ? keys[0] : null;
+}
 function getNodeByPath(data, path) {
   const parts = path.split('.');
   let n = data;
@@ -397,9 +406,19 @@ function computeNumber(rootData, path, numStyle) {
   const parts = path.split('.');
   const nums = [];
   let obj = rootData;
+  let prevLevel = 0;
   for (const part of parts) {
     const level = getLevel(part);
     if (level === 0) { obj = obj && obj[part]; continue; }
+    // 顶层允许直接从 t2/t3... 开始；编号仍按"绝对层级"显示，
+    // 因此缺失的上层位补默认 1：
+    //   t2-1     -> 1.1
+    //   t3-1     -> 1.1.1
+    //   t2-1.t3-1 -> 1.1.1
+    while (prevLevel + 1 < level) {
+      nums.push(1);
+      prevLevel++;
+    }
     if (!obj) return null;
     const siblings = getChildTKeys(obj, level);
     const partIdx = siblings.indexOf(part);
@@ -419,6 +438,7 @@ function computeNumber(rootData, path, numStyle) {
       if (!sib || !sib.no_number) seq++;
     }
     nums.push(seq);
+    prevLevel = level;
     obj = partNode;
   }
   if (nums.length === 0) return '';
