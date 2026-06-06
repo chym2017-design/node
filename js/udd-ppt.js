@@ -69,68 +69,11 @@ class PptView {
     const rootLevel = getRootTLevel(data);
     const theme = PPT_THEMES[fmt.theme] || PPT_THEMES.business_blue;
 
-    // 兼容"第一层不是 t0"的数据：顶层节点本身就是内容节点，不再要求包一层 t0 容器。
+    // 兼容"第一层不是 t0"的数据：
+    // 顶层 t1/t2/t3... 不是 PPT 的分页根，而是挂到一个虚拟文档根下继续按自身 t 层级渲染。
+    // 这样不会因为 JSON 第一层缺少父节点，就把 t2 提升成类似 t0 的整页标题/分页单元。
     if (rootKeys.length > 0 && rootLevel !== 0) {
-      if (g.cover !== false) {
-        slides.push({
-          type: 'cover',
-          title: (data.meta && data.meta.title) || '演示文稿',
-          subtitle: '',
-          theme,
-          layout: 'cover',
-          nodePath: '__root__'
-        });
-      }
-      const perRoot = slidePer === 't1';
-      for (const rk of rootKeys) {
-        const rootNode = data[rk];
-        if (!rootNode || typeof rootNode !== 'object') continue;
-        const rootPath = rk;
-        const rootLevelNum = getLevel(rk);
-        if (perRoot) {
-          const override = (fmt.slides || {})[rootPath] || {};
-          if (override.split) {
-            await this._buildSplitSlides(slides, rootNode, rootPath, override, defaultDepth, defaultLayout, theme, rootLevelNum);
-          } else {
-            slides.push(await this._buildContentSlide(
-              rootNode,
-              rootPath,
-              override.depth || defaultDepth,
-              override.layout || defaultLayout,
-              theme,
-              rootLevelNum
-            ));
-          }
-          continue;
-        }
-        const childLevel = rootLevelNum + 1;
-        const childKeys = getChildTKeys(rootNode, childLevel);
-        if (childKeys.length === 0) {
-          const override = (fmt.slides || {})[rootPath] || {};
-          slides.push(await this._buildContentSlide(
-            rootNode,
-            rootPath,
-            override.depth || defaultDepth,
-            override.layout || defaultLayout,
-            theme,
-            rootLevelNum
-          ));
-          continue;
-        }
-        for (const ck of childKeys) {
-          const childNode = rootNode[ck];
-          const path = rootPath + '.' + ck;
-          const override = (fmt.slides || {})[path] || {};
-          slides.push(await this._buildContentSlide(
-            childNode,
-            path,
-            override.depth || defaultDepth,
-            override.layout || defaultLayout,
-            theme,
-            getLevel(ck)
-          ));
-        }
-      }
+      slides.push(await this._buildVirtualRootSlide(data, rootKeys, defaultDepth, defaultLayout, theme));
       if (g.ending !== false) {
         slides.push({ type: 'ending', title: '谢谢', subtitle: '', theme, layout: 'ending' });
       }
@@ -140,6 +83,18 @@ class PptView {
     for (const rk of rootKeys) {
       const rootNode = data[rk];
       if (!rootNode || typeof rootNode !== 'object') continue;
+
+      // 顶层但非 t0 的节点（如没有上级的孤立 t2）：不当作文档根。
+      // 不生成封面、不按 t1 分页、也不提升成 t0 整页标题，而是按它自身的 t 级别
+      // 单独占一页、以正常的该级别（如 t2）形式渲染——和挂在 t0 下面的同级节点一致。
+      const rkLevel = getLevel(rk);
+      if (rkLevel !== 0) {
+        const override = (fmt.slides || {})[rk] || {};
+        slides.push(await this._buildContentSlide(
+          rootNode, rk, override.depth || defaultDepth, override.layout || defaultLayout, theme, rkLevel
+        ));
+        continue;
+      }
 
       // Cover slide
       if (g.cover !== false) {
@@ -190,7 +145,33 @@ class PptView {
     return slides;
   }
 
-  async _buildSplitSlides(slides, node, path, override, defaultDepth, defaultLayout, theme, baseLevel) {
+  async _buildVirtualRootSlide(data, rootKeys, depth, layout, theme) {
+    const bullets = [], mediaItems = [], orderedItems = [];
+    const maxDepth = Math.max(0, (depth || 4) - 1);
+    for (const rk of rootKeys) {
+      const rootNode = data[rk];
+      if (!rootNode || typeof rootNode !== 'object') continue;
+      const typeLevel = getLevel(rk);
+      const displayLevel = Math.max(0, typeLevel - 1);
+      await this._collectBullets(rootNode, rk, typeLevel, displayLevel, maxDepth, bullets, mediaItems, orderedItems);
+    }
+    return {
+      type: 'content',
+      title: '',
+      notes: '',
+      bullets,
+      mediaItems,
+      orderedItems,
+      theme,
+      layout,
+      nodePath: '',
+      titleLevel: 0,
+      rootAsContent: true,
+      virtualRoot: true
+    };
+  }
+
+  async _buildSplitSlides(slides, node, path, override, defaultDepth, defaultLayout, theme, baseLevel, opts = {}) {
     const splitDef = override.split;
     for (let i = 0; i < splitDef.length; i++) {
       const group = splitDef[i];
@@ -205,12 +186,21 @@ class PptView {
         depth = group.depth || override.depth || defaultDepth;
       }
       const bullets = [], mediaItems = [], orderedItems = [];
+      if (opts.rootAsContent && node.content) {
+        const rootText = this._cleanPptText(await this._resolveContent(node.content));
+        if (rootText) {
+          const b = { text: rootText, level: 0, path, typeLevel: baseLevel, isRootContent: true };
+          bullets.push(b);
+          orderedItems.push({ kind: 'bullet', ...b });
+        }
+        await this._collectMediaAsync(node.content, mediaItems, orderedItems);
+      }
       // 与 _buildContentSlide 对齐：主节点 body 作为第一条 bullet
       if (node.body) {
         const bodyText = await this._resolveContent(node.body);
         const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
         if (bodyDisplay) {
-          const b = { text: bodyDisplay, level: 0, isBody: true, path, typeLevel: baseLevel };
+          const b = { text: bodyDisplay, level: opts.rootAsContent ? 1 : 0, isBody: true, path, typeLevel: baseLevel };
           bullets.push(b);
           orderedItems.push({ kind: 'bullet', ...b });
         }
@@ -219,20 +209,30 @@ class PptView {
         const child = node[itemKey];
         if (!child) continue;
         const childPath = path + '.' + itemKey;
-        await this._collectBullets(child, childPath, getLevel(itemKey), 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
+        await this._collectBullets(child, childPath, getLevel(itemKey), opts.rootAsContent ? 1 : 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
       }
-      if (node.content) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
+      if (node.content && !opts.rootAsContent) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
       if (node.body) await this._collectMediaAsync(node.body, mediaItems, orderedItems);
       slides.push({
-        type: 'content', title: await this._resolveContent(node.content),
+        type: 'content', title: opts.rootAsContent ? '' : await this._resolveContent(node.content),
         notes: node.body ? await this._resolveContent(node.body) : '',
-        bullets, mediaItems, orderedItems, theme, layout, nodePath: path, titleLevel: baseLevel, splitIndex: i
+        bullets, mediaItems, orderedItems, theme, layout, nodePath: path, titleLevel: baseLevel, splitIndex: i,
+        rootAsContent: !!opts.rootAsContent
       });
     }
   }
 
-  async _buildContentSlide(node, path, depth, layout, theme, baseLevel) {
+  async _buildContentSlide(node, path, depth, layout, theme, baseLevel, opts = {}) {
     const bullets = [], mediaItems = [], orderedItems = [];
+    if (opts.rootAsContent && node.content) {
+      const rootText = this._cleanPptText(await this._resolveContent(node.content));
+      if (rootText) {
+        const b = { text: rootText, level: 0, path, typeLevel: baseLevel, isRootContent: true };
+        bullets.push(b);
+        orderedItems.push({ kind: 'bullet', ...b });
+      }
+      await this._collectMediaAsync(node.content, mediaItems, orderedItems);
+    }
     // 主节点自身的 body 作为第一条 bullet（level 0）展示在标题与子节点之间。
     // 之前只把它塞进 notes（演讲者备注），与 _collectBullets 对子节点 body 的处理
     // 不对称——content 显示了 body 也应显示，这才是大纲/文档/演示三视图一致的行为。
@@ -240,7 +240,7 @@ class PptView {
       const bodyText = await this._resolveContent(node.body);
       const bodyDisplay = bodyText.replace(/\{\{(?!=).*?\}\}/g, '').trim();
       if (bodyDisplay) {
-        const b = { text: bodyDisplay, level: 0, isBody: true, path, typeLevel: baseLevel };
+        const b = { text: bodyDisplay, level: opts.rootAsContent ? 1 : 0, isBody: true, path, typeLevel: baseLevel };
         bullets.push(b);
         orderedItems.push({ kind: 'bullet', ...b });
       }
@@ -250,10 +250,10 @@ class PptView {
       const child = node[ck];
       if (!child) continue;
       const childPath = path + '.' + ck;
-      await this._collectBullets(child, childPath, getLevel(ck), 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
+      await this._collectBullets(child, childPath, getLevel(ck), opts.rootAsContent ? 1 : 0, depth - baseLevel - 1, bullets, mediaItems, orderedItems);
     }
     // 主节点自己的 content / body 里的媒体（含 =ref 深入解析）
-    if (node.content) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
+    if (node.content && !opts.rootAsContent) await this._collectMediaAsync(node.content, mediaItems, orderedItems);
     if (node.body) await this._collectMediaAsync(node.body, mediaItems, orderedItems);
     // Title: for full node refs, use the source node's content as title
     let title = await this._resolveContent(node.content);
@@ -274,7 +274,19 @@ class PptView {
         }
       }
     }
-    return { type: 'content', title, notes, bullets, mediaItems, orderedItems, theme, layout, nodePath: path, titleLevel: baseLevel };
+    return {
+      type: 'content',
+      title: opts.rootAsContent ? '' : title,
+      notes,
+      bullets,
+      mediaItems,
+      orderedItems,
+      theme,
+      layout,
+      nodePath: path,
+      titleLevel: baseLevel,
+      rootAsContent: !!opts.rootAsContent
+    };
   }
 
   // 收集节点及其子节点的文本/媒体，按出现顺序产出三份视图：
@@ -498,7 +510,7 @@ class PptView {
       this._applyMdHtmlToSlide(slideEl);
       if (s.type === 'cover') slideEl.classList.add('slide-cover');
       else if (s.type === 'ending') slideEl.classList.add('slide-ending');
-      else if (s.layout === 'title_only') slideEl.classList.add('slide-title-only');
+      else if (!s.rootAsContent && s.layout === 'title_only') slideEl.classList.add('slide-title-only');
     }
     frame.appendChild(slideEl);
     previewWrap.appendChild(frame);
@@ -556,19 +568,105 @@ class PptView {
     return parts.join(';');
   }
 
+  _defaultTitleFontSize(level) {
+    if (level <= 0) return 28;
+    if (level === 1) return 24;
+    if (level === 2) return 20;
+    return 18;
+  }
+
+  _defaultTitleFontWeight(level) {
+    return level <= 1 ? 700 : 600;
+  }
+
+  _getPptNumberingStyle() {
+    return (this.data && this.data.type_global && this.data.type_global.numbering_style) || '1.1.1';
+  }
+
+  _cleanPptText(text) {
+    const s = String(text || '');
+    if (typeof stripMediaTags === 'function') return stripMediaTags(s).trim();
+    return s.replace(/\{\{.*?\}\}/g, '').trim();
+  }
+
+  _effectiveLayout(slide) {
+    const layout = slide.layout || 'one_col';
+    return slide.rootAsContent && layout === 'title_only' ? 'one_col' : layout;
+  }
+
+  _supportsPptAbsoluteNumbering() {
+    const numStyle = this._getPptNumberingStyle();
+    return numStyle !== 'none' && numStyle !== 'bullet' && numStyle !== 'bullet-uniform';
+  }
+
+  _computePptNumber(path) {
+    if (!path || !this._supportsPptAbsoluteNumbering()) return null;
+    if (typeof computeNumberForRender === 'function') {
+      return computeNumberForRender(this.data, path, this._getPptNumberingStyle());
+    }
+    if (typeof computeNumber === 'function') {
+      return computeNumber(this.data, path, this._getPptNumberingStyle());
+    }
+    return null;
+  }
+
+  _titlePrefix(slide) {
+    const titleLevel = (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1;
+    if (titleLevel <= 1) return '';
+    const num = this._computePptNumber(slide.nodePath || '');
+    return num ? (num + ' ') : '';
+  }
+
+  _bulletPrefix(b) {
+    if (!b || b.isBody) return '';
+    const typeLevel = (typeof b.typeLevel === 'number') ? b.typeLevel : (b.level || 0);
+    if (typeLevel <= 0) return '';
+    const num = this._computePptNumber(b.path || '');
+    return num ? (num + ' ') : '';
+  }
+
+  _titleDisplayText(slide) {
+    return this._titlePrefix(slide) + (slide.title || '');
+  }
+
+  _bulletDisplayText(b) {
+    return this._bulletPrefix(b) + (b.text || '');
+  }
+
+  _isNumberedBullet(b) {
+    return !!this._bulletPrefix(b);
+  }
+
+  _showTitleAccent(slide) {
+    const titleLevel = (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1;
+    return titleLevel <= 1;
+  }
+
+  _defaultTitleColor(slide, theme) {
+    const titleLevel = (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1;
+    return titleLevel <= 1 ? theme.accent : theme.text;
+  }
+
   _titleInlineStyle(slide) {
     if (typeof buildNodeStyle !== 'function') return '';
+    const titleLevel = (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1;
     const styleObj = buildNodeStyle(this.data, slide.nodePath || '',
-      (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1,
+      titleLevel,
       { isBody: false });
     const parts = [];
     if (styleObj.font) parts.push(`font-family:${styleObj.font}`);
-    if (styleObj.font_size) parts.push(`font-size:${styleObj.font_size}pt`);
+    parts.push(`font-size:${styleObj.font_size || this._defaultTitleFontSize(titleLevel)}pt`);
+    parts.push(`font-weight:${styleObj.bold ? '700' : this._defaultTitleFontWeight(titleLevel)}`);
+    if (styleObj.color) parts.push(`color:${typeof rgbToHex === 'function' ? rgbToHex(String(styleObj.color)) : styleObj.color}`);
     if (styleObj.italic) parts.push('font-style:italic');
     const decos = [];
     if (styleObj.underline) decos.push('underline');
     if (styleObj.strikethrough) decos.push('line-through');
     if (decos.length) parts.push('text-decoration:' + decos.join(' '));
+    if (styleObj.background_color) {
+      parts.push(`background-color:${typeof rgbToHex === 'function' ? rgbToHex(String(styleObj.background_color)) : styleObj.background_color}`);
+    }
+    if (styleObj.text_align) parts.push(`text-align:${styleObj.text_align}`);
     return parts.join(';');
   }
 
@@ -583,12 +681,15 @@ class PptView {
       return `<div class="slide-title" style="color:${t.accent};${scale}">谢谢</div>`;
     }
 
-    let html = `<div class="slide-title" style="color:${t.accent};border-bottom:2px solid ${t.accent};padding-bottom:8px;${this._titleInlineStyle(slide)};${scale}">${this._esc(slide.title)}</div>`;
+    const titleBorder = this._showTitleAccent(slide) ? `border-bottom:2px solid ${t.accent};padding-bottom:8px;` : '';
+    let html = slide.rootAsContent
+      ? ''
+      : `<div class="slide-title" style="color:${this._defaultTitleColor(slide, t)};${titleBorder}${this._titleInlineStyle(slide)};${scale}">${this._esc(this._titleDisplayText(slide))}</div>`;
 
-    const layout = slide.layout || 'one_col';
+    const layout = this._effectiveLayout(slide);
     const bulletHTML = slide.bullets.map(b => {
       const nodeStyle = this._bulletInlineStyle(b);
-      return `<div class="slide-bullet" data-level="${b.level}" style="${nodeStyle};${scale}">${this._esc(b.text)}</div>`;
+      return `<div class="slide-bullet" data-level="${b.level}"${this._isNumberedBullet(b) ? ' data-numbered="1"' : ''} style="${nodeStyle};${scale}">${this._esc(this._bulletDisplayText(b))}</div>`;
     }).join('');
 
     const mediaItems = slide.mediaItems || [];
@@ -614,7 +715,7 @@ class PptView {
     const buildOrderedHTML = (items) => (items || []).map(it => {
       if (it.kind === 'bullet') {
         const nodeStyle = this._bulletInlineStyle(it);
-        return `<div class="slide-bullet" data-level="${it.level}" style="${nodeStyle};${scale}">${this._esc(it.text)}</div>`;
+        return `<div class="slide-bullet" data-level="${it.level}"${this._isNumberedBullet(it) ? ' data-numbered="1"' : ''} style="${nodeStyle};${scale}">${this._esc(this._bulletDisplayText(it))}</div>`;
       }
       // media
       return buildMediaHTML([it]);
@@ -642,7 +743,7 @@ class PptView {
         // Distribute media: assign each mediaItem to a column by round-robin index
         const colMedia = mediaItems.filter((_, mi) => mi % 3 === ci);
         html += `<div class="slide-col">${cols[ci].map(b =>
-          `<div class="slide-bullet" data-level="${b.level}" style="${this._bulletInlineStyle(b)};${scale}">${this._esc(b.text)}</div>`
+          `<div class="slide-bullet" data-level="${b.level}"${this._isNumberedBullet(b) ? ' data-numbered="1"' : ''} style="${this._bulletInlineStyle(b)};${scale}">${this._esc(this._bulletDisplayText(b))}</div>`
         ).join('')}${buildMediaHTML(colMedia)}</div>`;
       }
       html += '</div>';
@@ -877,14 +978,19 @@ class PptView {
 
   // 标题行的字体 options：取标题节点（slide.nodePath / slide.titleLevel）的 type_global 样式
   _titleTextOptions(slide, theme) {
+    const titleLevel = (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1;
     const styleObj = (typeof buildNodeStyle === 'function')
-      ? buildNodeStyle(this.data, slide.nodePath || '', (typeof slide.titleLevel === 'number') ? slide.titleLevel : 1, { isBody: false })
+      ? buildNodeStyle(this.data, slide.nodePath || '', titleLevel, { isBody: false })
       : {};
-    const opts = { bold: true, color: theme.accent.replace('#', '') };
+    const colorRgb = styleObj.color ? (typeof rgbToHex === 'function' ? rgbToHex(String(styleObj.color)).replace('#','') : null) : null;
+    const opts = { color: colorRgb || this._defaultTitleColor(slide, theme).replace('#', '') };
     if (styleObj.font) opts.fontFace = styleObj.font;
-    opts.fontSize = styleObj.font_size ? Math.max(18, +styleObj.font_size + 8) : 24;
+    opts.fontSize = styleObj.font_size ? +styleObj.font_size : this._defaultTitleFontSize(titleLevel);
+    opts.bold = (styleObj.bold !== undefined) ? !!styleObj.bold : true;
     if (styleObj.italic) opts.italic = true;
     if (styleObj.underline) opts.underline = { style: 'sng' };
+    if (styleObj.strikethrough) opts.strike = 'sngStrike';
+    if (styleObj.text_align) opts.align = styleObj.text_align;
     return opts;
   }
 
@@ -909,19 +1015,25 @@ class PptView {
       } else if (slide.type === 'ending') {
         s.addText('谢谢', { x: 1, y: 2.5, w: 11, h: 2, fontSize: 44, bold: true, color: t.accent.replace('#', ''), align: 'center' });
       } else {
-        // Title — 字体由节点级别样式决定
-        const titleOpts = this._titleTextOptions(slide, t);
-        s.addText(slide.title, { x: 0.6, y: 0.3, w: 12, h: 0.8, ...titleOpts });
-        // Accent line
-        s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.1, w: 12, h: 0.03, fill: { color: t.accent.replace('#', '') } });
+        const contentY = slide.rootAsContent ? 0.6 : 1.4;
+        const contentH = slide.rootAsContent ? 6.4 : 5.5;
+        if (!slide.rootAsContent) {
+          // Title — 字体由节点级别样式决定
+          const titleOpts = this._titleTextOptions(slide, t);
+          s.addText(this._titleDisplayText(slide), { x: 0.6, y: 0.3, w: 12, h: 0.8, ...titleOpts });
+          // 顶层标题（t0/t1）保留强调线；更深层如 t2/t3 不再强行渲染成"顶级页标题"视觉。
+          if (this._showTitleAccent(slide)) {
+            s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.1, w: 12, h: 0.03, fill: { color: t.accent.replace('#', '') } });
+          }
+        }
 
         // Content based on layout
-        const layout = slide.layout || 'one_col';
+        const layout = this._effectiveLayout(slide);
         const mediaItems = slide.mediaItems || [];
         const hasMedia = mediaItems.length > 0;
         // 每条 bullet 的字体 options 由该节点的 type_global 级别样式决定
         const bulletTexts = (slide.bullets || []).map(b => ({
-          text: '  '.repeat(b.level) + (b.level === 0 ? '• ' : b.level === 1 ? '◦ ' : '▪ ') + b.text,
+          text: '  '.repeat(b.level) + (this._isNumberedBullet(b) ? this._bulletDisplayText(b) : ((b.level === 0 ? '• ' : b.level === 1 ? '◦ ' : '▪ ') + b.text)),
           options: this._bulletTextOptions(b, t)
         }));
 
@@ -984,33 +1096,33 @@ class PptView {
         if (layout === 'title_only') {
           // nothing more
         } else if (layout === 'two_col_left') {
-          s.addText(bulletTexts, { x: 0.6, y: 1.4, w: 5.8, h: 5.5, valign: 'top' });
-          if (hasMedia) addMediaItems(mediaItems, 7, 1.4, 5.5);
+          s.addText(bulletTexts, { x: 0.6, y: contentY, w: 5.8, h: contentH, valign: 'top' });
+          if (hasMedia) addMediaItems(mediaItems, 7, contentY, 5.5);
         } else if (layout === 'two_col_right') {
-          if (hasMedia) addMediaItems(mediaItems, 0.6, 1.4, 5.5);
-          s.addText(bulletTexts, { x: 7, y: 1.4, w: 5.8, h: 5.5, valign: 'top' });
+          if (hasMedia) addMediaItems(mediaItems, 0.6, contentY, 5.5);
+          s.addText(bulletTexts, { x: 7, y: contentY, w: 5.8, h: contentH, valign: 'top' });
         } else if (layout === 'three_col') {
           const third = Math.ceil(bulletTexts.length / 3);
           const cols = [bulletTexts.slice(0, third), bulletTexts.slice(third, third * 2), bulletTexts.slice(third * 2)];
           for (let i = 0; i < 3; i++) {
             const colX = 0.6 + i * 4.1;
-            if (cols[i].length) s.addText(cols[i], { x: colX, y: 1.4, w: 3.8, h: 3.5, valign: 'top' });
+            if (cols[i].length) s.addText(cols[i], { x: colX, y: contentY, w: 3.8, h: Math.min(contentH, 3.5), valign: 'top' });
             const colMedia = mediaItems.filter((_, mi) => mi % 3 === i);
-            if (colMedia.length) addMediaItems(colMedia, colX, 5.0, 3.8);
+            if (colMedia.length) addMediaItems(colMedia, colX, slide.rootAsContent ? 4.6 : 5.0, 3.8);
           }
         } else if (layout === 'image_full' && hasMedia && mediaItems[0].type === 'image') {
           if (mediaItems[0]._dataUrl) {
             s.addImage({ data: mediaItems[0]._dataUrl, x: 0, y: 0, w: 13.33, h: 7.5 });
           }
-          s.addText(bulletTexts, { x: 0.6, y: 1.4, w: 12, h: 5.5, valign: 'top' });
+          s.addText(bulletTexts, { x: 0.6, y: contentY, w: 12, h: contentH, valign: 'top' });
         } else if (layout === 'two_col') {
           const ord = slide.orderedItems || [];
           const half = Math.ceil(ord.length / 2);
-          this._addOrderedColumn(s, ord.slice(0, half), 0.6, 1.4, 5.8, t, addMediaItems);
-          this._addOrderedColumn(s, ord.slice(half),   7,   1.4, 5.8, t, addMediaItems);
+          this._addOrderedColumn(s, ord.slice(0, half), 0.6, contentY, 5.8, t, addMediaItems);
+          this._addOrderedColumn(s, ord.slice(half),   7,   contentY, 5.8, t, addMediaItems);
         } else {
           // one_col
-          this._addOrderedColumn(s, slide.orderedItems || [], 0.6, 1.4, 12, t, addMediaItems);
+          this._addOrderedColumn(s, slide.orderedItems || [], 0.6, contentY, 12, t, addMediaItems);
         }
 
         // Speaker notes
@@ -1043,7 +1155,7 @@ class PptView {
     for (const it of items) {
       if (it.kind === 'bullet') {
         pendingText.push({
-          text: '  '.repeat(it.level) + (it.level === 0 ? '• ' : it.level === 1 ? '◦ ' : '▪ ') + it.text,
+          text: '  '.repeat(it.level) + (this._isNumberedBullet(it) ? this._bulletDisplayText(it) : ((it.level === 0 ? '• ' : it.level === 1 ? '◦ ' : '▪ ') + it.text)),
           options: this._bulletTextOptions(it, theme)
         });
       } else {
