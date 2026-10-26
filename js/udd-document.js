@@ -807,7 +807,7 @@ class DocumentView {
     const siblings = getChildTKeys(parent, level);
     const idx = siblings.indexOf(currentKey);
     const node = parent[currentKey];
-    if (getAllTKeys(node).length > 0 && !confirm('该节点下有子节点，确定删除？')) return;
+    if (getAllTKeys(node).length > 0 && !uddConfirm('该节点下有子节点，确定删除？')) return;
     delete parent[currentKey];
     if (idx > 0) {
       this.focusPath = parts.length === 1 ? siblings[idx - 1] : parts.slice(0,-1).join('.') + '.' + siblings[idx - 1];

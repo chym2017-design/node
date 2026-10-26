@@ -118,35 +118,37 @@
     if (e.button !== 0) return;
     const t = e.target;
     if (t.closest && t.closest('.marquee-pill')) return; // 浮动条自身
-    if (!inView(t)) {
-      // 点在大纲/文档之外（工具栏、侧边栏等）：清掉当前框选
-      if (S.selected.length || S.started) clearMarquee();
-      return;
-    }
-    // 任何新按下都先清掉上一次的选中（随后可能立刻开始新的框选）
+    // 任何新按下都先清掉上一次的选中（包括点在工具栏、箭头、按钮上）
     if (S.selected.length || S.started) clearMarquee();
+    if (!inView(t)) return;
+    if (skipTarget(t)) return; // 折叠箭头/正文按钮/媒体等交互控件：完全不干预
 
     const host = editableHost(t);
     if (e.altKey) {
       // Alt+拖动：强制矩形框选（输入框等仍除外）
-      if (skipTarget(t) && !host) return;
       e.preventDefault();
       S.down = true;
       beginMarquee(e.clientX, e.clientY);
       return;
     }
-    if (host) {
-      // 从文字上按下：先让浏览器做原生选词，拖出边界后再升级
-      S.down = true;
-      S.fromEditable = true;
-      S.downPt = { x: e.clientX, y: e.clientY };
-      S.srcRect = host.getBoundingClientRect();
-      return;
-    }
-    if (skipTarget(t)) return;
-    e.preventDefault(); // 阻止原生对静态文本（编号等）的选区
+    // 关键：按下阶段不开始画框（普通单击/双击语义完全交给浏览器），
+    // 但要对非编辑区 preventDefault：抑制"原生命中拖动"状态，
+    // 否则手抖移动几像素会被 Chromium 判定为拖动而吞掉 click/dblclick。
+    // 真正拖动（移动 >8px 或拖出可编辑元素边界）才升级为矩形框选。
     S.down = true;
-    beginMarquee(e.clientX, e.clientY);
+    S.fromEditable = false;
+    S.srcRect = null;
+    S.downPt = { x: e.clientX, y: e.clientY };
+    if (host) {
+      S.fromEditable = true;
+      S.srcRect = host.getBoundingClientRect();
+    } else {
+      e.preventDefault();
+      // 按下瞬间即禁止原生选择：Chromium 一旦进入"选择拖动"状态，
+      // 手抖几像素就会把 mouseup 判为拖动而吞掉 click/dblclick。
+      // 松开时（onMouseUp / clearMarquee）移除。
+      document.body.classList.add('marquee-selecting');
+    }
   }
 
   function skipTarget(t) {
@@ -156,15 +158,23 @@
   function onMouseMove(e) {
     if (!S.down) return;
     if (!S.started) {
-      if (!S.fromEditable || !S.srcRect) return;
-      const r = S.srcRect;
-      const out = e.clientX > r.right + EDGE || e.clientX < r.left - EDGE ||
-                  e.clientY > r.bottom + EDGE || e.clientY < r.top - EDGE;
-      if (!out) return;
+      if (S.fromEditable && S.srcRect) {
+        // 从文字上按下：拖出该 content 边界 EDGE 像素后升级为矩形框选
+        const r = S.srcRect;
+        const out = e.clientX > r.right + EDGE || e.clientX < r.left - EDGE ||
+                    e.clientY > r.bottom + EDGE || e.clientY < r.top - EDGE;
+        if (!out) return;
+      } else {
+        // 空白处/渲染内容上按下：移动超过 8px 才算拖拽（容忍手抖，保护双击）
+        const dist = Math.hypot(e.clientX - S.downPt.x, e.clientY - S.downPt.y);
+        if (dist < 8) return;
+      }
       // 升级：取消原生选区，改为矩形框选（锚点 = 按下点）
       try { const sel = window.getSelection(); if (sel) sel.removeAllRanges(); } catch (err) {}
       beginMarquee(S.downPt.x, S.downPt.y);
     }
+    // 框选期间持续清除浏览器原生选区（拖动会从按下点开始扩展原生选择）
+    try { const sel = window.getSelection(); if (sel && !sel.isCollapsed) sel.removeAllRanges(); } catch (err) {}
     S.cur = { x: e.clientX, y: e.clientY };
     const m = marqueeRect();
     const w = m.right - m.left, h = m.bottom - m.top;
@@ -181,9 +191,10 @@
     if (!S.down) return;
     S.down = false;
     document.body.classList.remove('marquee-selecting');
+    // 没有升级成框选 = 普通点击，保持零副作用
     if (!S.started) { resetDragState(); return; }
     const m = marqueeRect();
-    if ((m.right - m.left) < 5 && (m.bottom - m.top) < 5) { clearMarquee(); return; }
+    if ((m.right - m.left) < 10 && (m.bottom - m.top) < 10) { clearMarquee(); return; }
     S.selected = Array.from(S.hits);
     if (rectEl) rectEl.classList.remove('show');
     if (!S.selected.length) { clearMarquee(); return; }
@@ -222,9 +233,35 @@
     pill.style.top = y + 'px';
   }
 
+  // 视图重渲染（切视图/折叠/编辑回写/异步引用刷新）会替换 DOM，
+  // 选中元素随之脱离文档。复制时按 data-path/data-field 在当前视图中
+  // 重新定位同一字段（内容仍是渲染后的最新形态），避免"选了却复制不到"。
+  function resolveSelected() {
+    const container = activeContainer();
+    const seen = new Set();
+    const out = [];
+    for (const el of S.selected) {
+      let cur = el.isConnected ? el : null;
+      if (!cur && container && el.dataset && el.dataset.path && el.dataset.field) {
+        try {
+          cur = container.querySelector(
+            '[data-path="' + el.dataset.path + '"][data-field="' + el.dataset.field + '"]'
+          );
+        } catch (err) { cur = null; }
+      }
+      if (!cur || !cur.isConnected || seen.has(cur)) continue;
+      // 排除空占位（还没输入的节点）
+      const text = (cur.innerText || '').trim();
+      if (!text) continue;
+      seen.add(cur);
+      out.push(cur);
+    }
+    return out;
+  }
+
   function buildText() {
     const lines = [];
-    for (const el of S.selected) {
+    for (const el of resolveSelected()) {
       const t = (el.innerText || '').replace(/\u00a0/g, ' ').replace(/^\s+|\s+$/g, '');
       if (t) lines.push(t);
     }
@@ -232,7 +269,13 @@
   }
 
   async function copySelection() {
-    const text = buildText();
+    const els = resolveSelected();
+    if (!els.length) { clearMarquee(); if (typeof toast === 'function') toast('所选内容已失效'); return; }
+    let text = '';
+    for (const el of els) {
+      const t = (el.innerText || '').replace(/\u00a0/g, ' ').replace(/^\s+|\s+$/g, '');
+      if (t) text += (text ? '\n' : '') + t;
+    }
     if (!text) { if (typeof toast === 'function') toast('所选内容为空'); return; }
     let ok = false;
     try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { /* fallback below */ }
@@ -245,7 +288,7 @@
       try { ok = document.execCommand('copy'); } catch (e) {}
       ta.remove();
     }
-    if (typeof toast === 'function') toast(ok ? ('已复制 ' + S.selected.length + ' 项内容') : '复制失败');
+    if (typeof toast === 'function') toast(ok ? ('已复制 ' + els.length + ' 项内容') : '复制失败');
   }
 
   function clearMarquee() {
@@ -290,13 +333,9 @@
     });
   }, true);
 
-  // 视图重渲染（切视图/折叠/编辑回写）会重建 DOM，选中集合随之失效
-  const mo = new MutationObserver(() => {
-    if (S.started || S.selected.length) clearMarquee();
-  });
-  for (const v of views()) {
-    if (v) mo.observe(v, { childList: true, subtree: true });
-  }
+  // 视图重渲染（切视图/折叠/编辑回写）会重建 DOM，选中元素随之失效；
+  // 不用 MutationObserver 清空：打开文档后的异步引用/媒体更新会持续改动
+  // 大纲/文档视图的 DOM，监听会在正常框选过程中误杀（复制时按 isConnected 过滤即可）。
 
   window.addEventListener('blur', () => { if (S.down) clearMarquee(); });
   window.addEventListener('resize', () => { if (S.started || S.selected.length) clearMarquee(); });

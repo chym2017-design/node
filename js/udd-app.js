@@ -280,7 +280,7 @@ class App {
   closeSession(sessionId) {
     const session = this.sessions.find(s => s.id === sessionId);
     if (!session) return;
-    if (session.dirty && !confirm(`"${session.fileName}" 未保存，确定关闭？`)) return;
+    if (session.dirty && !uddConfirm(`"${session.fileName}" 未保存，确定关闭？`)) return;
     // 关闭会话前先把 active session 当前的工作簿 / PPT 格式落盘到会话上
     this._captureActiveSessionSheetState();
     // 关闭会话后很可能切到另一个 session，所有视图缓存都要作废
@@ -531,6 +531,9 @@ class App {
     let anyRefreshed = false;
     for (const s of this.sessions) {
       if (!s.filePath) continue;
+      // 用户在启动期间已经改过的会话（dirty）：磁盘版本会覆盖掉刚做的修改
+      // （折叠状态、编辑内容），直接跳过，保留内存数据。
+      if (s.dirty) continue;
       try {
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(s.filePath));
         if (!resp.ok) continue;
@@ -1517,13 +1520,13 @@ class App {
   }
 
   // Insert table reference
-  insertTableRef() {
+  async insertTableRef() {
     const nodePath = this.getCurrentFocusPath();
     if (!nodePath) { toast('请先选中一个节点'); return; }
     const field = this.getCurrentFocusField();
     const sheetNames = (this.sheetView && this.sheetView.workbook) ? this.sheetView.workbook.SheetNames : ['Sheet1'];
     const defaultSheet = sheetNames[0] || 'Sheet1';
-    const input = prompt('插入表格引用\n格式: 表格名.起始:结束\n例如: Sheet1.A1:C4\n跨文档: 路径/文件名.udd.Sheet1.A1:C4', defaultSheet + '.A1:C4');
+    const input = await uddPrompt('插入表格引用\n格式: 表格名.起始:结束\n例如: Sheet1.A1:C4\n跨文档: 路径/文件名.udd.Sheet1.A1:C4', defaultSheet + '.A1:C4');
     if (!input) return;
     this.pushUndo();
     const node = getNodeByPath(this.data, nodePath);
@@ -2501,7 +2504,17 @@ ${clone.innerHTML}
         if (resp.ok) {
           const json = await resp.json();
           this.repoServerUrl = base;
-          this.repoDir = json.root;
+          let root = json.root;
+          // 桌面版：仓库面板默认打开用户「文档」目录（保留用户手动改过的目录），
+          // 而不是安装目录 resources/udd-web（旧版本可能已把它写进 localStorage，需迁移）。
+          if (window.uddDesktop && window.uddDesktop.getDocumentsDir) {
+            try {
+              let savedDir = localStorage.getItem('udd_repo_dir');
+              if (savedDir && /[\\\/]resources[\\\/]udd-web/i.test(savedDir)) savedDir = null;
+              root = savedDir || (await window.uddDesktop.getDocumentsDir()) || root;
+            } catch (e) { /* 保持 json.root */ }
+          }
+          this.repoDir = root;
           localStorage.setItem('udd_server_url', base);
           localStorage.setItem('udd_repo_dir', this.repoDir);
           this._renderRepoList();
@@ -2535,15 +2548,15 @@ ${clone.innerHTML}
     this._renderRepoList();
   }
 
-  repoPromptDir() {
-    const newDir = prompt('输入目录路径:', this.repoDir || 'D:\\projects\\node');
+  async repoPromptDir() {
+    const newDir = await uddPrompt('输入目录路径:', this.repoDir || 'D:\\projects\\node');
     if (newDir) {
       this.repoDir = newDir;
       localStorage.setItem('udd_repo_dir', newDir);
       this._renderRepoList();
     }
     if (!this.repoServerUrl) {
-      const url = prompt('输入服务器地址:', 'http://localhost:8080');
+      const url = await uddPrompt('输入服务器地址:', 'http://localhost:8080');
       if (url) {
         this.repoServerUrl = url.replace(/\/+$/, '');
         localStorage.setItem('udd_server_url', this.repoServerUrl);

@@ -45,9 +45,10 @@ npm run dist
 
 ## 实现要点
 
-- **内置服务器**：主进程 fork 项目自带的 `server.js`（监听 127.0.0.1 随机空闲端口），
-  页面从 `http://127.0.0.1:<port>/udd-app.html` 加载；媒体代理、filePath 直存、
-  仓库面板全部开箱可用。
+- **内置服务器**：主进程 fork 项目自带的 `server.js`（优先监听 127.0.0.1:47831，
+  被占用时顺延 47832/47833，最后回退随机端口）。端口固定保证 localStorage /
+  IndexedDB 的 origin 稳定，用户会话、设置、仓库目录可跨启动保留；媒体代理、
+  filePath 直存、仓库面板开箱可用。
 - **单实例 + .udd 转发**：不用 Electron 自带 requestSingleInstanceLock——Chromium
   的进程单例在 Windows 上无法序列化含中文的命令行（"Invalid format for start
   command"），双击中文文件名的 .udd 会把第二个实例挂死。改用命名管道
@@ -59,8 +60,23 @@ npm run dist
 - **.udd 文件关联**：打包版每次启动幂等检查/注册 HKCU 注册表（无需管理员，
   免 UAC）；「工具」菜单可手动注册/取消（取消后写 flag 文件，不再自动注册）。
   便携版用 `PORTABLE_EXECUTABLE_FILE`（原始 exe 路径）注册。
+- **系统对话框兼容**：Electron 不支持 window.prompt/confirm。
+  confirm 走 `uddConfirm()` → 主进程 `dialog.showMessageBoxSync`（同步 IPC）；
+  prompt 走 `uddPrompt()` → 页面内模态输入框（桌面/浏览器通用）。
 - **未保存关闭确认**：页面 beforeunload 在 Electron 里会静默拦截关闭，主进程
   close 事件里查询 `app.dirty`，dirty 时弹确认框，用 `destroy()` 绕过。
+- **仓库默认目录**：桌面版默认打开用户「文档」目录（不是安装目录），
+  用户手动改过的目录会被记住（旧版本写到 localStorage 的安装目录路径会自动迁移）。
+
+## 无界面自动化测试
+
+```bash
+UDD.exe --hidden --remote-debugging-port=9222
+```
+
+`--hidden` 不显示窗口、不抢焦点，配合 Chromium 远程调试端口即可用 CDP
+（Runtime.evaluate / Input.dispatchMouseEvent）在真实应用里做交互验证，
+不影响用户桌面。
 
 ## 打开 .udd 的方式
 

@@ -503,3 +503,67 @@ async function parseUDDBlob(blob) {
 
   return { data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat };
 }
+
+// ================================================================
+//  通用确认 / 输入对话框（Electron 兼容）
+//
+//  Electron 不支持 window.confirm / window.prompt（静默返回 false/undefined），
+//  桌面端：confirm 走主进程系统对话框（同步 IPC），prompt 走页面内模态；
+//  浏览器端：保持原生行为。
+// ================================================================
+
+// 同步确认框，返回 true=确定 / false=取消
+function uddConfirm(message, detail) {
+  if (typeof window !== 'undefined' && window.uddDesktop && window.uddDesktop.confirmSync) {
+    try { return !!window.uddDesktop.confirmSync(String(message || ''), String(detail || '')); } catch (e) {}
+  }
+  try { return window.confirm(message); } catch (e) { return false; }
+}
+
+// 输入框（Promise<string|null>）：桌面端无法用原生 prompt，用页面内模态实现
+function uddPrompt(message, defaultValue) {
+  if (typeof window !== 'undefined' && window.uddDesktop && window.uddDesktop.isDesktop) {
+    return new Promise(resolve => {
+      const mask = document.createElement('div');
+      mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999;display:flex;align-items:center;justify-content:center';
+      const dlg = document.createElement('div');
+      dlg.style.cssText = 'background:#fff;border-radius:8px;padding:18px 20px;min-width:420px;max-width:80vw;box-shadow:0 8px 30px rgba(0,0,0,.25)';
+      const msg = document.createElement('div');
+      msg.style.cssText = 'font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:12px;line-height:1.6';
+      msg.textContent = message || '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = defaultValue == null ? '' : String(defaultValue);
+      input.style.cssText = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box';
+      const btns = document.createElement('div');
+      btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:14px';
+      const cancel = document.createElement('button');
+      cancel.textContent = '取消';
+      cancel.style.cssText = 'padding:6px 16px;border:1px solid #d1d5db;border-radius:5px;background:#fff;cursor:pointer;font-size:13px';
+      const ok = document.createElement('button');
+      ok.textContent = '确定';
+      ok.style.cssText = 'padding:6px 16px;border:none;border-radius:5px;background:#2563eb;color:#fff;cursor:pointer;font-size:13px';
+      btns.appendChild(cancel); btns.appendChild(ok);
+      dlg.appendChild(msg); dlg.appendChild(input); dlg.appendChild(btns);
+      mask.appendChild(dlg);
+      document.body.appendChild(mask);
+      const finish = v => { mask.remove(); resolve(v); };
+      cancel.onclick = () => finish(null);
+      ok.onclick = () => finish(input.value);
+      mask.onclick = ev => { if (ev.target === mask) finish(null); };
+      input.addEventListener('keydown', ev => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') finish(input.value);
+        else if (ev.key === 'Escape') finish(null);
+      });
+      // 延迟一帧再聚焦/绑外部关闭，避免触发页面上其它 click 处理器
+      requestAnimationFrame(() => { input.focus(); input.select(); });
+    });
+  }
+  try {
+    const v = window.prompt(message, defaultValue == null ? '' : String(defaultValue));
+    return Promise.resolve(v);
+  } catch (e) {
+    return Promise.resolve(null);
+  }
+}

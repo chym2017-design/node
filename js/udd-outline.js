@@ -675,7 +675,7 @@ class OutlineView {
     const node = parent[currentKey];
     const childKeys = getAllTKeys(node);
     if (childKeys.length > 0) {
-      if (!confirm('该节点下有子节点，确定删除？')) return;
+      if (!uddConfirm('该节点下有子节点，确定删除？')) return;
     }
 
     delete parent[currentKey];

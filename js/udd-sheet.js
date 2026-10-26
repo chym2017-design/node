@@ -727,8 +727,8 @@ class SheetView {
     menu.style.left = x + 'px';
     menu.style.top = (y - 80) + 'px';
     const items = [
-      ['重命名', () => {
-        const newName = prompt('工作表名称:', sheetName);
+      ['重命名', async () => {
+        const newName = await uddPrompt('工作表名称:', sheetName);
         if (newName && newName !== sheetName && !this.workbook.SheetNames.includes(newName)) {
           const ws = this.workbook.Sheets[sheetName];
           delete this.workbook.Sheets[sheetName];
@@ -750,7 +750,7 @@ class SheetView {
       }],
       ['删除', () => {
         if (this.workbook.SheetNames.length <= 1) { toast('至少保留一个工作表'); return; }
-        if (!confirm('确定删除 "' + sheetName + '"？')) return;
+        if (!uddConfirm('确定删除 "' + sheetName + '"？')) return;
         const idx = this.workbook.SheetNames.indexOf(sheetName);
         this.workbook.SheetNames.splice(idx, 1);
         delete this.workbook.Sheets[sheetName];

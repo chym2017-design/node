@@ -709,7 +709,7 @@ class MindmapView {
     const parent = parts.length === 1 ? this.data : getNodeByPath(this.data, parts.slice(0, -1).join('.'));
     if (parts.length === 1 && getAllTKeys(this.data).length <= 1) return;
     const node = parent[key];
-    if (getAllTKeys(node).length > 0 && !confirm('该节点下有子节点，确定删除？')) return;
+    if (getAllTKeys(node).length > 0 && !uddConfirm('该节点下有子节点，确定删除？')) return;
     app.pushUndo();
     const siblings = getChildTKeys(parent, level);
     const idx = siblings.indexOf(key);

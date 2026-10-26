@@ -18,6 +18,8 @@ const { fork } = require('child_process');
 
 // ---- 路径：开发模式 desktop/.. 为项目根；打包后 web 资源在 resources/udd-web ----
 const IS_PACKAGED = app.isPackaged;
+// --hidden：无界面测试模式（配合 --remote-debugging-port 做自动化验证，不弹窗）
+const HIDDEN_MODE = process.argv.includes('--hidden');
 const WEB_ROOT = IS_PACKAGED
   ? path.join(process.resourcesPath, 'udd-web')
   : path.join(__dirname, '..');
@@ -54,7 +56,7 @@ function tryBindSingleton() {
             if (Array.isArray(msg.files)) msg.files.forEach(p => pendingFiles.push(p));
           } catch (e) { /* 忽略坏行 */ }
           flushPendingFiles();
-          if (mainWindow) {
+          if (mainWindow && !HIDDEN_MODE) {
             if (mainWindow.isMinimized()) mainWindow.restore();
             mainWindow.show();
             mainWindow.focus();
@@ -133,24 +135,32 @@ function pollReady(port, tries = 0) {
 }
 
 async function startServer() {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const port = await getFreePort();
+  // 优先固定端口：localStorage / IndexedDB 按 origin（含端口）隔离，
+  // 端口固定才能跨启动保留用户会话、设置和仓库目录。
+  // 固定端口被占用时依次顺延，最后回退随机空闲端口（此时不保证持久化）。
+  const PREFERRED = 47831;
+  const tryPort = async (port) => {
     serverProc = fork(SERVER_PATH, [String(port), WEB_ROOT], {
       cwd: WEB_ROOT,
       stdio: 'pipe',
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     });
-    serverProc.stdout && serverProc.stdout.on('data', () => {});
-    serverProc.stderr && serverProc.stderr.on('data', () => {});
-    try {
-      await pollReady(port);
-      serverPort = port;
-      return port;
-    } catch (e) {
-      try { serverProc.kill(); } catch (_) {}
-      if (attempt === 2) throw e;
-    }
+    const proc = serverProc;
+    proc.stdout && proc.stdout.on('data', () => {});
+    proc.stderr && proc.stderr.on('data', () => {});
+    // 端口被占用时 server.js 会因 EADDRINUSE 立即退出：早失败，别干等 15 秒
+    const exited = new Promise((_, rej) => proc.once('exit', code => rej(new Error('server exited: ' + code))));
+    await Promise.race([pollReady(port), exited]);
+    serverPort = port;
+    return port;
+  };
+  for (const port of [PREFERRED, PREFERRED + 1, PREFERRED + 2]) {
+    try { return await tryPort(port); } catch (e) { try { serverProc.kill(); } catch (_) {} }
   }
+  for (let i = 0; i < 3; i++) {
+    try { return await tryPort(await getFreePort()); } catch (e) { try { serverProc.kill(); } catch (_) {} }
+  }
+  throw new Error('服务器启动失败');
 }
 
 function flushPendingFiles() {
@@ -163,11 +173,13 @@ function flushPendingFiles() {
 
 function createWindow() {
   const iconPath = path.join(__dirname, 'build', 'icon.png');
+
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 900,
     minWidth: 960,
     minHeight: 600,
+    show: !HIDDEN_MODE,
     title: 'UDD - 统一数据展示系统',
     // 打包版 exe 已内嵌图标（rcedit），无需额外传；开发模式用 build/icon.png
     ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
@@ -177,6 +189,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      backgroundThrottling: HIDDEN_MODE ? false : true,
     },
   });
   mainWindow.setMenuBarVisibility(false);
@@ -364,6 +377,32 @@ function buildMenu() {
 ipcMain.on('udd:renderer-ready', () => {
   rendererReady = true;
   flushPendingFiles();
+});
+
+// 同步确认框：Electron 渲染进程不支持 window.confirm，改用系统对话框
+ipcMain.on('udd:confirm', (e, payload) => {
+  const opts = {
+    type: 'warning',
+    buttons: ['确定', '取消'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    message: (payload && payload.message) || '确认操作？',
+    detail: (payload && payload.detail) || '',
+  };
+  try {
+    const r = (mainWindow && !mainWindow.isDestroyed())
+      ? dialog.showMessageBoxSync(mainWindow, opts)
+      : dialog.showMessageBoxSync(opts);
+    e.returnValue = r === 0;
+  } catch (err) {
+    e.returnValue = false;
+  }
+});
+
+// 仓库面板默认目录：用户「文档」目录
+ipcMain.handle('udd:get-documents-dir', () => {
+  try { return app.getPath('documents'); } catch (e) { return ''; }
 });
 
 // ---- 启动流程：先抢单实例管道（抢不到就把 .udd 转发给已有实例后退出） ----
