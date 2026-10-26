@@ -482,7 +482,22 @@ class App {
     // 用磁盘原始 binary 覆盖 IndexedDB 里可能丢过信息的旧版本（sheetjs roundtrip 会丢公式 / 格式 / 图表）。
     // 没 filePath 的会话（新建未保存）继续使用 IndexedDB 数据。
     // 用 fire-and-forget：先让 IndexedDB 数据立刻显示，磁盘版本到货后再替换 + 重渲。
+    // 桌面版/服务器模式下自动连接内置服务器：
+    // 页面由本地服务器提供时 origin 即服务器（首个候选立刻命中），
+    // 媒体代理、filePath 直存、仓库面板开箱可用。
+    // 先 await 再刷新磁盘会话：_refreshSessionsFromDisk 依赖 repoServerUrl。
+    try { await this._detectServer(); } catch (e) { /* 无服务器时静默 */ }
     this._refreshSessionsFromDisk().catch(() => {});
+
+    // Electron 桌面端桥接：主进程把「双击 .udd 文件打开本应用」的路径发过来。
+    // 页面由内置本地服务器提供，window.location.origin 即服务器地址。
+    // 注册完监听器后 notifyReady()，主进程确认就绪才开始推送（避免冷启动竞态丢消息）。
+    if (window.uddDesktop) {
+      window.uddDesktop.onOpenFile(filePath => {
+        this.openUddPath(filePath).catch(err => toast('打开文件失败: ' + err.message));
+      });
+      window.uddDesktop.notifyReady();
+    }
   }
 
   // 浏览器刷新后用磁盘原文件覆盖 IndexedDB 的会话数据。
@@ -2238,6 +2253,37 @@ ${clone.innerHTML}
     }
   }
 
+  // 通过本地服务器路径打开一个 .udd/.json 文件（Electron 双击文件 / 仓库双击共用）。
+  // 打开后 session.filePath 指向磁盘文件，Ctrl+S 直接写回原文件。
+  async openUddPath(filePath) {
+    const base = this.repoServerUrl || window.location.origin;
+    const resp = await fetch(base + '/api/readfile?path=' + encodeURIComponent(filePath));
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const fileName = filePath.split(/[\\/]/).pop() || '文档';
+    let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
+    if (/\.json$/i.test(fileName)) {
+      data = JSON.parse(await resp.text());
+    } else {
+      const blob = await resp.blob();
+      ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
+    }
+    const name = fileName.replace(/\.(udd|json)$/i, '') || data.meta?.title || '未命名文档';
+    // 已打开过的文件直接切过去
+    const existing = this.sessions.find(s => s.filePath === filePath);
+    if (existing) {
+      this.switchSession(existing.id);
+      return existing;
+    }
+    this._addSessionAndSwitch(name, data, null, filePath, filePath, { xlsxBin, pptFormat });
+    if (this._activeSession) {
+      this._activeSession.embeddedMedia = embeddedMedia || {};
+      this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
+    }
+    this._updateSourceBtn();
+    toast('已打开: ' + fileName);
+    return this._activeSession;
+  }
+
   // Show save options dialog, returns {embedMedia, embedRefs} or null if cancelled
   _showSaveOptions() {
     return new Promise(resolve => {
@@ -2581,31 +2627,8 @@ ${clone.innerHTML}
   async _repoItemDblClick(item) {
     if (item.type === 'dir') return;
     if (item.ext === '.udd' || item.ext === '.json') {
-      // Check if already open
-      const existing = this.sessions.find(s => s.filePath === item.path);
-      if (existing) {
-        this.switchSession(existing.id);
-        return;
-      }
       try {
-        const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(item.path));
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
-        if (item.ext === '.json') {
-          const text = await resp.text();
-          data = JSON.parse(text);
-        } else {
-          const blob = await resp.blob();
-          ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
-        }
-        const name = item.name.replace(/\.(udd|json)$/, '');
-        this._addSessionAndSwitch(name, data, null, item.path, item.path, { xlsxBin, pptFormat });
-        if (this._activeSession) {
-          this._activeSession.embeddedMedia = embeddedMedia || {};
-          this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
-        }
-        this._updateSourceBtn();
-        toast('已打开: ' + item.name);
+        await this.openUddPath(item.path);
       } catch (e) {
         toast('打开失败: ' + e.message);
       }

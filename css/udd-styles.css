@@ -361,3 +361,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   #outline-view{padding:10px 8px 60px}
   #toolbar{padding:0 6px}
 }
+
+/* ===== MARQUEE 矩形框选（跨节点选中，见 js/udd-marquee.js） ===== */
+.marquee-rect{position:fixed;z-index:9000;pointer-events:none;border:1px solid #2563eb;background:rgba(37,99,235,.10);border-radius:2px;display:none}
+.marquee-rect.show{display:block}
+.marquee-hit{background-color:rgba(37,99,235,.16)!important;outline:1px dashed rgba(37,99,235,.45);outline-offset:-1px;border-radius:2px}
+.marquee-pill{position:fixed;z-index:9001;display:flex;align-items:center;gap:8px;background:var(--bg,#fff);border:1px solid var(--gray-200,#e5e7eb);border-radius:18px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:4px 8px 4px 12px;font-size:12px;color:var(--gray-600,#4b5563);user-select:none}
+.marquee-pill button{border:1px solid var(--gray-200,#e5e7eb);background:var(--bg,#fff);border-radius:12px;padding:2px 10px;font-size:12px;cursor:pointer;color:var(--primary,#2563eb)}
+.marquee-pill button:hover{background:var(--blue-50,#eff6ff)}
+.marquee-pill .mq-close{color:var(--gray-400,#9ca3af);border:none;background:none;font-size:14px;padding:2px 6px;cursor:pointer}
+body.marquee-selecting #outline-view,body.marquee-selecting #document-view{user-select:none;-webkit-user-select:none}

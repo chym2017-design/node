@@ -9,3 +9,8 @@ dist/
 build/
 .DS_Store
 .claude/
+
+# Electron 桌面版（desktop/）
+desktop/release*/
+desktop/*.log
+!desktop/build/

@@ -1,0 +1,78 @@
+{
+  "name": "udd-desktop",
+  "productName": "UDD",
+  "version": "1.0.0",
+  "description": "UDD - 统一数据展示系统（桌面版）",
+  "author": "UDD",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "icon": "node build-icon.js",
+    "start": "electron .",
+    "pack": "node build-icon.js && electron-builder --win dir",
+    "dist": "node build-icon.js && electron-builder --win dir && node edit-exe.js && electron-builder --win nsis portable --prepackaged release4/win-unpacked"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.udd.desktop",
+    "productName": "UDD",
+    "copyright": "Copyright © UDD",
+    "directories": {
+      "output": "release4",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../udd-app.html",
+        "to": "udd-web/udd-app.html"
+      },
+      {
+        "from": "../server.js",
+        "to": "udd-web/server.js"
+      },
+      {
+        "from": "../css",
+        "to": "udd-web/css"
+      },
+      {
+        "from": "../js",
+        "to": "udd-web/js"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "UDD"
+    },
+    "portable": {
+      "artifactName": "UDD-Portable-${version}.exe"
+    }
+  }
+}
