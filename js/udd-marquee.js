@@ -144,10 +144,6 @@
       S.srcRect = host.getBoundingClientRect();
     } else {
       e.preventDefault();
-      // 按下瞬间即禁止原生选择：Chromium 一旦进入"选择拖动"状态，
-      // 手抖几像素就会把 mouseup 判为拖动而吞掉 click/dblclick。
-      // 松开时（onMouseUp / clearMarquee）移除。
-      document.body.classList.add('marquee-selecting');
     }
   }
 

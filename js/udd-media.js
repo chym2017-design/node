@@ -55,12 +55,20 @@ function buildInlineTable(ref) {
   let isCrossDoc = !!ref.docName;
   if (isCrossDoc) {
     const wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(ref.docName) : null;
-    if (wb) ws = wb.Sheets[ref.sheetName];
     if (!wb) {
-      // 触发异步加载；完成后让当前视图重渲染（命中 _refDocSheets 后即可正常出表）。
+      // 已确认加载不到（缓存 null）→ 静态"未找到"占位，不得再触发加载/重渲染，
+      // 否则 占位→渲染→占位 会形成每秒一次的重渲染死循环（表现为整页卡顿、点击丢失）。
+      const resolved = (typeof isCrossDocResolved === 'function') ? isCrossDocResolved(ref.docName) : false;
+      if (resolved) {
+        const placeholder = document.createElement('span');
+        placeholder.className = 'ref-error';
+        placeholder.textContent = '跨文档表格未找到 (' + ref.docName + ' / ' + ref.sheetName + ')';
+        return placeholder;
+      }
+      // 真正首次加载：触发异步加载；完成后让当前视图重渲染（命中 _refDocSheets 后即可正常出表）。
       if (typeof loadCrossDocSheetsAsync === 'function') {
-        loadCrossDocSheetsAsync(ref.docName, () => {
-          if (typeof app !== 'undefined' && app.renderCurrentView) {
+        loadCrossDocSheetsAsync(ref.docName, (wbLoaded) => {
+          if (wbLoaded && typeof app !== 'undefined' && app.renderCurrentView) {
             requestAnimationFrame(() => app.renderCurrentView());
           }
         });
@@ -70,6 +78,7 @@ function buildInlineTable(ref) {
       placeholder.textContent = '跨文档表格加载中 (' + ref.docName + ' / ' + ref.sheetName + ')';
       return placeholder;
     }
+    ws = wb.Sheets[ref.sheetName];
   } else if (typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook) {
     ws = app.sheetView.workbook.Sheets[ref.sheetName];
   }

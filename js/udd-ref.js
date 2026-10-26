@@ -302,6 +302,8 @@ function resolveRef(data, refStr) {
   if (sr) {
     if (sr.docName) {
       // 跨档单元格：从 _refDocSheets 同步取 workbook；未加载则触发懒加载，返回 #LOADING...
+      // 已确认加载不到（缓存 null）→ 直接 #REF!，不得再触发加载/重渲染（防死循环）
+      if (isCrossDocResolved(sr.docName) && !getCrossDocWorkbook(sr.docName)) return '#REF!';
       const wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(sr.docName) : null;
       if (!wb) {
         if (typeof loadCrossDocSheetsAsync === 'function') {
@@ -596,6 +598,13 @@ function getCrossDocWorkbook(docName) {
   return _refDocSheets[docName] || null;
 }
 
+// 跨档表格是否已有"定论"：true = 已成功加载，或已确认加载不到（缓存 null）。
+// 用于区分"加载中"（该触发懒加载 + 完成后重渲染）和"确认缺失"（静态占位，
+// 绝不能再安排重渲染——否则占位→渲染→占位会形成每秒一次的死循环）。
+function isCrossDocResolved(docName) {
+  return !!docName && _refDocSheets[docName] !== undefined;
+}
+
 // 触发跨文档 sheets 的异步加载（懒加载）；加载完成后调用 onLoaded()，
 // 通常用于让占位元素重新渲染。同一 docName 多次触发只发起一次实际 fetch。
 function loadCrossDocSheetsAsync(docName, onLoaded) {
@@ -696,7 +705,11 @@ async function resolveRefAsync(data, refStr) {
 async function _loadDocFromServer(docName) {
   // Determine server URL from app instance or localStorage
   const serverUrl = (typeof app !== 'undefined' && app.repoServerUrl) || localStorage.getItem('udd_server_url') || '';
-  if (!serverUrl) return null;
+  if (!serverUrl) {
+    // 无服务器可用：标记 null 终止重试，否则每次渲染都会再次触发加载→重渲染死循环
+    if (_refDocSheets[docName] === undefined) _refDocSheets[docName] = null;
+    return null;
+  }
   const repoDir = (typeof app !== 'undefined' && app.repoDir) || localStorage.getItem('udd_repo_dir') || '';
   // 当前文档所在目录（用于解析相对路径）
   const curFilePath = (typeof app !== 'undefined' && app._activeSession && app._activeSession.filePath) || '';
