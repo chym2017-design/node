@@ -301,13 +301,41 @@ async function createUDDBlob(data, opts = {}) {
   // Always clone to avoid mutating live data
   const saveData = JSON.parse(JSON.stringify(data));
 
+  // 会话内嵌媒体（粘贴图片 / 打开文件后已有的 udd.media/*）写入 zip。
+  // 这些 blob 只存在于内存 session.embeddedMedia 中，若不写入，重新保存会把媒体丢掉。
+  // 先写入，_embedMediaFiles 再处理外部文件路径（重名会另行避让）。
+  if (typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedMedia) {
+    const mediaFolder = zip.folder('media');
+    for (const [key, blob] of Object.entries(app._activeSession.embeddedMedia)) {
+      if (!key || !key.startsWith('udd.media/') || !blob) continue;
+      const rel = key.slice('udd.media/'.length);
+      if (!rel || zip.file('media/' + rel)) continue;
+      mediaFolder.file(rel, blob);
+    }
+  }
+
   // Embed media files: rewrite paths to udd.media/xxx in saveData
   if (opts.embedMedia && typeof app !== 'undefined' && app.repoServerUrl) {
     await _embedMediaFiles(saveData, zip, app.repoServerUrl);
   }
 
   // Embed cross-doc references: rewrite =docName.path to =udd.ref-docs.docName.path
+  // refs 合并：仓库缓存（可能更新）+ 当前文件自带的嵌入引用（避免重存丢引用）
+  let refs = null;
   if (opts.embedRefs) {
+    refs = {};
+    const sessionDocs = (typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedRefDocs) || {};
+    for (const [name, docData] of Object.entries(sessionDocs)) {
+      if (name && docData) refs[name] = docData;
+    }
+    if (typeof _refDocCache !== 'undefined') {
+      for (const [name, docData] of Object.entries(_refDocCache)) {
+        if (name && docData) refs[name] = docData; // 仓库缓存优先（更新鲜）
+      }
+    }
+    // 顺手修复历史数据：旧版本误把本档表格引用改写为 =udd.ref-docs.Sheet1.B2，
+    // 保存时还原为 =Sheet1.B2（渲染期的自愈只影响显示，这里让文件本身也变干净）。
+    _repairLegacyEmbeddedSheetRefs(saveData, refs);
     _embedRefsInline(saveData);
   }
 
@@ -328,17 +356,44 @@ async function createUDDBlob(data, opts = {}) {
     const fmt = app.pptView.getFormat();
     if (fmt) zip.file('ppt-format.json', JSON.stringify(fmt, null, 2));
   }
-  // Write ref-docs.json when embedding refs
-  if (opts.embedRefs && typeof _refDocCache !== 'undefined') {
-    const refs = {};
-    for (const [name, docData] of Object.entries(_refDocCache)) {
-      refs[name] = docData;
-    }
-    if (Object.keys(refs).length > 0) {
-      zip.file('ref-docs.json', JSON.stringify(refs));
-    }
+  // Write ref-docs.json when embedding refs（合并后的 refs，含文件自带嵌入引用）
+  if (opts.embedRefs && refs && Object.keys(refs).length > 0) {
+    zip.file('ref-docs.json', JSON.stringify(refs));
   }
   return await zip.generateAsync({ type: 'blob' });
+}
+
+// 把历史损坏的 =udd.ref-docs.Sheet1.B2（本档表格引用被误改写）还原成 =Sheet1.B2。
+// 判定：去掉 udd.ref-docs. 后没有匹配任何嵌入文档键，且能解析为本档单元格引用。
+function _repairLegacyEmbeddedSheetRefs(data, refDocs) {
+  const keys = Object.keys(refDocs || {});
+  const PRE = 'udd.ref-docs.';
+  const fixRef = (refStr) => {
+    if (typeof refStr !== 'string' || !refStr.startsWith('=' + PRE)) return refStr;
+    const rest = refStr.slice(1 + PRE.length);
+    for (const k of keys) {
+      if (k && (rest === k || rest.startsWith(k + '.'))) return refStr; // 确实指向嵌入文档
+    }
+    const sr = parseSheetRef('=' + rest);
+    if (sr && !sr.docName) return '=' + rest;
+    return refStr;
+  };
+  const refRe = /\{\{(=[^}]+)\}\}/g;
+  const walk = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    for (const k of Object.keys(obj)) {
+      if (k === '_sheetRefs') continue;
+      if (typeof obj[k] === 'string') {
+        let v = obj[k];
+        if (isRef(v)) v = fixRef(v);
+        if (v.indexOf('{{=') >= 0) v = v.replace(refRe, (full, refStr) => '{{' + fixRef(refStr) + '}}');
+        obj[k] = v;
+      } else if (typeof obj[k] === 'object') {
+        walk(obj[k]);
+      }
+    }
+  };
+  walk(data);
 }
 
 // Rewrite cross-doc inline refs to udd.ref-docs. prefix in saveData clone
@@ -368,12 +423,17 @@ function _embedRefsInline(data) {
   walk(data);
 }
 
-// Rewrite =docName.t1-1.field to =udd.ref-docs.docName.t1-1.field (only cross-doc)
+// Rewrite =docName.t1-1.field to =udd.ref-docs.docName.t1-1.field (only cross-doc node refs)
 function _rewriteRefToUdd(refStr) {
   if (!refStr.startsWith('=')) return refStr;
+  // 表格单元格引用（本档 =Sheet1.B2 / 跨档 =file.udd.Sheet1.B2）不参与内嵌重写：
+  // 本档表格数据由 sheets.xlsx 内嵌；跨档表格无法用 ref-docs.json 表达。
+  // 旧版本漏了这条判断，把 =Sheet1.B2 误当成跨档节点引用改写成
+  // =udd.ref-docs.Sheet1.B2，导致保存后内嵌引用全部失效。
+  if (parseSheetRef(refStr)) return refStr;
   const ref = parseRef(refStr);
+  if (ref.isUddEmbed) return refStr; // 已是嵌入形态，避免重复加前缀
   if (!ref.docName) return refStr; // local ref, no change
-  if (ref.docName.startsWith('udd.ref-docs.')) return refStr; // already rewritten
   // Rebuild with udd.ref-docs. prefix
   let rebuilt = '=udd.ref-docs.' + ref.docName;
   if (ref.nodePath) rebuilt += '.' + ref.nodePath;
@@ -429,7 +489,9 @@ async function _embedMediaFiles(data, zip, serverUrl) {
       }
       if (!fetchBlob) continue;
       const ext = fetchPath.split('.').pop().toLowerCase();
-      const fname = 'media_' + (idx++) + '.' + ext;
+      let fname = 'media_' + (idx++) + '.' + ext;
+      // 避免与会话内嵌媒体（先写入的 media/ 文件）重名覆盖
+      while (zip.file('media/' + fname)) fname = 'media_' + (idx++) + '.' + ext;
       mediaFolder.file(fname, fetchBlob);
       entry.embedded = 'udd.media/' + fname;
     } catch (e) { /* skip */ }

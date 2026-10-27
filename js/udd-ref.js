@@ -21,6 +21,9 @@ function isRef(value) {
   if (parseSheetRef(value)) return true;
   try {
     const r = parseRef(value);
+    // 嵌入引用：docKey 可能含点（文件名.udd / 路径），具体目标由 resolveRef
+    // 用 embeddedRefDocs 的键做最长匹配，这里只要求前缀后有内容即可。
+    if (r.isUddEmbed) return !!(r.embedRest || '').length;
     return !!r.nodePath;
   } catch (e) { return false; }
 }
@@ -236,6 +239,33 @@ function _parseRefRest(result, work) {
   if (idx < parts.length) result.field = parts[idx];
 }
 
+// 解析嵌入引用 key 之后的剩余部分（nodePath.field + slice/match），
+// 与 _parseRefRest 的区别：**不**把首段当 docName（docName 已由 key 匹配确定）。
+function _parseRefRemainder(sub) {
+  const result = { docName: null, nodePath: null, field: null, slice: null, matchExpr: null, isUddEmbed: false };
+  let raw = sub || '';
+  const matchM = raw.match(REF_MATCH_RE);
+  if (matchM) {
+    result.matchExpr = { pattern: new RegExp(matchM[1], matchM[2]), index: parseInt(matchM[3]) };
+    raw = raw.slice(0, matchM.index);
+  }
+  const sliceM = raw.match(REF_SLICE_RE);
+  if (sliceM) {
+    result.slice = [parseInt(sliceM[1]), parseInt(sliceM[2])];
+    raw = raw.slice(0, sliceM.index);
+  }
+  const parts = raw.split('.');
+  const pathParts = [];
+  let idx = 0;
+  while (idx < parts.length && REF_TNODE_RE.test(parts[idx])) {
+    pathParts.push(parts[idx]);
+    idx++;
+  }
+  if (pathParts.length > 0) result.nodePath = pathParts.join('.');
+  if (idx < parts.length) result.field = parts[idx];
+  return result;
+}
+
 function parseRef(refStr) {
   const cached = _parseRefCache.get(refStr);
   if (cached) return cached;
@@ -260,9 +290,20 @@ function parseRef(refStr) {
   // —— 三种形态分发，避免每次都 split + 循环找 udd 段 ——
 
   // (1) 嵌入引用：udd.ref-docs.<docKey>.<rest>
+  //     docKey 可能本身含点：裸名 / 名字.udd / 绝对路径 / 路径.udd。
+  //     这里先识别 .udd 边界（能确定 nodePath，供 isRef / 渲染判定）；
+  //     找不到 .udd 的形态保留 embedRest，由 resolveRef 用 embeddedRefDocs 键最长匹配。
   if (raw.startsWith(REF_UDD_EMBED_PREFIX)) {
     result.isUddEmbed = true;
-    _parseRefRest(result, raw.slice(REF_UDD_EMBED_PREFIX.length));
+    const rest = raw.slice(REF_UDD_EMBED_PREFIX.length);
+    result.embedRest = rest;
+    const uddPos = rest.indexOf('.udd.');
+    if (uddPos >= 0) {
+      result.docName = rest.slice(0, uddPos + 4); // "...文件名.udd"
+      _parseRefRest(result, rest.slice(uddPos + 5));
+    } else {
+      _parseRefRest(result, rest);
+    }
     _parseRefCache.set(refStr, result);
     return result;
   }
@@ -331,16 +372,57 @@ function resolveRef(data, refStr) {
   }
 
   const ref = parseRef(refStr);
-  if (!ref.nodePath) return '#REF!';
+  // 嵌入引用的 docKey 可能无法静态确定（裸键/历史损坏形态），不能只看 nodePath
+  if (!ref.nodePath && !ref.isUddEmbed) return '#REF!';
 
   // --- Lookup order ---
 
-  // 1. 嵌入引用 (udd.ref-docs.xxx): 从当前文件的 ref-docs.json 读取
-  if (ref.isUddEmbed && ref.docName) {
-    const sessionRefDocs = typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedRefDocs;
-    const srcData = sessionRefDocs && sessionRefDocs[ref.docName];
-    if (!srcData) return '#LOADING...';
-    return _resolveLocalRef(srcData, ref);
+  // 1. 嵌入引用 (udd.ref-docs.xxx)：从当前文件的 ref-docs.json（session.embeddedRefDocs）读取。
+  //    docKey 可能是 裸名 / 名字.udd / 绝对路径 / 路径.udd —— 用键最长匹配确定边界。
+  if (ref.isUddEmbed) {
+    const session = (typeof app !== 'undefined' && app._activeSession) || null;
+    const docs = (session && session.embeddedRefDocs) || {};
+    const rest = ref.embedRest || refStr.slice(1 + REF_UDD_EMBED_PREFIX.length);
+    const parsedRemainder = ref.nodePath
+      ? { docName: null, nodePath: ref.nodePath, field: ref.field, slice: ref.slice, matchExpr: ref.matchExpr }
+      : null;
+    // ① docName 直接命中（parseRef 已从 .udd 边界解析出完整 docName）
+    if (ref.docName && docs[ref.docName] && parsedRemainder) {
+      return _resolveLocalRef(docs[ref.docName], parsedRemainder);
+    }
+    // ② docName 去掉 .udd 后的裸名命中（数据键常是裸名）
+    if (ref.docName && /\.udd$/i.test(ref.docName) && parsedRemainder) {
+      const bare = ref.docName.replace(/\.udd$/i, '');
+      if (docs[bare]) return _resolveLocalRef(docs[bare], parsedRemainder);
+    }
+    // ③ 键最长前缀匹配（裸键引用 / 路径键 / 混合形态）
+    let bestKey = null;
+    for (const k of Object.keys(docs)) {
+      if (!k) continue;
+      if (rest === k || rest.startsWith(k + '.')) {
+        if (!bestKey || k.length > bestKey.length) bestKey = k;
+      }
+    }
+    if (bestKey) {
+      const sub = rest.slice(bestKey.length + 1);
+      return _resolveLocalRef(docs[bestKey], _parseRefRemainder(sub));
+    }
+    // 历史数据兼容：旧版本保存时把本档表格引用误改写为 =udd.ref-docs.Sheet1.B2，
+    // 这里按本档单元格引用恢复（新版本保存已不再改写表格引用）。
+    const legacySheet = parseSheetRef('=' + rest);
+    if (legacySheet && !legacySheet.docName) {
+      const wb = typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook;
+      const ws = wb && wb.Sheets[legacySheet.sheetName];
+      if (!ws) return '#REF!';
+      const cell = ws[legacySheet.addr];
+      return cell ? String(cell.w || (cell.v !== undefined ? cell.v : '')) : '';
+    }
+    if (Object.keys(docs).length === 0 && typeof app !== 'undefined' && app._ensureEmbeddedMediaLoaded) {
+      // 嵌入引用数据尚未懒加载：触发一次加载（完成后 idle 重渲染）
+      app._ensureEmbeddedMediaLoaded().catch(() => {});
+      return '#LOADING...';
+    }
+    return '#REF!';
   }
 
   // 2. 跨文档引用 (=docName.xxx): 需要异步加载
@@ -672,21 +754,17 @@ async function resolveRefAsync(data, refStr) {
     return cell ? String(cell.w || (cell.v !== undefined ? cell.v : '')) : '';
   }
   const ref = parseRef(refStr);
+
+  // 1. 嵌入引用: 先确保 ref-docs 懒加载完成，再交给同步解析（键最长匹配）
+  if (ref.isUddEmbed) {
+    if (typeof app !== 'undefined' && app._ensureEmbeddedMediaLoaded) {
+      try { await app._ensureEmbeddedMediaLoaded(); } catch (e) { /* skip */ }
+    }
+    return resolveRef(data, refStr);
+  }
+
   if (!ref.nodePath) return '#REF!';
   if (!ref.docName) return resolveRef(data, refStr);
-
-  // 1. 嵌入引用: 触发懒加载从实际文件读取 ref-docs.json
-  if (ref.isUddEmbed) {
-    const sessionRefDocs = typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedRefDocs;
-    let srcData = sessionRefDocs && sessionRefDocs[ref.docName];
-    if (!srcData && typeof app !== 'undefined' && app._ensureEmbeddedMediaLoaded) {
-      await app._ensureEmbeddedMediaLoaded();
-      const reloaded = app._activeSession && app._activeSession.embeddedRefDocs;
-      srcData = reloaded && reloaded[ref.docName];
-    }
-    if (!srcData) return '#REF!';
-    return _resolveLocalRef(srcData, ref);
-  }
 
   // 2. 跨文档: 从仓库服务器实际读取文件
   let docData = _refDocCache[ref.docName];

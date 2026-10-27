@@ -123,6 +123,9 @@ class App {
       if (sel && sel.end > sel.start) this.savedSelection = sel;
     });
 
+    // 粘贴图片：自动作为内嵌媒体（udd.media/）插入当前节点
+    document.addEventListener('paste', e => this.onPaste(e));
+
     // Doc title
     document.getElementById('doc-title').addEventListener('input', e => {
       this.data.meta.title = e.target.value;
@@ -1544,6 +1547,69 @@ class App {
   }
 
   // Media insert
+  // 粘贴：若剪贴板里有图片，自动内嵌到当前节点的当前字段
+  onPaste(e) {
+    const t = e.target;
+    if (!t || !t.closest || !(t.closest('#outline-view') || t.closest('#document-view'))) return;
+    const cd = e.clipboardData;
+    if (!cd || !cd.items) return;
+    for (const item of cd.items) {
+      if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        e.preventDefault();
+        this._insertPastedImage(file);
+        return;
+      }
+    }
+  }
+
+  // 把粘贴的图片写入会话内嵌媒体（session.embeddedMedia），并在光标处插入媒体标签。
+  // 保存 .udd 时 createUDDBlob 会把 session.embeddedMedia 写入 media/ 目录（自动内嵌）。
+  async _insertPastedImage(file) {
+    const nodePath = this.getCurrentFocusPath();
+    if (!nodePath) { toast('请先点击要插入图片的节点'); return; }
+    const field = this.getCurrentFocusField() || 'content';
+    const node = getNodeByPath(this.data, nodePath);
+    const session = this._activeSession;
+    if (!node || !session) return;
+
+    const sub = String(file.type || 'image/png').split('/')[1] || 'png';
+    const ext = sub === 'jpeg' ? 'jpg' : (sub.replace(/[^a-z0-9]/gi, '') || 'png');
+    const name = 'udd.media/paste_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6) + '.' + ext;
+    session.embeddedMedia = session.embeddedMedia || {};
+    session.embeddedMedia[name] = file;
+    if (session._blobUrls && session._blobUrls[name]) {
+      try { URL.revokeObjectURL(session._blobUrls[name]); } catch (err) {}
+      delete session._blobUrls[name];
+    }
+
+    const tag = '{{"image":"' + name + '","width":"60%"}}';
+    // 光标在目标字段的编辑元素里时按选区偏移插入，否则追加到末尾
+    const cur = String(node[field] || '');
+    let off = cur.length;
+    const active = document.activeElement;
+    if (active && active.dataset && active.dataset.path === nodePath &&
+        (active.dataset.field || 'content') === field && active.isContentEditable) {
+      const sel = getSelectionOffsetsWithin(active);
+      if (sel) off = Math.min(sel.start, cur.length);
+    }
+    this.pushUndo();
+    node[field] = cur.slice(0, off) + tag + cur.slice(off);
+    this.markDirty();
+
+    if (this.currentView === 'outline') {
+      this.outlineView.focusPath = nodePath;
+      this.outlineView.focusField = field;
+    } else if (this.currentView === 'document') {
+      this.documentView.focusPath = nodePath;
+      this.documentView.focusField = field;
+    }
+    this.renderCurrentView();
+    this.updateSidebar(nodePath);
+    toast('已插入图片（保存时自动内嵌到 .udd）');
+  }
+
   async insertMedia() {
     const nodePath = this.getCurrentFocusPath();
     if (!nodePath) { toast('请先选中一个节点'); return; }
