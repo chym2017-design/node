@@ -11,8 +11,8 @@ function parseMediaTag(tagContent) {
 }
 
 // Inline table: {{Sheet1.A1:C4}} 本档；{{路径/文件名.udd.Sheet1.A1:C4}} 跨档（实时）
-// 嵌入快照（与节点引用同语法）：{{udd.ref-docs.文件名.udd.Sheet1.A1:C4}}
-const TABLE_EMBED_PREFIX = 'udd.ref-docs.';
+// 嵌入快照：{{udd.ref-sheets.文件名.udd.Sheet1.A1:C4}}
+const TABLE_EMBED_PREFIX = 'udd.ref-sheets.';
 function parseTableRef(tagContent) {
   // Match: prefix.A1:C4
   const m = tagContent.match(/^(.+)\.([A-Z]{1,3}\d+):([A-Z]{1,3}\d+)$/);
@@ -20,17 +20,20 @@ function parseTableRef(tagContent) {
   let prefix = m[1];
   const startAddr = m[2], endAddr = m[3];
 
-  // 嵌入快照前缀：udd.ref-docs.<docKey>.<Sheet>.<A1:C4>
+  // 嵌入快照前缀：udd.ref-sheets.<docKey>.<Sheet>.<A1:C4>
   let isEmbed = false;
   if (prefix.startsWith(TABLE_EMBED_PREFIX)) {
     isEmbed = true;
     prefix = prefix.slice(TABLE_EMBED_PREFIX.length);
+  } else if (prefix.startsWith('udd.ref-docs.')) {
+    // 旧版把表格也写成 udd.ref-docs.；新格式按数据类型分前缀，不再接受。
+    return null;
   }
 
-  // 新语法：检测 ".udd." 段作为 docName 边界
+  // 新语法：检测最后一个 ".udd." 作为 docName 边界（键可能包含目录）
   let docName = null, sheetName;
   const uddMark = '.udd.';
-  const uddPos = prefix.indexOf(uddMark);
+  const uddPos = prefix.lastIndexOf(uddMark);
   if (uddPos >= 0) {
     docName = prefix.slice(0, uddPos) + '.udd';
     sheetName = prefix.slice(uddPos + uddMark.length);
@@ -44,6 +47,8 @@ function parseTableRef(tagContent) {
       sheetName = prefix;
     }
   }
+  // 键统一成文件名（含 .udd），与 ref-sheets.json 的键一致；实时引用保留书写形态。
+  if (isEmbed && docName) docName = canonDocKey(docName);
   return { docName, sheetName, startAddr, endAddr, isEmbed };
 }
 
@@ -65,8 +70,8 @@ function buildInlineTable(ref) {
   let isCrossDoc = !!ref.docName;
   if (isCrossDoc) {
     // 语义：
-    //   udd.ref-docs.<doc>....  → 明确使用本文件内的嵌入快照（缺失即报嵌入缺失，不查仓库）
-    //   <doc>.udd....（旧写法） → 使用仓库/目录里的实时文档，找不到时才回退到内嵌快照
+    //   udd.ref-sheets.<doc>....  → 明确使用本文件内的嵌入快照（缺失即报嵌入缺失，不查仓库）
+    //   <doc>.udd....（实时写法） → 使用仓库/目录里的实时文档，找不到时才回退到内嵌快照
     const embWb = (typeof getEmbeddedWorkbook === 'function') ? getEmbeddedWorkbook(ref.docName) : null;
     let wb = null;
     if (ref.isEmbed) {

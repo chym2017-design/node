@@ -161,7 +161,7 @@ class App {
       focusPath: null, scrollTop: 0,
       // 性能优化（Plan B）：开打文件时一次性算出"是否需要懒加载嵌入引用"，
       // 避免 _ensureEmbeddedMediaLoaded 每次 renderCurrentView 都做全量 JSON.stringify。
-      _needsRefDocsLoad: JSON.stringify(data || {}).includes('udd.ref-docs.'),
+      _needsRefDocsLoad: /udd\.ref-(?:docs|sheets)\./.test(JSON.stringify(data || {})),
       // 表格按会话隔离：每个 session 持有自己的 xlsx 二进制，切换会话时把它注入到
       // 共享的 sheetView.workbook。null 表示该会话尚无表格数据（启用默认空白簿）。
       xlsxBin: o.xlsxBin || null,
@@ -927,7 +927,8 @@ class App {
     const session = this._activeSession;
     if (!session || session._embeddedLoading) return;
     if (!session._needsRefDocsLoad) return;
-    const hasRefs = session.embeddedRefDocs && Object.keys(session.embeddedRefDocs).length > 0;
+    const hasRefs = (session.embeddedRefDocs && Object.keys(session.embeddedRefDocs).length > 0) ||
+                    (session.embeddedSheets && Object.keys(session.embeddedSheets).length > 0);
     if (hasRefs) return;
     session._embeddedLoading = true;
     try {
@@ -956,7 +957,8 @@ class App {
     if (!btn) return;
     // Show button if current data contains any embedded udd. paths
     const dataStr = this.data ? JSON.stringify(this.data) : '';
-    const hasEmbedded = dataStr.includes('udd.media/') || dataStr.includes('udd.ref-docs.');
+    const hasEmbedded = dataStr.includes('udd.media/') ||
+      dataStr.includes('udd.ref-docs.') || dataStr.includes('udd.ref-sheets.');
     btn.style.display = hasEmbedded ? '' : 'none';
     const isEmbed = this.contentSource === 'embedded';
     btn.textContent = '来源:' + (isEmbed ? '嵌入' : '仓库');

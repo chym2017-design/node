@@ -62,8 +62,14 @@ js/
 --------------------------
 - {{"table":"文件名.udd.Sheet1.A1:C3"}}      → 实时：优先读取仓库/当前文档目录
                                                  里的源文档；找不到时回退到本文件内嵌快照
-- {{"table":"udd.ref-docs.文件名.udd.Sheet1.A1:C3"}}
-                                             → 明确使用本文件内的嵌入快照（与节点引用
-                                                 =udd.ref-docs. 同语法，离线/跨目录可用）
+- {{"table":"udd.ref-sheets.文件名.udd.Sheet1.A1:C3"}}
+                                             → 明确使用本文件内的嵌入快照
+                                                 （ref-sheets.json + ref-sheets/N.xlsx，离线/跨目录可用）
+- =udd.ref-sheets.文件名.udd.Sheet1.B2       → 单元格的嵌入快照写法
+- =udd.ref-docs.文件名.udd.t1-1.content      → 节点数据的嵌入快照写法（ref-docs.json）
 保存勾选「嵌入引用」时，被引用文档的 sheets.xlsx 会打包进 ref-sheets/，
-且能成功打包的表格/跨档单元格引用会自动加上 udd.ref-docs. 前缀。
+且能成功打包的表格/跨档单元格引用会自动改写成 udd.ref-sheets. 前缀。
+两种前缀按数据类型分工：ref-docs 存节点树，ref-sheets 存工作簿。
+键是被引文档相对当前文档所在目录的路径（如 data/测试文档1.udd 或 ../共享/测试文档1.udd）；
+文档尚未保存、没有所在目录时才退回仓库相对路径。因此仓库设置变化不会改变键，
+不同目录下的同名文件也不会互相覆盖。

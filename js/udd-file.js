@@ -319,29 +319,35 @@ async function createUDDBlob(data, opts = {}) {
     await _embedMediaFiles(saveData, zip, app.repoServerUrl);
   }
 
-  // Embed cross-doc references: rewrite =docName.path to =udd.ref-docs.docName.path
-  // refs 合并：仓库缓存（可能更新）+ 当前文件自带的嵌入引用（避免重存丢引用）
+  // Embed cross-doc references: rewrite =docName.path to =udd.ref-docs.<相对路径>.path
+  // refs 合并：仓库缓存（可能更新）+ 当前文件自带的嵌入引用（避免重存丢引用）。
+  // 键 = 被引文档相对当前文档所在目录的路径（同名文件分目录时不会互相覆盖）。
   let refs = null;
   if (opts.embedRefs) {
+    const keyResolver = _createDocKeyResolver();
     refs = {};
+    const addRef = (name, docData) => {
+      if (!name || !docData) return;
+      const key = keyResolver.keyFor(name);
+      if (key) refs[key] = docData;
+    };
     const sessionDocs = (typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedRefDocs) || {};
-    for (const [name, docData] of Object.entries(sessionDocs)) {
-      if (name && docData) refs[name] = docData;
-    }
+    for (const [name, docData] of Object.entries(sessionDocs)) addRef(name, docData);
     if (typeof _refDocCache !== 'undefined') {
-      for (const [name, docData] of Object.entries(_refDocCache)) {
-        if (name && docData) refs[name] = docData; // 仓库缓存优先（更新鲜）
-      }
+      for (const [name, docData] of Object.entries(_refDocCache)) addRef(name, docData); // 仓库缓存优先（更新鲜）
     }
-    // 顺手修复历史数据：旧版本误把本档表格引用改写为 =udd.ref-docs.Sheet1.B2，
-    // 保存时还原为 =Sheet1.B2（渲染期的自愈只影响显示，这里让文件本身也变干净）。
-    _repairLegacyEmbeddedSheetRefs(saveData, refs);
-    _embedRefsInline(saveData);
+    // 只保留当前文档实际引用到的节点文档：_refDocCache 是运行期全局缓存，
+    // 直接全量写回会把其它文档的节点树也塞进 ref-docs.json。
+    const referenced = _collectReferencedDocKeys(saveData, refs, keyResolver);
+    for (const key of Object.keys(refs)) {
+      if (!referenced.has(key)) delete refs[key];
+    }
+    _embedRefsInline(saveData, refs, keyResolver);
     // 跨文档表格数据：被引用文档的 sheets.xlsx 一并打包（离线/跨目录也能出表），
-    // 并把成功嵌入的引用改写成显式 udd.ref-docs. 语法（与节点引用一致，消除歧义）。
+    // 并把成功嵌入的引用改写成显式 udd.ref-sheets. 语法（与节点引用 udd.ref-docs. 区分）。
     try {
-      const embeddedDocs = await _embedCrossDocSheets(saveData, zip);
-      _prefixEmbeddedSheetRefs(saveData, embeddedDocs);
+      const embedMap = await _embedCrossDocSheets(saveData, zip, keyResolver);
+      _prefixEmbeddedSheetRefs(saveData, embedMap);
     } catch (e) { /* skip */ }
   }
 
@@ -369,37 +375,106 @@ async function createUDDBlob(data, opts = {}) {
   return await zip.generateAsync({ type: 'blob' });
 }
 
-// 把历史损坏的 =udd.ref-docs.Sheet1.B2（本档表格引用被误改写）还原成 =Sheet1.B2。
-// 判定：去掉 udd.ref-docs. 后没有匹配任何嵌入文档键，且能解析为本档单元格引用。
-function _repairLegacyEmbeddedSheetRefs(data, refDocs) {
-  const keys = Object.keys(refDocs || {});
-  const PRE = 'udd.ref-docs.';
-  const fixRef = (refStr) => {
-    if (typeof refStr !== 'string' || !refStr.startsWith('=' + PRE)) return refStr;
-    const rest = refStr.slice(1 + PRE.length);
-    for (const k of keys) {
-      if (k && (rest === k || rest.startsWith(k + '.'))) return refStr; // 确实指向嵌入文档
+// 保存期统一计算被引文档的嵌入键：
+//   1) 优先相对「当前文档所在目录」——唯一不随仓库设置/仓库位置变化的锚点；
+//   2) 文档尚未保存（没有 filePath）时才退回仓库相对路径；
+//   3) 都无法计算（跨盘符/路径未知）→ 回退到引用里写的名称。
+// 同一路径的不同写法归一到同一个键；不同文件撞键时追加 #2/#3，绝不静默合并。
+function _docKeyFor(docName, resolvedPath, ctx) {
+  const abs = resolvedPath ? uddNormalizePath(resolvedPath) : '';
+  if (abs && ctx) {
+    if (ctx.baseDir) {
+      const rel = uddRelativePath(ctx.baseDir, abs);
+      if (rel && rel !== '.' && !/^[A-Za-z]:/.test(rel) && !rel.startsWith('/')) {
+        return canonDocKey(rel);
+      }
     }
-    const sr = parseSheetRef('=' + rest);
-    if (sr && !sr.docName) return '=' + rest;
-    return refStr;
+    if (ctx.repoDir) {
+      const rel = uddRelativePath(ctx.repoDir, abs);
+      if (rel && rel !== '.' && !rel.startsWith('..') && !/^[A-Za-z]:/.test(rel) && !rel.startsWith('/')) {
+        return canonDocKey(rel);
+      }
+    }
+  }
+  return canonDocKey(docName);
+}
+
+function _createDocKeyResolver() {
+  const session = (typeof app !== 'undefined' && app._activeSession) || null;
+  const repoDir = (typeof app !== 'undefined' && app.repoDir) ||
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('udd_repo_dir') : '') || '';
+  const filePath = (session && session.filePath) || '';
+  const ctx = { repoDir, baseDir: filePath ? uddDirname(filePath) : '' };
+  const assigned = new Map();
+  const used = new Map();
+  const keyFor = (docName) => {
+    if (!docName) return '';
+    const resolved = (typeof getRefDocResolvedPath === 'function') ? getRefDocResolvedPath(docName) : '';
+    const identity = resolved
+      ? 'abs:' + uddNormalizePath(resolved).toLowerCase()
+      : 'name:' + canonDocKey(docName).toLowerCase();
+    if (assigned.has(identity)) return assigned.get(identity);
+    const baseKey = _docKeyFor(docName, resolved, ctx);
+    if (!baseKey) return '';
+    let candidate = baseKey;
+    let n = 2;
+    while (used.has(candidate)) {
+      const owner = used.get(candidate);
+      if (owner === identity) break;
+      const ownerAbs = owner.startsWith('abs:');
+      const idAbs = identity.startsWith('abs:');
+      // 同一键同时来自「已嵌入的旧键（只有名称）」和「本次实时加载（有绝对路径）」：
+      // 视为同一文档，合并到该键，并以绝对路径身份为准，避免重复打包。
+      if (ownerAbs !== idAbs && candidate === baseKey) {
+        if (idAbs) used.set(candidate, identity);
+        break;
+      }
+      const m = /^(.*?)(\.(?:udd|json))$/i.exec(baseKey);
+      candidate = m ? m[1] + '#' + n + m[2] : baseKey + '#' + n;
+      n++;
+    }
+    used.set(candidate, identity);
+    assigned.set(identity, candidate);
+    return candidate;
   };
-  const refRe = /\{\{(=[^}]+)\}\}/g;
+  return { keyFor };
+}
+
+// 收集 saveData 中实际引用到的节点文档键（含 udd.ref-docs. 嵌入引用）。
+// 保存「嵌入引用」时只保留这些文档，避免把运行期缓存里其它文档一并写进 ref-docs.json。
+function _collectReferencedDocKeys(data, refs, keyResolver) {
+  const keys = new Set();
+  const resolver = keyResolver || { keyFor: canonDocKey };
+  const add = (refStr) => {
+    if (typeof refStr !== 'string' || !isRef(refStr)) return;
+    if (parseSheetRef(refStr)) return; // 表格/单元格属于 ref-sheets，不进 ref-docs
+    try {
+      const ref = parseRef(refStr);
+      if (ref.isUddEmbed) {
+        const m = ref.embedRest ? _matchEmbedRest(refs || {}, ref.embedRest) : null;
+        if (m) keys.add(m.key);
+        else if (ref.docName) keys.add(resolver.keyFor(ref.docName));
+      } else if (ref.docName) {
+        keys.add(resolver.keyFor(ref.docName));
+      }
+    } catch (e) { /* skip */ }
+  };
+  const inlineRe = /\{\{(=[^}]+)\}\}/g;
   const walk = (obj) => {
     if (!obj || typeof obj !== 'object') return;
     for (const k of Object.keys(obj)) {
       if (k === '_sheetRefs') continue;
-      if (typeof obj[k] === 'string') {
-        let v = obj[k];
-        if (isRef(v)) v = fixRef(v);
-        if (v.indexOf('{{=') >= 0) v = v.replace(refRe, (full, refStr) => '{{' + fixRef(refStr) + '}}');
-        obj[k] = v;
-      } else if (typeof obj[k] === 'object') {
-        walk(obj[k]);
+      const v = obj[k];
+      if (typeof v === 'string') {
+        if (isRef(v)) add(v);
+        if (v.includes('{{=')) v.replace(inlineRe, (full, refStr) => { add(refStr); return full; });
+      } else if (v && typeof v === 'object') {
+        walk(v);
       }
     }
   };
   walk(data);
+  return keys;
 }
 
 // 收集内容中引用到的跨文档表格 docName：
@@ -442,53 +517,88 @@ function _collectCrossDocSheetNames(data) {
   return [...names];
 }
 
-// 把内容引用到的跨文档工作簿打包进 zip：ref-sheets/N.xlsx + ref-sheets.json 清单
-// 返回成功嵌入的 docName 集合（用于把引用改写成显式 udd.ref-docs. 语法）。
-async function _embedCrossDocSheets(data, zip) {
+// 把内容引用到的跨文档工作簿打包进 zip：ref-sheets/N.xlsx + ref-sheets.json 清单。
+// 清单键 = 文档文件名（canonDocKey），与 ref-docs.json 的键规则一致；
+// 返回 Map<引用中写的 docName, 规范键>，供改写阶段定位。
+async function _embedCrossDocSheets(data, zip, keyResolver) {
   const names = _collectCrossDocSheetNames(data);
-  const embedded = new Set();
-  if (!names.length) return embedded;
+  const embedMap = new Map();
+  if (!names.length) return embedMap;
+  const resolver = keyResolver || { keyFor: canonDocKey };
   const session = (typeof app !== 'undefined' && app._activeSession) || null;
   const manifest = {};
   let idx = 0;
   for (const name of names) {
+    const key = resolver.keyFor(name);
+    if (!key) continue;
+    if (Object.prototype.hasOwnProperty.call(manifest, key)) {
+      embedMap.set(name, key); // 同一文档的不同写法：复用已打包的工作簿
+      continue;
+    }
     let bin = null;
-    if (session && session.embeddedSheetBins && session.embeddedSheetBins[name]) bin = session.embeddedSheetBins[name];
-    if (!bin && typeof _refDocSheetBins !== 'undefined' && _refDocSheetBins[name]) bin = _refDocSheetBins[name];
+    // 依次尝试：规范键 → 引用原样 → 唯一 basename（旧文件的 basename 键 / 实时写法差异）
+    const pickBin = (map) => {
+      if (!map) return null;
+      if (map[key]) return map[key];
+      if (map[name]) return map[name];
+      // 只有键里没有目录时才允许唯一 basename 兜底：
+      // 显式引用 B/x.udd 时绝不能拿 A/x.udd 的工作簿。
+      if (key !== uddBasename(key)) return null;
+      const base = uddBasename(key).toLowerCase();
+      let found = null;
+      for (const k of Object.keys(map)) {
+        if (uddBasename(k).toLowerCase() === base) {
+          if (found) return null;
+          found = k;
+        }
+      }
+      return found ? map[found] : null;
+    };
+    if (session) bin = pickBin(session.embeddedSheetBins);
+    if (!bin && typeof _refDocSheetBins !== 'undefined') bin = pickBin(_refDocSheetBins);
     if (!bin && typeof _loadDocFromServer === 'function') {
       try { await _loadDocFromServer(name); } catch (e) { /* skip */ }
-      if (typeof _refDocSheetBins !== 'undefined') bin = _refDocSheetBins[name] || null;
+      if (typeof _refDocSheetBins !== 'undefined') bin = pickBin(_refDocSheetBins);
     }
     if (!bin) continue;
     const entry = 'ref-sheets/' + (idx++) + '.xlsx';
     zip.file(entry, bin);
-    manifest[name] = entry;
-    embedded.add(name);
+    manifest[key] = entry;
+    embedMap.set(name, key);
   }
   if (Object.keys(manifest).length > 0) {
     zip.file('ref-sheets.json', JSON.stringify(manifest));
   }
-  return embedded;
+  return embedMap;
 }
 
-// 把已成功嵌入的跨文档表格/单元格引用改写成显式快照语法（与节点引用 udd.ref-docs. 一致）：
-//   表格标签：{{"table":"doc.udd.Sheet1.A1:C3"}} → {{"table":"udd.ref-docs.doc.udd.Sheet1.A1:C3"}}
-//   单元格引用：=doc.udd.Sheet1.B2 → =udd.ref-docs.doc.udd.Sheet1.B2（含行内 {{=...}}）
+// 把已成功嵌入的跨文档表格/单元格引用改写成显式快照语法：
+//   表格标签：{{"table":"doc.udd.Sheet1.A1:C3"}} → {{"table":"udd.ref-sheets.doc.udd.Sheet1.A1:C3"}}
+//   单元格引用：=doc.udd.Sheet1.B2 → =udd.ref-sheets.doc.udd.Sheet1.B2（含行内 {{=...}}）
 // 未成功嵌入的引用保持原样（继续按实时来源解析）。
-function _prefixEmbeddedSheetRefs(data, embeddedNames) {
-  if (!embeddedNames || !embeddedNames.size) return;
+function _prefixEmbeddedSheetRefs(data, embedMap) {
+  if (!embedMap || !embedMap.size) return;
   const tableValRe = /("table"\s*:\s*")([^"]+)(")/g;
   const inlineRefRe = /\{\{(=[^}]+)\}\}/g;
+  const keyFor = (docName) => {
+    if (embedMap.has(docName)) return embedMap.get(docName);
+    const key = canonDocKey(docName);
+    return embedMap.has(key) ? embedMap.get(key) : null;
+  };
   const refWho = (refStr) => {
     try {
       const sr = parseSheetRef(refStr);
-      return (sr && sr.docName && !sr.isEmbed && embeddedNames.has(sr.docName)) ? '=udd.ref-docs.' + refStr.slice(1) : refStr;
+      if (!sr || !sr.docName || sr.isEmbed) return refStr;
+      const key = keyFor(sr.docName);
+      return key ? '=udd.ref-sheets.' + key + '.' + sr.sheetName + '.' + sr.addr : refStr;
     } catch (e) { return refStr; }
   };
   const tableWho = (value) => {
     try {
       const tr = parseTableRef(value);
-      if (tr && tr.docName && !tr.isEmbed && embeddedNames.has(tr.docName)) return 'udd.ref-docs.' + value;
+      if (!tr || !tr.docName || tr.isEmbed) return value;
+      const key = keyFor(tr.docName);
+      return key ? 'udd.ref-sheets.' + key + '.' + tr.sheetName + '.' + tr.startAddr + ':' + tr.endAddr : value;
     } catch (e) { /* skip */ }
     return value;
   };
@@ -516,8 +626,8 @@ function _prefixEmbeddedSheetRefs(data, embeddedNames) {
   walk(data);
 }
 
-// Rewrite cross-doc inline refs to udd.ref-docs. prefix in saveData clone
-function _embedRefsInline(data) {
+// Rewrite cross-doc node refs to udd.ref-docs.<文件名>. 前缀 in saveData clone
+function _embedRefsInline(data, refs, keyResolver) {
   const refRe = /\{\{(=[^}]+)\}\}/g;
   function walk(obj) {
     if (!obj || typeof obj !== 'object') return;
@@ -526,12 +636,12 @@ function _embedRefsInline(data) {
       if (typeof obj[k] === 'string') {
         // Rewrite full-field refs (=docName.path)
         if (isRef(obj[k])) {
-          obj[k] = _rewriteRefToUdd(obj[k]);
+          obj[k] = _rewriteRefToUdd(obj[k], refs, keyResolver);
         }
         // Rewrite inline {{=docName.path}} refs
         if (obj[k].includes('{{=')) {
           obj[k] = obj[k].replace(refRe, (full, refStr) => {
-            const rewritten = _rewriteRefToUdd(refStr);
+            const rewritten = _rewriteRefToUdd(refStr, refs, keyResolver);
             return '{{' + rewritten + '}}';
           });
         }
@@ -543,19 +653,18 @@ function _embedRefsInline(data) {
   walk(data);
 }
 
-// Rewrite =docName.t1-1.field to =udd.ref-docs.docName.t1-1.field (only cross-doc node refs)
-function _rewriteRefToUdd(refStr) {
+// Rewrite =docName.t1-1.field to =udd.ref-docs.<相对路径>.udd.t1-1.field（仅跨文档节点引用）。
+// 只有确实抓到了该文档数据（refs 里有键）才改写，避免生成无法解析的嵌入引用。
+function _rewriteRefToUdd(refStr, refs, keyResolver) {
   if (!refStr.startsWith('=')) return refStr;
-  // 表格单元格引用（本档 =Sheet1.B2 / 跨档 =file.udd.Sheet1.B2）不参与内嵌重写：
-  // 本档表格数据由 sheets.xlsx 内嵌；跨档表格无法用 ref-docs.json 表达。
-  // 旧版本漏了这条判断，把 =Sheet1.B2 误当成跨档节点引用改写成
-  // =udd.ref-docs.Sheet1.B2，导致保存后内嵌引用全部失效。
+  // 表格/单元格引用由 sheets.xlsx（本档）或 ref-sheets（跨档）承载，不参与节点前缀改写。
   if (parseSheetRef(refStr)) return refStr;
   const ref = parseRef(refStr);
   if (ref.isUddEmbed) return refStr; // 已是嵌入形态，避免重复加前缀
   if (!ref.docName) return refStr; // local ref, no change
-  // Rebuild with udd.ref-docs. prefix
-  let rebuilt = '=udd.ref-docs.' + ref.docName;
+  const key = keyResolver ? keyResolver.keyFor(ref.docName) : canonDocKey(ref.docName);
+  if (refs && !Object.prototype.hasOwnProperty.call(refs, key)) return refStr;
+  let rebuilt = '=udd.ref-docs.' + key;
   if (ref.nodePath) rebuilt += '.' + ref.nodePath;
   if (ref.field) rebuilt += '.' + ref.field;
   if (ref.slice) rebuilt += '(' + ref.slice[0] + ',' + ref.slice[1] + ')';
@@ -673,13 +782,16 @@ async function parseUDDBlob(blob) {
     embeddedMedia['udd.' + zipPath] = fileBlob;
   }
 
-  // Load embedded ref-docs — returned per-session
+  // Load embedded ref-docs — returned per-session。键统一为文件名（兼容旧文件里的路径键）。
   const embeddedRefDocs = {};
   const refDocsFile = zip.file('ref-docs.json');
   if (refDocsFile) {
     try {
       const refDocs = JSON.parse(await refDocsFile.async('string'));
-      Object.assign(embeddedRefDocs, refDocs);
+      for (const [name, docData] of Object.entries(refDocs || {})) {
+        const key = canonDocKey(name);
+        if (key && docData) embeddedRefDocs[key] = docData;
+      }
     } catch (e) {}
   }
 
@@ -691,8 +803,10 @@ async function parseUDDBlob(blob) {
   if (refSheetsFile) {
     try {
       const manifest = JSON.parse(await refSheetsFile.async('string'));
-      for (const [docName, entryName] of Object.entries(manifest || {})) {
-        if (!docName || !entryName) continue;
+      for (const [rawName, entryName] of Object.entries(manifest || {})) {
+        if (!rawName || !entryName) continue;
+        const docName = canonDocKey(rawName);
+        if (!docName) continue;
         const f = zip.file(entryName);
         if (!f) continue;
         const bin = await f.async('uint8array');

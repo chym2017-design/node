@@ -21,42 +21,55 @@ function isRef(value) {
   if (parseSheetRef(value)) return true;
   try {
     const r = parseRef(value);
-    // 嵌入引用：docKey 可能含点（文件名.udd / 路径），具体目标由 resolveRef
-    // 用 embeddedRefDocs 的键做最长匹配，这里只要求前缀后有内容即可。
+    // 嵌入引用：docKey 规范为文件相对路径（含 .udd），手写可省略扩展名；
+    // 具体目标由 resolveRef 用 embeddedRefDocs 的键定位。
     if (r.isUddEmbed) return !!(r.embedRest || '').length;
     return !!r.nodePath;
   } catch (e) { return false; }
 }
 
-// 解析单元格引用（本档 / 跨档），统一返回 {docName, sheetName, addr} 或 null。
-//   本档:  =Sheet1.A1                       → {docName: null, sheetName: 'Sheet1', addr: 'A1'}
-//   跨档:  =path/file.udd.Sheet1.A1          → {docName: 'path/file.udd', sheetName: 'Sheet1', addr: 'A1'}
-//   跨档:  =D:/x/file.udd.Sheet1.A1          → 同上（绝对路径）
+// 解析单元格引用（本档 / 跨档实时 / 嵌入快照），统一返回 {docName, sheetName, addr, isEmbed} 或 null。
+//   本档:        =Sheet1.A1                          → {docName: null, ...}
+//   跨档实时:    =path/file.udd.Sheet1.A1             → {docName: 'path/file.udd', ...}
+//   嵌入快照:    =udd.ref-sheets.file.udd.Sheet1.A1   → {docName: 'file.udd', isEmbed: true}
 // 单元格区间 (A1:B2) 不在这里处理；那是 `{{"table":"..."}}` 媒体语义，由 parseTableRef 负责。
-// 嵌入快照语法（与节点引用一致）：=udd.ref-docs.<docKey>.Sheet1.A1 → isEmbed=true
 function parseSheetRef(refStr) {
   if (typeof refStr !== 'string' || refStr.length < 2 || refStr[0] !== '=') return null;
   let body = refStr.slice(1);
   let isEmbed = false;
-  if (body.startsWith(REF_UDD_EMBED_PREFIX)) {
+  if (body.startsWith(REF_SHEETS_EMBED_PREFIX)) {
     isEmbed = true;
-    body = body.slice(REF_UDD_EMBED_PREFIX.length);
+    body = body.slice(REF_SHEETS_EMBED_PREFIX.length);
+  } else if (body.startsWith(REF_UDD_EMBED_PREFIX)) {
+    // 旧版把表格引用也写成 udd.ref-docs.；新格式按数据类型分前缀，不再接受。
+    return null;
   }
-  // 跨档：检测 .udd. 边界，前为 docName，后为 SheetName.Addr
-  const uddPos = body.indexOf('.udd.');
-  if (uddPos > 0) {
-    const docName = body.slice(0, uddPos) + '.udd';
-    const after = body.slice(uddPos + 5);
-    const m = after.match(/^([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/);
-    if (m && !/^t\d+$/.test(m[1])) {
-      return { docName, sheetName: m[1], addr: m[2], isEmbed };
+  const cellTail = /^([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/;
+  // 规范跨档：<docKey>.udd.<Sheet>.<Addr>（.udd 不区分大小写，Sheet/Addr 仍严格）
+  const um = /^(.*\.udd)\.(.*)$/i.exec(body);
+  if (um) {
+    const tm = um[2].match(cellTail);
+    if (tm && !/^t\d+$/.test(tm[1])) {
+      return {
+        docName: isEmbed ? canonDocKey(um[1]) : um[1],
+        sheetName: tm[1],
+        addr: tm[2],
+        isEmbed
+      };
     }
     return null;
   }
   // 本档：SheetName.Addr，且 SheetName 必须以拉丁字母开头（与中文节点路径区分）
-  const m = body.match(/^([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/);
-  if (m && !/^t\d+$/.test(m[1])) {
-    return { docName: null, sheetName: m[1], addr: m[2], isEmbed };
+  const lm = body.match(cellTail);
+  if (lm && !/^t\d+$/.test(lm[1])) {
+    return { docName: null, sheetName: lm[1], addr: lm[2], isEmbed };
+  }
+  // 嵌入写法允许手写时省略 .udd：<docKey>.<Sheet>.<Addr>
+  if (isEmbed) {
+    const em = /^(.*)\.([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/.exec(body);
+    if (em && em[1] && !/^t\d+$/.test(em[2])) {
+      return { docName: canonDocKey(em[1]), sheetName: em[2], addr: em[3], isEmbed };
+    }
   }
   return null;
 }
@@ -225,7 +238,143 @@ const REF_MATCH_RE = /\.match\(\/(.+?)\/([gimsuy]*)\)\.\[(\d+)\]$/;
 const REF_SLICE_RE = /\((\d+),(\d+)\)$/;
 const REF_TNODE_RE = /^t\d+-\d+$/;
 const REF_UDD_EMBED_PREFIX = 'udd.ref-docs.';
+const REF_SHEETS_EMBED_PREFIX = 'udd.ref-sheets.';
 const _parseRefCache = new Map();
+
+// —— 路径工具（浏览器端，不依赖 Node path）——
+// 统一分隔符、折叠 ./ 与 ..；保留盘符/UNC/绝对路径形态。
+function uddNormalizePath(p) {
+  if (typeof p !== 'string') return '';
+  let s = p.trim().replace(/\\/g, '/');
+  if (!s) return '';
+  const unc = s.startsWith('//');
+  if (unc) s = s.slice(2);
+  const dm = /^([A-Za-z]:)(\/|$)/.exec(s);
+  const drive = dm ? dm[1] : '';
+  if (drive) s = s.slice(drive.length);
+  const abs = s.startsWith('/');
+  const out = [];
+  for (const part of s.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (out.length && out[out.length - 1] !== '..') out.pop();
+      else if (!abs && !drive && !unc) out.push('..');
+    } else {
+      out.push(part);
+    }
+  }
+  const body = out.join('/');
+  if (unc) return '//' + body;
+  if (drive) return drive + '/' + body;
+  if (abs) return '/' + body;
+  return body;
+}
+
+function uddDirname(p) {
+  const s = uddNormalizePath(p);
+  if (!s) return '';
+  const i = s.lastIndexOf('/');
+  if (i < 0) return '';
+  if (i === 0) return '/';
+  const head = s.slice(0, i);
+  return /^[A-Za-z]:$/.test(head) ? head + '/' : head;
+}
+
+function uddBasename(p) {
+  const s = uddNormalizePath(p);
+  if (!s) return '';
+  const i = s.lastIndexOf('/');
+  return i < 0 ? s : s.slice(i + 1);
+}
+
+// 从 fromDir 到 toPath 的相对路径；跨盘符/形态不一致返回 ''。
+function uddRelativePath(fromDir, toPath) {
+  const from = uddNormalizePath(fromDir);
+  const to = uddNormalizePath(toPath);
+  if (!from || !to) return '';
+  const fd = (/^([A-Za-z]):/.exec(from) || [])[1] || '';
+  const td = (/^([A-Za-z]):/.exec(to) || [])[1] || '';
+  if (fd.toLowerCase() !== td.toLowerCase()) return '';
+  const fu = from.startsWith('//'), tu = to.startsWith('//');
+  if (fu !== tu) return '';
+  const fa = fu || !!fd || from.startsWith('/');
+  const ta = tu || !!td || to.startsWith('/');
+  if (fa !== ta) return '';
+  const strip = (s) => s.replace(/^\/\//, '').replace(/^[A-Za-z]:/, '').replace(/^\//, '');
+  const a = strip(from).split('/').filter(Boolean);
+  const b = strip(to).split('/').filter(Boolean);
+  let i = 0;
+  while (i < a.length && i < b.length && a[i].toLowerCase() === b[i].toLowerCase()) i++;
+  const up = a.length - i;
+  const down = b.slice(i);
+  if (!up && !down.length) return '.';
+  return [...Array(up).fill('..'), ...down].join('/');
+}
+
+// 被引文档的规范键：保留相对/绝对路径结构（不再只取文件名），
+// 无 .udd/.json 扩展名的最后一段补 .udd。
+function canonDocKey(name) {
+  if (typeof name !== 'string') return '';
+  let s = uddNormalizePath(name);
+  if (!s) return '';
+  const i = s.lastIndexOf('/');
+  const base = i < 0 ? s : s.slice(i + 1);
+  if (!base) return s;
+  if (!/\.(udd|json)$/i.test(base)) {
+    s = (i < 0 ? '' : s.slice(0, i + 1)) + base + '.udd';
+  }
+  return s;
+}
+
+// 在 { 键: 数据 } 字典里按键查找（先精确，再忽略大小写）。
+// 最后一次兜底：如果整个字典里只有一份同名文件，允许按 basename 命中
+// （实时写法与嵌入键锚点不同时仍能取到快照；同名多份则放弃，避免串数据）。
+function _lookupDocByKey(map, docName) {
+  if (!map || !docName) return null;
+  const key = canonDocKey(docName);
+  if (!key) return null;
+  if (Object.prototype.hasOwnProperty.call(map, key)) return { key, value: map[key] };
+  const lower = key.toLowerCase();
+  for (const k of Object.keys(map)) {
+    if (k && k.toLowerCase() === lower) return { key: k, value: map[k] };
+  }
+  // 仅当引用里只写了文件名（没有目录）时才允许 basename 兜底：
+  // 显式写了 A/x.udd 就绝不能命中 B/x.udd；且整个字典只有一份同名文件才命中。
+  if (key !== uddBasename(key)) return null;
+  const base = uddBasename(key).toLowerCase();
+  let found = null;
+  for (const k of Object.keys(map)) {
+    if (uddBasename(k).toLowerCase() === base) {
+      if (found) return null;
+      found = k;
+    }
+  }
+  return found ? { key: found, value: map[found] } : null;
+}
+
+// 在嵌入引用的剩余串里定位文档键并切出节点部分。
+// 规范写法 <key>.udd.<rest>；手写时允许省略 .udd（只在已知键上做精确前缀匹配）。
+function _matchEmbedRest(docs, rest) {
+  if (!docs || !rest) return null;
+  const um = /^(.*\.udd)\.(.*)$/i.exec(rest);
+  if (um) {
+    const hit = _lookupDocByKey(docs, um[1]);
+    return hit ? { key: hit.key, sub: um[2] } : null;
+  }
+  let best = null;
+  for (const k of Object.keys(docs)) {
+    const cands = /\.udd$/i.test(k) ? [k, k.slice(0, -4)] : [k];
+    for (const c of cands) {
+      if (!c) continue;
+      if (rest === c || rest.startsWith(c + '.')) {
+        if (!best || c.length > best.cand.length) {
+          best = { key: k, cand: c, sub: rest === c ? '' : rest.slice(c.length + 1) };
+        }
+      }
+    }
+  }
+  return best;
+}
 
 // 把 work 字符串（已经剥掉 docName 部分）解析成 { nodePath, field }，写入 result。
 // 也兼容旧语法：当 result.docName 还是 null、首段非 tNode 时把首段当 docName。
@@ -296,17 +445,15 @@ function parseRef(refStr) {
   // —— 三种形态分发，避免每次都 split + 循环找 udd 段 ——
 
   // (1) 嵌入引用：udd.ref-docs.<docKey>.<rest>
-  //     docKey 可能本身含点：裸名 / 名字.udd / 绝对路径 / 路径.udd。
-  //     这里先识别 .udd 边界（能确定 nodePath，供 isRef / 渲染判定）；
-  //     找不到 .udd 的形态保留 embedRest，由 resolveRef 用 embeddedRefDocs 键最长匹配。
+  //     docKey 规范形态是文件名（含 .udd）；也兼容手写时省略 .udd（交给 resolveRef 按键匹配）。
   if (raw.startsWith(REF_UDD_EMBED_PREFIX)) {
     result.isUddEmbed = true;
     const rest = raw.slice(REF_UDD_EMBED_PREFIX.length);
     result.embedRest = rest;
-    const uddPos = rest.indexOf('.udd.');
-    if (uddPos >= 0) {
-      result.docName = rest.slice(0, uddPos + 4); // "...文件名.udd"
-      _parseRefRest(result, rest.slice(uddPos + 5));
+    const um = /^(.*\.udd)\.(.*)$/i.exec(rest);
+    if (um) {
+      result.docName = canonDocKey(um[1]);
+      _parseRefRest(result, um[2]);
     } else {
       _parseRefRest(result, rest);
     }
@@ -344,8 +491,8 @@ function nodeToText(node) {
 function resolveRef(data, refStr) {
   if (!isRef(refStr)) return refStr;
 
-  // Sheet reference: =Sheet1.B2 (本档) 或 =doc.udd.Sheet1.B2 (跨档实时)
-  //   嵌入快照语法：=udd.ref-docs.doc.udd.Sheet1.B2（sr.isEmbed，只读内嵌工作簿）
+  // Sheet reference: =Sheet1.B2 (本档) / =doc.udd.Sheet1.B2 (跨档实时)
+  //   嵌入快照：=udd.ref-sheets.doc.udd.Sheet1.B2（sr.isEmbed，只读内嵌工作簿）
   const sr = parseSheetRef(refStr);
   if (sr) {
     if (sr.docName) {
@@ -400,52 +547,22 @@ function resolveRef(data, refStr) {
 
   // --- Lookup order ---
 
-  // 1. 嵌入引用 (udd.ref-docs.xxx)：从当前文件的 ref-docs.json（session.embeddedRefDocs）读取。
-  //    docKey 可能是 裸名 / 名字.udd / 绝对路径 / 路径.udd —— 用键最长匹配确定边界。
+  // 1. 嵌入引用 (udd.ref-docs.xxx)：只读当前文件的 ref-docs.json（session.embeddedRefDocs）。
+  //    键 = 被引文档的文件名（含 .udd）；手写时允许省略 .udd。
   if (ref.isUddEmbed) {
     const session = (typeof app !== 'undefined' && app._activeSession) || null;
     const docs = (session && session.embeddedRefDocs) || {};
     const rest = ref.embedRest || refStr.slice(1 + REF_UDD_EMBED_PREFIX.length);
-    const parsedRemainder = ref.nodePath
-      ? { docName: null, nodePath: ref.nodePath, field: ref.field, slice: ref.slice, matchExpr: ref.matchExpr }
-      : null;
-    // ① docName 直接命中（parseRef 已从 .udd 边界解析出完整 docName）
-    if (ref.docName && docs[ref.docName] && parsedRemainder) {
-      return _resolveLocalRef(docs[ref.docName], parsedRemainder);
-    }
-    // ② docName 去掉 .udd 后的裸名命中（数据键常是裸名）
-    if (ref.docName && /\.udd$/i.test(ref.docName) && parsedRemainder) {
-      const bare = ref.docName.replace(/\.udd$/i, '');
-      if (docs[bare]) return _resolveLocalRef(docs[bare], parsedRemainder);
-    }
-    // ③ 键最长前缀匹配（裸键引用 / 路径键 / 混合形态）
-    let bestKey = null;
-    for (const k of Object.keys(docs)) {
-      if (!k) continue;
-      if (rest === k || rest.startsWith(k + '.')) {
-        if (!bestKey || k.length > bestKey.length) bestKey = k;
-      }
-    }
-    if (bestKey) {
-      const sub = rest.slice(bestKey.length + 1);
-      return _resolveLocalRef(docs[bestKey], _parseRefRemainder(sub));
-    }
-    // 历史数据兼容：旧版本保存时把本档表格引用误改写为 =udd.ref-docs.Sheet1.B2，
-    // 这里按本档单元格引用恢复（新版本保存已不再改写表格引用）。
-    const legacySheet = parseSheetRef('=' + rest);
-    if (legacySheet && !legacySheet.docName) {
-      const wb = typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook;
-      const ws = wb && wb.Sheets[legacySheet.sheetName];
-      if (!ws) return '#REF!';
-      const cell = ws[legacySheet.addr];
-      return cell ? String(cell.w || (cell.v !== undefined ? cell.v : '')) : '';
+    const match = _matchEmbedRest(docs, rest);
+    if (match) {
+      return _resolveLocalRef(docs[match.key], _parseRefRemainder(match.sub));
     }
     if (Object.keys(docs).length === 0 && typeof app !== 'undefined' && app._ensureEmbeddedMediaLoaded) {
       // 嵌入引用数据尚未懒加载：触发一次加载（完成后 idle 重渲染）
       app._ensureEmbeddedMediaLoaded().catch(() => {});
       return '#LOADING...';
     }
-    // 没有匹配的嵌入文档，也不是本档单元格引用：保留原文显示，
+    // 没有匹配的嵌入文档：保留原文显示，
     // 避免把文档里的语法示例（如 {{=udd.ref-docs.路径/文件名.udd.t1-1.content}}）变成 #REF!。
     return refStr;
   }
@@ -693,6 +810,9 @@ function findNodeRecursive(obj, targetKey) {
 }
 
 const _refDocCache = {};
+// docName（引用里写的形态）-> 实际命中的绝对路径。
+// 保存「嵌入引用」时用它计算仓库/当前文档相对的键，避免不同目录同名文件互相覆盖。
+const _refDocResolvedPaths = Object.create(null);
 // 跨文档表格用：docName -> 已 XLSX.read 后的 workbook（或 null 表示已尝试但无 sheets.xlsx）。
 // 与 _refDocCache 解耦，避免一次表格请求触发整个 ref 解析路径，且让多次 buildInlineTable 命中缓存。
 const _refDocSheets = {};
@@ -701,15 +821,27 @@ const _refDocSheetBins = {};
 // 标记某 docName 的跨文档 sheets 正在异步加载，避免并发重复 fetch。
 const _refDocSheetsLoading = {};
 
+// 取某个引用名实际命中的绝对路径（忽略大小写）。
+function getRefDocResolvedPath(docName) {
+  if (!docName) return '';
+  if (_refDocResolvedPaths[docName]) return _refDocResolvedPaths[docName];
+  const lower = String(docName).toLowerCase();
+  for (const k of Object.keys(_refDocResolvedPaths)) {
+    if (k.toLowerCase() === lower) return _refDocResolvedPaths[k];
+  }
+  return '';
+}
+
 // 当前会话自带的嵌入工作簿（.udd 内的 ref-sheets.json，打开时解析）
 function _sessionEmbeddedSheets() {
   return (typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedSheets) || null;
 }
 
-// 取当前文件自带的嵌入工作簿（快照）。只有显式 udd.ref-docs. 语法或实时源缺失时才使用。
+// 取当前文件自带的嵌入工作簿（快照）。键为文档文件名，查找时自动忽略目录/大小写。
 function getEmbeddedWorkbook(docName) {
   const emb = _sessionEmbeddedSheets();
-  return (emb && docName && emb[docName]) || null;
+  const hit = _lookupDocByKey(emb, docName);
+  return hit ? hit.value : null;
 }
 
 // 同步获取跨文档 workbook（实时来源：仓库缓存）。嵌入快照请用 getEmbeddedWorkbook。
@@ -759,14 +891,15 @@ function isSheetRef(refStr) {
 }
 
 // 判定一个 ref 字符串是否需要异步加载才能完整解析（用来决定渲染时挂不挂 data-ref-async）。
-//   sheet ref：本档 ws 永远在内存中 → 不需要；跨档 ws 来自 _refDocSheets，可能尚未拉取 → 需要。
-//   node ref：跨档 / 嵌入 → 需要；本档 → 不需要。
+//   sheet ref：本档同步；实时跨档可能尚未拉取 → 需要；嵌入快照随文件加载 → 不需要。
+//   node ref：实时跨档 → 需要；嵌入 / 本档 → 不需要。
 function refNeedsAsyncLoad(refStr) {
   const sr = parseSheetRef(refStr);
-  if (sr) return !!sr.docName;
+  if (sr) return !!sr.docName && !sr.isEmbed;
   try {
     const r = parseRef(refStr);
-    return !!(r.docName || r.isUddEmbed);
+    if (r.isUddEmbed) return false;
+    return !!r.docName;
   } catch (e) { return false; }
 }
 
@@ -875,10 +1008,12 @@ async function _loadDocFromServer(docName) {
         const parsed = JSON.parse(text);
         // .json 文件没有 sheets.xlsx；标记 null 让后续 getCrossDocWorkbook 不再重复加载
         _refDocSheets[docName] = null;
+        _refDocResolvedPaths[docName] = filePath;
         return parsed;
       } else {
         const blob = await resp.blob();
         const result = await parseUDDBlob(blob);
+        _refDocResolvedPaths[docName] = filePath;
         // 顺手把 sheets.xlsx 解析成 workbook 缓存到 _refDocSheets，
         // 让 buildInlineTable 在跨文档表格场景下能直接命中。
         if (result && result.xlsxBin && typeof XLSX !== 'undefined') {
@@ -1266,9 +1401,14 @@ function refreshRefs(viewEl, data) {
     const ref = (() => { try { return parseRef(refStr); } catch (e) { return null; } })();
     const sr = parseSheetRef(refStr);
     const cacheKeyDoc = sr ? sr.docName : (ref && ref.docName);
-    const wasCached = sr
-      ? (cacheKeyDoc ? !!getCrossDocWorkbook(cacheKeyDoc) : true)
-      : (cacheKeyDoc ? !!_refDocCache[cacheKeyDoc] : true);
+    // 嵌入快照（ref-docs / ref-sheets）随文件一次性加载，解析是同步且确定的：
+    // 视为已缓存，避免 wasCached=false → 重渲染 → 再次 wasCached=false 的死循环。
+    const isEmbed = (sr && sr.isEmbed) || (ref && ref.isUddEmbed);
+    const wasCached = isEmbed
+      ? true
+      : (sr
+        ? (cacheKeyDoc ? !!getCrossDocWorkbook(cacheKeyDoc) : true)
+        : (cacheKeyDoc ? !!_refDocCache[cacheKeyDoc] : true));
     const p = (async () => {
       let resolved = await resolveRefAsync(data, refStr);
       if (typeof resolved === 'string') {
