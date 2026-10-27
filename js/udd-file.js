@@ -337,8 +337,12 @@ async function createUDDBlob(data, opts = {}) {
     // 保存时还原为 =Sheet1.B2（渲染期的自愈只影响显示，这里让文件本身也变干净）。
     _repairLegacyEmbeddedSheetRefs(saveData, refs);
     _embedRefsInline(saveData);
-    // 跨文档表格数据：被引用文档的 sheets.xlsx 一并打包（离线/跨目录也能出表）
-    try { await _embedCrossDocSheets(saveData, zip); } catch (e) { /* skip */ }
+    // 跨文档表格数据：被引用文档的 sheets.xlsx 一并打包（离线/跨目录也能出表），
+    // 并把成功嵌入的引用改写成显式 udd.ref-docs. 语法（与节点引用一致，消除歧义）。
+    try {
+      const embeddedDocs = await _embedCrossDocSheets(saveData, zip);
+      _prefixEmbeddedSheetRefs(saveData, embeddedDocs);
+    } catch (e) { /* skip */ }
   }
 
   const bottom = compressData(saveData);
@@ -439,9 +443,11 @@ function _collectCrossDocSheetNames(data) {
 }
 
 // 把内容引用到的跨文档工作簿打包进 zip：ref-sheets/N.xlsx + ref-sheets.json 清单
+// 返回成功嵌入的 docName 集合（用于把引用改写成显式 udd.ref-docs. 语法）。
 async function _embedCrossDocSheets(data, zip) {
   const names = _collectCrossDocSheetNames(data);
-  if (!names.length) return;
+  const embedded = new Set();
+  if (!names.length) return embedded;
   const session = (typeof app !== 'undefined' && app._activeSession) || null;
   const manifest = {};
   let idx = 0;
@@ -457,10 +463,57 @@ async function _embedCrossDocSheets(data, zip) {
     const entry = 'ref-sheets/' + (idx++) + '.xlsx';
     zip.file(entry, bin);
     manifest[name] = entry;
+    embedded.add(name);
   }
   if (Object.keys(manifest).length > 0) {
     zip.file('ref-sheets.json', JSON.stringify(manifest));
   }
+  return embedded;
+}
+
+// 把已成功嵌入的跨文档表格/单元格引用改写成显式快照语法（与节点引用 udd.ref-docs. 一致）：
+//   表格标签：{{"table":"doc.udd.Sheet1.A1:C3"}} → {{"table":"udd.ref-docs.doc.udd.Sheet1.A1:C3"}}
+//   单元格引用：=doc.udd.Sheet1.B2 → =udd.ref-docs.doc.udd.Sheet1.B2（含行内 {{=...}}）
+// 未成功嵌入的引用保持原样（继续按实时来源解析）。
+function _prefixEmbeddedSheetRefs(data, embeddedNames) {
+  if (!embeddedNames || !embeddedNames.size) return;
+  const tableValRe = /("table"\s*:\s*")([^"]+)(")/g;
+  const inlineRefRe = /\{\{(=[^}]+)\}\}/g;
+  const refWho = (refStr) => {
+    try {
+      const sr = parseSheetRef(refStr);
+      return (sr && sr.docName && !sr.isEmbed && embeddedNames.has(sr.docName)) ? '=udd.ref-docs.' + refStr.slice(1) : refStr;
+    } catch (e) { return refStr; }
+  };
+  const tableWho = (value) => {
+    try {
+      const tr = parseTableRef(value);
+      if (tr && tr.docName && !tr.isEmbed && embeddedNames.has(tr.docName)) return 'udd.ref-docs.' + value;
+    } catch (e) { /* skip */ }
+    return value;
+  };
+  const walk = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    for (const k of Object.keys(obj)) {
+      if (k === '_sheetRefs') continue;
+      const v = obj[k];
+      if (typeof v === 'string') {
+        let out = v;
+        if (out.indexOf('"table"') >= 0) {
+          tableValRe.lastIndex = 0;
+          out = out.replace(tableValRe, (full, pre, value, post) => pre + tableWho(value) + post);
+        }
+        if (isRef(out)) out = refWho(out);
+        if (out.indexOf('{{=') >= 0) {
+          out = out.replace(inlineRefRe, (full, refStr) => '{{' + refWho(refStr) + '}}');
+        }
+        obj[k] = out;
+      } else if (v && typeof v === 'object') {
+        walk(v);
+      }
+    }
+  };
+  walk(data);
 }
 
 // Rewrite cross-doc inline refs to udd.ref-docs. prefix in saveData clone

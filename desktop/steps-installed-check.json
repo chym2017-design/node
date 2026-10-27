@@ -1,0 +1,5 @@
+{
+  "steps": [
+    { "label": "open", "eval": "await app.openUddPath('C:/Users/cym/Desktop/未命名文档嵌入.udd'); await new Promise(r => setTimeout(r, 1500)); const tables = Array.from(document.querySelectorAll('#outline-view .inline-table')); return { opened: app.fileName, tables: tables.length, rows: tables[0] ? tables[0].querySelectorAll('tr').length : 0, cellRef: resolveRef(app.data, '=udd.ref-docs.测试文档1.udd.Sheet1.B2'), nodeRef: resolveRef(app.data, '=udd.ref-docs.测试文档1.udd.t1-1.content').slice(0, 16) };" }
+  ]
+}

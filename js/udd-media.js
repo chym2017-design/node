@@ -10,12 +10,22 @@ function parseMediaTag(tagContent) {
   catch (e) { return null; }
 }
 
-// Inline table: {{Sheet1.A1:C4}} 本档；{{路径/文件名.udd.Sheet1.A1:C4}} 跨档
+// Inline table: {{Sheet1.A1:C4}} 本档；{{路径/文件名.udd.Sheet1.A1:C4}} 跨档（实时）
+// 嵌入快照（与节点引用同语法）：{{udd.ref-docs.文件名.udd.Sheet1.A1:C4}}
+const TABLE_EMBED_PREFIX = 'udd.ref-docs.';
 function parseTableRef(tagContent) {
   // Match: prefix.A1:C4
   const m = tagContent.match(/^(.+)\.([A-Z]{1,3}\d+):([A-Z]{1,3}\d+)$/);
   if (!m) return null;
-  const prefix = m[1], startAddr = m[2], endAddr = m[3];
+  let prefix = m[1];
+  const startAddr = m[2], endAddr = m[3];
+
+  // 嵌入快照前缀：udd.ref-docs.<docKey>.<Sheet>.<A1:C4>
+  let isEmbed = false;
+  if (prefix.startsWith(TABLE_EMBED_PREFIX)) {
+    isEmbed = true;
+    prefix = prefix.slice(TABLE_EMBED_PREFIX.length);
+  }
 
   // 新语法：检测 ".udd." 段作为 docName 边界
   let docName = null, sheetName;
@@ -34,7 +44,7 @@ function parseTableRef(tagContent) {
       sheetName = prefix;
     }
   }
-  return { docName, sheetName, startAddr, endAddr };
+  return { docName, sheetName, startAddr, endAddr, isEmbed };
 }
 
 function renderInlineTable(container, ref) {
@@ -54,29 +64,49 @@ function buildInlineTable(ref) {
   let ws = null;
   let isCrossDoc = !!ref.docName;
   if (isCrossDoc) {
-    const wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(ref.docName) : null;
-    if (!wb) {
-      // 已确认加载不到（缓存 null）→ 静态"未找到"占位，不得再触发加载/重渲染，
-      // 否则 占位→渲染→占位 会形成每秒一次的重渲染死循环（表现为整页卡顿、点击丢失）。
-      const resolved = (typeof isCrossDocResolved === 'function') ? isCrossDocResolved(ref.docName) : false;
-      if (resolved) {
-        const placeholder = document.createElement('span');
-        placeholder.className = 'ref-error';
-        placeholder.textContent = '跨文档表格未找到 (' + ref.docName + ' / ' + ref.sheetName + ')';
-        return placeholder;
+    // 语义：
+    //   udd.ref-docs.<doc>....  → 明确使用本文件内的嵌入快照（缺失即报嵌入缺失，不查仓库）
+    //   <doc>.udd....（旧写法） → 使用仓库/目录里的实时文档，找不到时才回退到内嵌快照
+    const embWb = (typeof getEmbeddedWorkbook === 'function') ? getEmbeddedWorkbook(ref.docName) : null;
+    let wb = null;
+    if (ref.isEmbed) {
+      if (!embWb) {
+        const missing = document.createElement('span');
+        missing.className = 'ref-error';
+        missing.textContent = '嵌入式表格缺失 (' + ref.docName + ' / ' + ref.sheetName + ')';
+        return missing;
       }
-      // 真正首次加载：触发异步加载；完成后让当前视图重渲染（命中 _refDocSheets 后即可正常出表）。
-      if (typeof loadCrossDocSheetsAsync === 'function') {
-        loadCrossDocSheetsAsync(ref.docName, (wbLoaded) => {
-          if (wbLoaded && typeof app !== 'undefined' && app.renderCurrentView) {
-            requestAnimationFrame(() => app.renderCurrentView());
+      wb = embWb;
+    } else {
+      wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(ref.docName) : null;
+      if (!wb) {
+        // 已确认实时来源加载不到（缓存 null）→ 回退到内嵌快照；再无则静态"未找到"。
+        // 静态占位不得再触发加载/重渲染，否则 占位→渲染→占位 会形成每秒一次的重渲染死循环。
+        const resolved = (typeof isCrossDocResolved === 'function') ? isCrossDocResolved(ref.docName) : false;
+        if (resolved) {
+          if (embWb) {
+            wb = embWb;
+          } else {
+            const placeholder = document.createElement('span');
+            placeholder.className = 'ref-error';
+            placeholder.textContent = '跨文档表格未找到 (' + ref.docName + ' / ' + ref.sheetName + ')';
+            return placeholder;
           }
-        });
+        } else {
+          // 真正首次加载：触发异步加载；完成后让当前视图重渲染（命中 _refDocSheets 后即可正常出表）。
+          if (typeof loadCrossDocSheetsAsync === 'function') {
+            loadCrossDocSheetsAsync(ref.docName, (wbLoaded) => {
+              if (wbLoaded && typeof app !== 'undefined' && app.renderCurrentView) {
+                requestAnimationFrame(() => app.renderCurrentView());
+              }
+            });
+          }
+          const placeholder = document.createElement('span');
+          placeholder.className = 'ref-error';
+          placeholder.textContent = '跨文档表格加载中 (' + ref.docName + ' / ' + ref.sheetName + ')';
+          return placeholder;
+        }
       }
-      const placeholder = document.createElement('span');
-      placeholder.className = 'ref-error';
-      placeholder.textContent = '跨文档表格加载中 (' + ref.docName + ' / ' + ref.sheetName + ')';
-      return placeholder;
     }
     ws = wb.Sheets[ref.sheetName];
   } else if (typeof app !== 'undefined' && app.sheetView && app.sheetView.workbook) {

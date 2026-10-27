@@ -33,9 +33,15 @@ function isRef(value) {
 //   跨档:  =path/file.udd.Sheet1.A1          → {docName: 'path/file.udd', sheetName: 'Sheet1', addr: 'A1'}
 //   跨档:  =D:/x/file.udd.Sheet1.A1          → 同上（绝对路径）
 // 单元格区间 (A1:B2) 不在这里处理；那是 `{{"table":"..."}}` 媒体语义，由 parseTableRef 负责。
+// 嵌入快照语法（与节点引用一致）：=udd.ref-docs.<docKey>.Sheet1.A1 → isEmbed=true
 function parseSheetRef(refStr) {
   if (typeof refStr !== 'string' || refStr.length < 2 || refStr[0] !== '=') return null;
-  const body = refStr.slice(1);
+  let body = refStr.slice(1);
+  let isEmbed = false;
+  if (body.startsWith(REF_UDD_EMBED_PREFIX)) {
+    isEmbed = true;
+    body = body.slice(REF_UDD_EMBED_PREFIX.length);
+  }
   // 跨档：检测 .udd. 边界，前为 docName，后为 SheetName.Addr
   const uddPos = body.indexOf('.udd.');
   if (uddPos > 0) {
@@ -43,14 +49,14 @@ function parseSheetRef(refStr) {
     const after = body.slice(uddPos + 5);
     const m = after.match(/^([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/);
     if (m && !/^t\d+$/.test(m[1])) {
-      return { docName, sheetName: m[1], addr: m[2] };
+      return { docName, sheetName: m[1], addr: m[2], isEmbed };
     }
     return null;
   }
   // 本档：SheetName.Addr，且 SheetName 必须以拉丁字母开头（与中文节点路径区分）
   const m = body.match(/^([A-Za-z][A-Za-z0-9_]*)\.([A-Z]{1,3}\d{1,7})$/);
   if (m && !/^t\d+$/.test(m[1])) {
-    return { docName: null, sheetName: m[1], addr: m[2] };
+    return { docName: null, sheetName: m[1], addr: m[2], isEmbed };
   }
   return null;
 }
@@ -338,15 +344,32 @@ function nodeToText(node) {
 function resolveRef(data, refStr) {
   if (!isRef(refStr)) return refStr;
 
-  // Sheet reference: =Sheet1.B2 (本档) 或 =doc.udd.Sheet1.B2 (跨档)
+  // Sheet reference: =Sheet1.B2 (本档) 或 =doc.udd.Sheet1.B2 (跨档实时)
+  //   嵌入快照语法：=udd.ref-docs.doc.udd.Sheet1.B2（sr.isEmbed，只读内嵌工作簿）
   const sr = parseSheetRef(refStr);
   if (sr) {
     if (sr.docName) {
-      // 跨档单元格：从 _refDocSheets 同步取 workbook；未加载则触发懒加载，返回 #LOADING...
-      // 已确认加载不到（缓存 null）→ 直接 #REF!，不得再触发加载/重渲染（防死循环）
-      if (isCrossDocResolved(sr.docName) && !getCrossDocWorkbook(sr.docName)) return '#REF!';
+      if (sr.isEmbed) {
+        // 显式嵌入快照：只用当前文件自带的嵌入工作簿，缺失即 #REF!
+        const embWb = (typeof getEmbeddedWorkbook === 'function') ? getEmbeddedWorkbook(sr.docName) : null;
+        if (!embWb) return '#REF!';
+        const wsEmb = embWb.Sheets[sr.sheetName];
+        if (!wsEmb) return '#REF!';
+        const cellEmb = wsEmb[sr.addr];
+        return cellEmb ? String(cellEmb.w || (cellEmb.v !== undefined ? cellEmb.v : '')) : '';
+      }
+      // 实时跨档单元格：仓库缓存优先；未加载则触发懒加载，返回 #LOADING...；
+      // 已确认加载不到（缓存 null）→ 回退内嵌快照，再无则 #REF!（不得再触发加载/重渲染，防死循环）
       const wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(sr.docName) : null;
       if (!wb) {
+        if (isCrossDocResolved(sr.docName)) {
+          const embWb = (typeof getEmbeddedWorkbook === 'function') ? getEmbeddedWorkbook(sr.docName) : null;
+          if (!embWb) return '#REF!';
+          const wsEmb = embWb.Sheets[sr.sheetName];
+          if (!wsEmb) return '#REF!';
+          const cellEmb = wsEmb[sr.addr];
+          return cellEmb ? String(cellEmb.w || (cellEmb.v !== undefined ? cellEmb.v : '')) : '';
+        }
         if (typeof loadCrossDocSheetsAsync === 'function') {
           loadCrossDocSheetsAsync(sr.docName, () => {
             if (typeof app !== 'undefined' && app.renderCurrentViewIfIdle) {
@@ -683,34 +706,29 @@ function _sessionEmbeddedSheets() {
   return (typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedSheets) || null;
 }
 
-// 同步获取跨文档 workbook（已加载则返回，否则返回 null）。
-// 优先用当前文件自带的嵌入工作簿（离线可用），再退回仓库缓存。
+// 取当前文件自带的嵌入工作簿（快照）。只有显式 udd.ref-docs. 语法或实时源缺失时才使用。
+function getEmbeddedWorkbook(docName) {
+  const emb = _sessionEmbeddedSheets();
+  return (emb && docName && emb[docName]) || null;
+}
+
+// 同步获取跨文档 workbook（实时来源：仓库缓存）。嵌入快照请用 getEmbeddedWorkbook。
 function getCrossDocWorkbook(docName) {
   if (!docName) return null;
-  const emb = _sessionEmbeddedSheets();
-  if (emb && emb[docName]) return emb[docName];
   return _refDocSheets[docName] || null;
 }
 
-// 跨档表格是否已有"定论"：true = 已成功加载，或已确认加载不到（缓存 null）。
+// 跨档表格的实时来源是否已有"定论"：true = 已成功加载，或已确认加载不到（缓存 null）。
 // 用于区分"加载中"（该触发懒加载 + 完成后重渲染）和"确认缺失"（静态占位，
 // 绝不能再安排重渲染——否则占位→渲染→占位会形成每秒一次的死循环）。
 function isCrossDocResolved(docName) {
-  if (!docName) return false;
-  const emb = _sessionEmbeddedSheets();
-  if (emb && emb[docName]) return true;
-  return _refDocSheets[docName] !== undefined;
+  return !!docName && _refDocSheets[docName] !== undefined;
 }
 
 // 触发跨文档 sheets 的异步加载（懒加载）；加载完成后调用 onLoaded()，
 // 通常用于让占位元素重新渲染。同一 docName 多次触发只发起一次实际 fetch。
 function loadCrossDocSheetsAsync(docName, onLoaded) {
   if (!docName) return;
-  const emb = _sessionEmbeddedSheets();
-  if (emb && emb[docName]) {
-    if (typeof onLoaded === 'function') onLoaded(emb[docName]);
-    return;
-  }
   if (_refDocSheets[docName] !== undefined) {
     // 已经加载过（成功 workbook 或 null 失败），无需再 fetch
     if (typeof onLoaded === 'function') onLoaded(_refDocSheets[docName]);
@@ -758,20 +776,16 @@ function refNeedsAsyncLoad(refStr) {
 // ================================================================
 async function resolveRefAsync(data, refStr) {
   if (!isRef(refStr)) return refStr;
-  // Sheet ref（本档同步直接走；跨档先 await 加载，再同步取值）
+  // Sheet ref（本档/嵌入快照同步直接走；跨档实时先 await 加载，再同步取值含回退）
   const sr = parseSheetRef(refStr);
   if (sr) {
-    if (!sr.docName) return resolveRef(data, refStr);
-    let wb = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(sr.docName) : null;
-    if (!wb && typeof loadCrossDocSheetsAsync === 'function') {
+    if (!sr.docName || sr.isEmbed) return resolveRef(data, refStr);
+    const cached = (typeof getCrossDocWorkbook === 'function') ? getCrossDocWorkbook(sr.docName) : null;
+    if (!cached && typeof loadCrossDocSheetsAsync === 'function') {
       await new Promise(resolve => loadCrossDocSheetsAsync(sr.docName, resolve));
-      wb = getCrossDocWorkbook(sr.docName);
     }
-    if (!wb) return '#REF!';
-    const ws = wb.Sheets[sr.sheetName];
-    if (!ws) return '#REF!';
-    const cell = ws[sr.addr];
-    return cell ? String(cell.w || (cell.v !== undefined ? cell.v : '')) : '';
+    // 交给同步解析：命中实时缓存 → 取值；已确认缺失 → 回退内嵌快照；否则 #LOADING...
+    return resolveRef(data, refStr);
   }
   const ref = parseRef(refStr);
 

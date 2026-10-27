@@ -10,18 +10,18 @@
     "icon": "node build-icon.js",
     "start": "electron .",
     "pack": "node build-icon.js && electron-builder --win dir",
-    "dist": "node build-icon.js && electron-builder --win dir && node edit-exe.js && electron-builder --win nsis portable --prepackaged release17/win-unpacked"
+    "dist": "node build-icon.js && electron-builder --win dir && node edit-exe.js && electron-builder --win nsis portable --prepackaged release19/win-unpacked"
   },
   "devDependencies": {
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.udd.desktop",
+    "appId": "com.udd.desktop.v2",
     "productName": "UDD",
     "copyright": "Copyright © UDD",
     "directories": {
-      "output": "release17",
+      "output": "release19",
       "buildResources": "build"
     },
     "files": [
