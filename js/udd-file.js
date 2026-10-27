@@ -337,6 +337,8 @@ async function createUDDBlob(data, opts = {}) {
     // 保存时还原为 =Sheet1.B2（渲染期的自愈只影响显示，这里让文件本身也变干净）。
     _repairLegacyEmbeddedSheetRefs(saveData, refs);
     _embedRefsInline(saveData);
+    // 跨文档表格数据：被引用文档的 sheets.xlsx 一并打包（离线/跨目录也能出表）
+    try { await _embedCrossDocSheets(saveData, zip); } catch (e) { /* skip */ }
   }
 
   const bottom = compressData(saveData);
@@ -394,6 +396,71 @@ function _repairLegacyEmbeddedSheetRefs(data, refDocs) {
     }
   };
   walk(data);
+}
+
+// 收集内容中引用到的跨文档表格 docName：
+//   ① 表格标签 {{"table":"doc.udd.Sheet1.A1:C3"}} ② 跨档单元格引用 =doc.udd.Sheet1.B2（含行内形态）
+function _collectCrossDocSheetNames(data) {
+  const names = new Set();
+  const tableRe = /"table"\s*:\s*"([^"]+)"/g;
+  const inlineRefRe = /\{\{(=[^}]+)\}\}/g;
+  const addTable = (v) => {
+    tableRe.lastIndex = 0;
+    let m;
+    while ((m = tableRe.exec(v)) !== null) {
+      let tr = null;
+      try { tr = (typeof parseTableRef === 'function') ? parseTableRef(m[1]) : null; } catch (e) { tr = null; }
+      if (tr && tr.docName) names.add(tr.docName);
+    }
+  };
+  const addRef = (refStr) => {
+    try {
+      const sr = parseSheetRef(refStr);
+      if (sr && sr.docName) names.add(sr.docName);
+    } catch (e) { /* skip */ }
+  };
+  const walk = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (typeof v === 'string') {
+        if (v.indexOf('{{') >= 0) {
+          addTable(v);
+          v.replace(inlineRefRe, (full, refStr) => { addRef(refStr); return full; });
+        }
+        if (isRef(v)) addRef(v);
+      } else if (v && typeof v === 'object') {
+        walk(v);
+      }
+    }
+  };
+  walk(data);
+  return [...names];
+}
+
+// 把内容引用到的跨文档工作簿打包进 zip：ref-sheets/N.xlsx + ref-sheets.json 清单
+async function _embedCrossDocSheets(data, zip) {
+  const names = _collectCrossDocSheetNames(data);
+  if (!names.length) return;
+  const session = (typeof app !== 'undefined' && app._activeSession) || null;
+  const manifest = {};
+  let idx = 0;
+  for (const name of names) {
+    let bin = null;
+    if (session && session.embeddedSheetBins && session.embeddedSheetBins[name]) bin = session.embeddedSheetBins[name];
+    if (!bin && typeof _refDocSheetBins !== 'undefined' && _refDocSheetBins[name]) bin = _refDocSheetBins[name];
+    if (!bin && typeof _loadDocFromServer === 'function') {
+      try { await _loadDocFromServer(name); } catch (e) { /* skip */ }
+      if (typeof _refDocSheetBins !== 'undefined') bin = _refDocSheetBins[name] || null;
+    }
+    if (!bin) continue;
+    const entry = 'ref-sheets/' + (idx++) + '.xlsx';
+    zip.file(entry, bin);
+    manifest[name] = entry;
+  }
+  if (Object.keys(manifest).length > 0) {
+    zip.file('ref-sheets.json', JSON.stringify(manifest));
+  }
 }
 
 // Rewrite cross-doc inline refs to udd.ref-docs. prefix in saveData clone
@@ -563,7 +630,28 @@ async function parseUDDBlob(blob) {
     } catch (e) {}
   }
 
-  return { data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat };
+  // Load embedded cross-doc workbooks（ref-sheets.json: { docName: "ref-sheets/N.xlsx" }）
+  // 保存「嵌入引用」时连同跨文档表格数据一起打包，离线/跨目录也能出表。
+  const embeddedSheets = {};
+  const embeddedSheetBins = {};
+  const refSheetsFile = zip.file('ref-sheets.json');
+  if (refSheetsFile) {
+    try {
+      const manifest = JSON.parse(await refSheetsFile.async('string'));
+      for (const [docName, entryName] of Object.entries(manifest || {})) {
+        if (!docName || !entryName) continue;
+        const f = zip.file(entryName);
+        if (!f) continue;
+        const bin = await f.async('uint8array');
+        embeddedSheetBins[docName] = bin;
+        if (typeof XLSX !== 'undefined') {
+          try { embeddedSheets[docName] = XLSX.read(bin, { type: 'array' }); } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
+  return { data, embeddedMedia, embeddedRefDocs, embeddedSheets, embeddedSheetBins, xlsxBin, pptFormat };
 }
 
 // ================================================================

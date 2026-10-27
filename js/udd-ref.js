@@ -422,7 +422,9 @@ function resolveRef(data, refStr) {
       app._ensureEmbeddedMediaLoaded().catch(() => {});
       return '#LOADING...';
     }
-    return '#REF!';
+    // 没有匹配的嵌入文档，也不是本档单元格引用：保留原文显示，
+    // 避免把文档里的语法示例（如 {{=udd.ref-docs.路径/文件名.udd.t1-1.content}}）变成 #REF!。
+    return refStr;
   }
 
   // 2. 跨文档引用 (=docName.xxx): 需要异步加载
@@ -671,12 +673,22 @@ const _refDocCache = {};
 // 跨文档表格用：docName -> 已 XLSX.read 后的 workbook（或 null 表示已尝试但无 sheets.xlsx）。
 // 与 _refDocCache 解耦，避免一次表格请求触发整个 ref 解析路径，且让多次 buildInlineTable 命中缓存。
 const _refDocSheets = {};
+// docName -> 原始 sheets.xlsx 二进制（保存时「嵌入引用」要把跨文档工作簿写进 .udd）。
+const _refDocSheetBins = {};
 // 标记某 docName 的跨文档 sheets 正在异步加载，避免并发重复 fetch。
 const _refDocSheetsLoading = {};
 
+// 当前会话自带的嵌入工作簿（.udd 内的 ref-sheets.json，打开时解析）
+function _sessionEmbeddedSheets() {
+  return (typeof app !== 'undefined' && app._activeSession && app._activeSession.embeddedSheets) || null;
+}
+
 // 同步获取跨文档 workbook（已加载则返回，否则返回 null）。
+// 优先用当前文件自带的嵌入工作簿（离线可用），再退回仓库缓存。
 function getCrossDocWorkbook(docName) {
   if (!docName) return null;
+  const emb = _sessionEmbeddedSheets();
+  if (emb && emb[docName]) return emb[docName];
   return _refDocSheets[docName] || null;
 }
 
@@ -684,13 +696,21 @@ function getCrossDocWorkbook(docName) {
 // 用于区分"加载中"（该触发懒加载 + 完成后重渲染）和"确认缺失"（静态占位，
 // 绝不能再安排重渲染——否则占位→渲染→占位会形成每秒一次的死循环）。
 function isCrossDocResolved(docName) {
-  return !!docName && _refDocSheets[docName] !== undefined;
+  if (!docName) return false;
+  const emb = _sessionEmbeddedSheets();
+  if (emb && emb[docName]) return true;
+  return _refDocSheets[docName] !== undefined;
 }
 
 // 触发跨文档 sheets 的异步加载（懒加载）；加载完成后调用 onLoaded()，
 // 通常用于让占位元素重新渲染。同一 docName 多次触发只发起一次实际 fetch。
 function loadCrossDocSheetsAsync(docName, onLoaded) {
   if (!docName) return;
+  const emb = _sessionEmbeddedSheets();
+  if (emb && emb[docName]) {
+    if (typeof onLoaded === 'function') onLoaded(emb[docName]);
+    return;
+  }
   if (_refDocSheets[docName] !== undefined) {
     // 已经加载过（成功 workbook 或 null 失败），无需再 fetch
     if (typeof onLoaded === 'function') onLoaded(_refDocSheets[docName]);
@@ -850,6 +870,7 @@ async function _loadDocFromServer(docName) {
         if (result && result.xlsxBin && typeof XLSX !== 'undefined') {
           try {
             _refDocSheets[docName] = XLSX.read(result.xlsxBin, { type: 'array' });
+            _refDocSheetBins[docName] = result.xlsxBin; // 保存「嵌入引用」时复用原始二进制
           } catch (e) {
             _refDocSheets[docName] = null;
           }

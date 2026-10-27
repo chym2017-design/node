@@ -543,13 +543,13 @@ class App {
       try {
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(s.filePath));
         if (!resp.ok) continue;
-        let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
+        let data, embeddedMedia = {}, embeddedRefDocs = {}, embeddedSheets = {}, embeddedSheetBins = {}, xlsxBin = null, pptFormat = null;
         if (s.filePath.endsWith('.json')) {
           const text = await resp.text();
           data = JSON.parse(text);
         } else {
           const blob = await resp.blob();
-          ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
+          ({ data, embeddedMedia, embeddedRefDocs, embeddedSheets, embeddedSheetBins, xlsxBin, pptFormat } = await parseUDDBlob(blob));
         }
         // 用磁盘原始数据覆盖会话
         s.data = data;
@@ -557,6 +557,8 @@ class App {
         s.pptFormat = pptFormat || null;
         s.embeddedMedia = embeddedMedia || {};
         s.embeddedRefDocs = embeddedRefDocs || {};
+        s.embeddedSheets = embeddedSheets || {};
+        s.embeddedSheetBins = embeddedSheetBins || {};
         s.dirty = false; // 磁盘版本=已保存
         if (s.id === this.activeSessionId) {
           this._applySessionSheetState(s);
@@ -938,9 +940,11 @@ class App {
         if (resp.ok) blob = await resp.blob();
       }
       if (!blob) return;
-      const { embeddedMedia, embeddedRefDocs } = await parseUDDBlob(blob);
+      const { embeddedMedia, embeddedRefDocs, embeddedSheets, embeddedSheetBins } = await parseUDDBlob(blob);
       if (embeddedMedia) session.embeddedMedia = embeddedMedia; // keep for fileHandle fallback
       session.embeddedRefDocs = embeddedRefDocs || {};
+      session.embeddedSheets = embeddedSheets || {};
+      session.embeddedSheetBins = embeddedSheetBins || {};
       // 走 idle 路径：嵌入数据在用户敲字时加载完，不该打断输入
       this.renderCurrentViewIfIdle();
     } catch (e) { /* skip */ }
@@ -1097,10 +1101,10 @@ class App {
       try {
         const resp = await fetch(this.repoServerUrl + '/api/readfile?path=' + encodeURIComponent(c.path));
         if (!resp.ok) continue;
-        let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
+        let data, embeddedMedia = {}, embeddedRefDocs = {}, embeddedSheets = {}, embeddedSheetBins = {}, xlsxBin = null, pptFormat = null;
         if (c.isUdd) {
           const blob = await resp.blob();
-          ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
+          ({ data, embeddedMedia, embeddedRefDocs, embeddedSheets, embeddedSheetBins, xlsxBin, pptFormat } = await parseUDDBlob(blob));
         } else {
           const text = await resp.text();
           data = JSON.parse(text);
@@ -1110,6 +1114,8 @@ class App {
         if (this._activeSession) {
           this._activeSession.embeddedMedia = embeddedMedia || {};
           this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
+          this._activeSession.embeddedSheets = embeddedSheets || {};
+          this._activeSession.embeddedSheetBins = embeddedSheetBins || {};
         }
         this._updateSourceBtn();
         toast('已打开: ' + fileName);
@@ -2313,12 +2319,12 @@ ${clone.innerHTML}
       if (!file) return;
 
       let data;
-      let embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
+      let embeddedMedia = {}, embeddedRefDocs = {}, embeddedSheets = {}, embeddedSheetBins = {}, xlsxBin = null, pptFormat = null;
       if (file.name.endsWith('.json')) {
         const text = await file.text();
         data = JSON.parse(text);
       } else {
-        ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(file));
+        ({ data, embeddedMedia, embeddedRefDocs, embeddedSheets, embeddedSheetBins, xlsxBin, pptFormat } = await parseUDDBlob(file));
       }
 
       const name = file.name.replace(/\.(udd|json)$/i, '') || data.meta?.title || '未命名文档';
@@ -2327,6 +2333,8 @@ ${clone.innerHTML}
       if (this._activeSession) {
         this._activeSession.embeddedMedia = embeddedMedia;
         this._activeSession.embeddedRefDocs = embeddedRefDocs;
+        this._activeSession.embeddedSheets = embeddedSheets || {};
+        this._activeSession.embeddedSheetBins = embeddedSheetBins || {};
       }
       this._updateSourceBtn();
       toast('已打开: ' + file.name);
@@ -2343,12 +2351,12 @@ ${clone.innerHTML}
     const resp = await fetch(base + '/api/readfile?path=' + encodeURIComponent(filePath));
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const fileName = filePath.split(/[\\/]/).pop() || '文档';
-    let data, embeddedMedia = {}, embeddedRefDocs = {}, xlsxBin = null, pptFormat = null;
+    let data, embeddedMedia = {}, embeddedRefDocs = {}, embeddedSheets = {}, embeddedSheetBins = {}, xlsxBin = null, pptFormat = null;
     if (/\.json$/i.test(fileName)) {
       data = JSON.parse(await resp.text());
     } else {
       const blob = await resp.blob();
-      ({ data, embeddedMedia, embeddedRefDocs, xlsxBin, pptFormat } = await parseUDDBlob(blob));
+      ({ data, embeddedMedia, embeddedRefDocs, embeddedSheets, embeddedSheetBins, xlsxBin, pptFormat } = await parseUDDBlob(blob));
     }
     const name = fileName.replace(/\.(udd|json)$/i, '') || data.meta?.title || '未命名文档';
     // 已打开过的文件直接切过去
@@ -2362,6 +2370,8 @@ ${clone.innerHTML}
     if (this._activeSession) {
       this._activeSession.embeddedMedia = embeddedMedia || {};
       this._activeSession.embeddedRefDocs = embeddedRefDocs || {};
+      this._activeSession.embeddedSheets = embeddedSheets || {};
+      this._activeSession.embeddedSheetBins = embeddedSheetBins || {};
     }
     this._updateSourceBtn();
     toast('已打开: ' + fileName);
