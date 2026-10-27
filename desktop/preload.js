@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld('uddDesktop', {
   confirmSync: (message, detail) => ipcRenderer.sendSync('udd:confirm', { message, detail }),
   // 用户「文档」目录（仓库面板默认目录）
   getDocumentsDir: () => ipcRenderer.invoke('udd:get-documents-dir'),
+  // 原生打开对话框（返回完整路径数组；网页版 showOpenFilePicker 拿不到路径）
+  openFileDialog: () => ipcRenderer.invoke('udd:open-dialog'),
 });

@@ -405,6 +405,22 @@ ipcMain.handle('udd:get-documents-dir', () => {
   try { return app.getPath('documents'); } catch (e) { return ''; }
 });
 
+// 原生「打开」对话框：返回选中的完整路径（多选）
+ipcMain.handle('udd:open-dialog', async () => {
+  const opts = {
+    title: '打开 UDD 文档',
+    filters: [
+      { name: 'UDD 文档', extensions: ['udd', 'json'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+    properties: ['openFile', 'multiSelections'],
+  };
+  const r = (mainWindow && !mainWindow.isDestroyed())
+    ? await dialog.showOpenDialog(mainWindow, opts)
+    : await dialog.showOpenDialog(opts);
+  return r.canceled ? [] : r.filePaths;
+});
+
 // ---- 启动流程：先抢单实例管道（抢不到就把 .udd 转发给已有实例后退出） ----
 (async function bootstrap() {
   const files = collectUddArgs(process.argv);

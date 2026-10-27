@@ -60,6 +60,9 @@ class App {
     this.repoDir = null;
     this.repoServerUrl = '';
     this._repoFiles = [];
+    // 仓库位置跟随文件：本次运行是否已自动设置过 / 用户是否手动干预过仓库位置
+    this._repoDirAutoSet = false;
+    this._repoDirTouched = false;
 
     // Format switches
     // 大纲视图与文档视图对齐：默认全开，让 per-character range 样式（斜体/下划线/
@@ -2211,6 +2214,16 @@ ${clone.innerHTML}
 
   async openFile() {
     try {
+      // 桌面端：原生对话框（能拿到完整路径，支持多选），打开的文件走 openUddPath
+      // （session 绑定 filePath，Ctrl+S 直存原文件；首个文件自动设置仓库位置）。
+      if (window.uddDesktop && window.uddDesktop.openFileDialog) {
+        const paths = await window.uddDesktop.openFileDialog();
+        if (!paths || !paths.length) return;
+        for (const p of paths) {
+          try { await this.openUddPath(p); } catch (err) { toast('打开失败: ' + err.message); }
+        }
+        return;
+      }
       let file, handle = null;
       if (window.showOpenFilePicker) {
         const [h] = await window.showOpenFilePicker({
@@ -2258,7 +2271,8 @@ ${clone.innerHTML}
 
   // 通过本地服务器路径打开一个 .udd/.json 文件（Electron 双击文件 / 仓库双击共用）。
   // 打开后 session.filePath 指向磁盘文件，Ctrl+S 直接写回原文件。
-  async openUddPath(filePath) {
+  // opts.fromRepo: 从仓库面板双击打开时不自动改仓库位置（用户已手动选定位置）。
+  async openUddPath(filePath, opts = {}) {
     const base = this.repoServerUrl || window.location.origin;
     const resp = await fetch(base + '/api/readfile?path=' + encodeURIComponent(filePath));
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -2275,6 +2289,7 @@ ${clone.innerHTML}
     const existing = this.sessions.find(s => s.filePath === filePath);
     if (existing) {
       this.switchSession(existing.id);
+      this._maybeAutoSetRepoDir(filePath, opts);
       return existing;
     }
     this._addSessionAndSwitch(name, data, null, filePath, filePath, { xlsxBin, pptFormat });
@@ -2284,7 +2299,28 @@ ${clone.innerHTML}
     }
     this._updateSourceBtn();
     toast('已打开: ' + fileName);
+    this._maybeAutoSetRepoDir(filePath, opts);
     return this._activeSession;
+  }
+
+  // 仓库默认位置跟随文件：本次运行打开的第一个文件（带路径）把仓库面板位置
+  // 设为该文件所在文件夹。仅当：①本次运行尚未自动设置过；②用户本次没有手动
+  // 干预过仓库位置（输入目录/点上级/点目录导航）；③打开来源不是仓库面板。
+  // 结果写入 localStorage，下次启动（即使不打开文件）仓库停在上次位置。
+  _maybeAutoSetRepoDir(filePath, opts = {}) {
+    if (opts.fromRepo) return;
+    if (this._repoDirAutoSet || this._repoDirTouched) return;
+    const dir = String(filePath || '').replace(/[\\/][^\\/]+$/, '');
+    if (!dir || !/[\\/]/.test(dir)) return;
+    this._repoDirAutoSet = true;
+    if (this.repoDir === dir) return;
+    this.repoDir = dir;
+    try { localStorage.setItem('udd_repo_dir', dir); } catch (e) { /* 隐私模式等 */ }
+    // 仓库面板开着才立刻刷新（含同目录 .udd 预载）；没开着等打开面板时再渲染
+    const panel = document.getElementById('repo-panel');
+    if (panel && panel.classList.contains('active') && this.repoServerUrl) {
+      this._renderRepoList();
+    }
   }
 
   // Show save options dialog, returns {embedMedia, embedRefs} or null if cancelled
@@ -2538,6 +2574,7 @@ ${clone.innerHTML}
       const resp = await fetch(this.repoServerUrl + '/api/files?dir=' + encodeURIComponent(this.repoDir));
       const json = await resp.json();
       if (json.parent && json.parent !== this.repoDir) {
+        this._repoDirTouched = true;
         this.repoDir = json.parent;
         this._renderRepoList();
       }
@@ -2551,6 +2588,7 @@ ${clone.innerHTML}
   async repoPromptDir() {
     const newDir = await uddPrompt('输入目录路径:', this.repoDir || 'D:\\projects\\node');
     if (newDir) {
+      this._repoDirTouched = true; // 用户手动选定位置，首个文件不再自动覆盖
       this.repoDir = newDir;
       localStorage.setItem('udd_repo_dir', newDir);
       this._renderRepoList();
@@ -2629,6 +2667,7 @@ ${clone.innerHTML}
 
   _repoItemClick(item) {
     if (item.type === 'dir') {
+      this._repoDirTouched = true;
       this.repoDir = item.path;
       this._renderRepoList();
     }
@@ -2641,7 +2680,7 @@ ${clone.innerHTML}
     if (item.type === 'dir') return;
     if (item.ext === '.udd' || item.ext === '.json') {
       try {
-        await this.openUddPath(item.path);
+        await this.openUddPath(item.path, { fromRepo: true });
       } catch (e) {
         toast('打开失败: ' + e.message);
       }
