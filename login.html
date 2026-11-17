@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>登录 - UDD 统一数据展示系统</title>
+<style>
+  :root{
+    --blue:#2563eb; --blue-dark:#1d4ed8; --text:#0f172a; --muted:#64748b;
+    --line:#e2e8f0; --bg:#f1f5f9; --danger:#dc2626;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; display:flex; align-items:center; justify-content:center;
+    padding:24px; background:
+      radial-gradient(900px 500px at 12% -10%, rgba(37,99,235,.16), transparent 60%),
+      radial-gradient(700px 420px at 108% 112%, rgba(37,99,235,.12), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .card{
+    width:100%; max-width:420px; background:#fff; border:1px solid rgba(226,232,240,.9);
+    border-radius:20px; padding:34px 32px 28px;
+    box-shadow:0 24px 70px rgba(15,23,42,.14), 0 2px 8px rgba(15,23,42,.05);
+  }
+  .brand{display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:24px}
+  .logo{
+    width:64px; height:64px; border-radius:16px; background:var(--blue);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 10px 24px rgba(37,99,235,.35);
+  }
+  .logo svg{width:38px;height:38px}
+  h1{font-size:20px; line-height:1.3; margin:0; font-weight:650; letter-spacing:.2px}
+  .sub{font-size:13px; color:var(--muted); margin-top:2px}
+  .tabs{display:flex; background:#f1f5f9; border-radius:12px; padding:4px; margin-bottom:22px}
+  .tab{
+    flex:1; border:0; background:transparent; padding:9px 0; border-radius:9px;
+    font:inherit; font-size:14px; color:var(--muted); cursor:pointer; transition:.18s;
+  }
+  .tab.active{background:#fff; color:var(--text); font-weight:600; box-shadow:0 1px 4px rgba(15,23,42,.1)}
+  .field{margin-bottom:14px}
+  label{display:block; font-size:13px; color:#334155; margin-bottom:6px; font-weight:500}
+  input{
+    width:100%; padding:11px 13px; border:1px solid var(--line); border-radius:10px;
+    font:inherit; font-size:14px; color:var(--text); background:#fff; outline:none;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  input:focus{border-color:var(--blue); box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+  input::placeholder{color:#94a3b8}
+  .hint{font-size:12px; color:var(--muted); margin-top:6px}
+  .error{
+    display:none; margin:0 0 14px; padding:10px 12px; border-radius:10px;
+    background:#fef2f2; border:1px solid #fecaca; color:var(--danger); font-size:13px;
+    line-height:1.45; white-space:pre-wrap;
+  }
+  .error.show{display:block}
+  .submit{
+    width:100%; border:0; border-radius:11px; padding:12px 0; margin-top:6px;
+    background:var(--blue); color:#fff; font:inherit; font-size:15px; font-weight:600;
+    cursor:pointer; transition:background .15s, transform .05s;
+  }
+  .submit:hover{background:var(--blue-dark)}
+  .submit:active{transform:translateY(1px)}
+  .submit:disabled{opacity:.6; cursor:default}
+  .foot{margin-top:18px; text-align:center; font-size:12px; color:var(--muted); line-height:1.6}
+  .foot code{background:#f1f5f9; padding:1px 5px; border-radius:5px; font-size:11px}
+  @media (max-width:480px){
+    .card{padding:28px 22px 24px; border-radius:16px}
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M16 16v20a16 16 0 0 0 32 0V16" stroke="#fff" stroke-width="9" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1>UDD 统一数据展示系统</h1>
+      <div class="sub">一份数据，多种展示</div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" id="tab-login" role="tab" aria-selected="true">登录</button>
+      <button class="tab" id="tab-register" role="tab" aria-selected="false">注册</button>
+    </div>
+
+    <div class="error" id="error" role="alert"></div>
+
+    <form id="form" autocomplete="on" novalidate>
+      <div class="field">
+        <label for="username">用户名</label>
+        <input id="username" name="username" type="text" autocomplete="username"
+               placeholder="2–32 位，支持中文、字母、数字、_ -" maxlength="32" required>
+      </div>
+
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password"
+               placeholder="至少 8 位" maxlength="128" required>
+      </div>
+
+      <div class="field" id="confirm-field" hidden>
+        <label for="confirm">确认密码</label>
+        <input id="confirm" name="confirm" type="password" autocomplete="new-password"
+               placeholder="再输入一次密码" maxlength="128">
+      </div>
+
+      <div class="field" id="invite-field" hidden>
+        <label for="invite">邀请码</label>
+        <input id="invite" name="invite" type="text" autocomplete="one-time-code"
+               placeholder="向管理员获取" maxlength="64">
+        <div class="hint">注册需要有效的邀请码，每个邀请码只能使用一次。</div>
+      </div>
+
+      <button class="submit" id="submit" type="submit">登录</button>
+    </form>
+
+    <div class="foot">
+      注册账号会获得独立的文档空间；登录状态保持 30 天。<br>
+      桌面版直接打开本机文档，无需登录。
+    </div>
+  </main>
+
+<script>
+(function () {
+  var mode = 'login';
+  var $ = function (id) { return document.getElementById(id); };
+  var tabs = { login: $('tab-login'), register: $('tab-register') };
+  var form = $('form');
+  var errorBox = $('error');
+  var submitBtn = $('submit');
+  var confirmField = $('confirm-field');
+  var inviteField = $('invite-field');
+
+  function safeNext() {
+    try {
+      var next = new URLSearchParams(location.search).get('next') || '/';
+      if (next.charAt(0) !== '/' || next.charAt(1) === '/') return '/';
+      if (next.indexOf('/login') === 0) return '/';
+      return next;
+    } catch (e) { return '/'; }
+  }
+
+  function showError(msg) {
+    errorBox.textContent = msg || '';
+    errorBox.classList.toggle('show', !!msg);
+  }
+
+  function setMode(next) {
+    mode = next;
+    var isReg = mode === 'register';
+    tabs.login.classList.toggle('active', !isReg);
+    tabs.register.classList.toggle('active', isReg);
+    tabs.login.setAttribute('aria-selected', String(!isReg));
+    tabs.register.setAttribute('aria-selected', String(isReg));
+    confirmField.hidden = !isReg;
+    inviteField.hidden = !isReg;
+    $('password').setAttribute('autocomplete', isReg ? 'new-password' : 'current-password');
+    submitBtn.textContent = isReg ? '注册并登录' : '登录';
+    showError('');
+  }
+
+  tabs.login.addEventListener('click', function () { setMode('login'); });
+  tabs.register.addEventListener('click', function () { setMode('register'); });
+
+  // 同一浏览器切换账号：清掉上一个账号在 IndexedDB / localStorage 里的本地文档与会话，
+  // 否则新账号会看到旧账号的本地缓存（服务端文件本身是隔离的）。
+  function deleteDb(name) {
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish() { if (!done) { done = true; resolve(); } }
+      try {
+        var req = indexedDB.deleteDatabase(name);
+        req.onsuccess = finish;
+        req.onerror = finish;
+        req.onblocked = function () { setTimeout(finish, 1200); };
+      } catch (e) { finish(); }
+    });
+  }
+
+  async function clearSiteData() {
+    try {
+      if (indexedDB.databases) {
+        var dbs = await indexedDB.databases();
+        for (var i = 0; i < dbs.length; i++) {
+          if (dbs[i] && dbs[i].name) await deleteDb(dbs[i].name);
+        }
+      } else {
+        await deleteDb('udd-db');
+      }
+    } catch (e) { /* ignore */ }
+    try { localStorage.clear(); } catch (e) {}
+    try { sessionStorage.clear(); } catch (e) {}
+  }
+
+  async function prepareAccount(user) {
+    var prev = null;
+    try { prev = localStorage.getItem('udd_last_user'); } catch (e) {}
+    if (prev && prev !== user) await clearSiteData();
+    try { localStorage.setItem('udd_last_user', user); } catch (e) {}
+  }
+
+  function notifyTabs(user) {
+    try {
+      var bc = new BroadcastChannel('udd-auth');
+      bc.postMessage({ type: 'login', user: user });
+      bc.close();
+    } catch (e) { /* ignore */ }
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    showError('');
+
+    var username = $('username').value.trim();
+    var password = $('password').value;
+    var isReg = mode === 'register';
+
+    if (!username) return showError('请输入用户名');
+    if (!isReg && !password) return showError('请输入密码');
+    if (isReg) {
+      if (password.length < 8) return showError('密码至少 8 位');
+      if (password !== $('confirm').value) return showError('两次输入的密码不一致');
+      if (!$('invite').value.trim()) return showError('请输入邀请码');
+    }
+
+    var payload = { username: username, password: password };
+    if (isReg) payload.invite = $('invite').value.trim();
+
+    submitBtn.disabled = true;
+    var oldText = submitBtn.textContent;
+    submitBtn.textContent = isReg ? '正在注册…' : '正在登录…';
+
+    try {
+      var resp = await fetch('/api/auth/' + (isReg ? 'register' : 'login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      var data = {};
+      try { data = await resp.json(); } catch (e) {}
+      if (!resp.ok) {
+        showError(data.error || ('操作失败（HTTP ' + resp.status + '）'));
+        return;
+      }
+      await prepareAccount(data.user || username);
+      notifyTabs(data.user || username);
+      location.href = safeNext();
+    } catch (err) {
+      showError('网络错误：' + (err && err.message ? err.message : '请稍后重试'));
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = oldText;
+    }
+  });
+
+  setMode('login');
+  $('username').focus();
+})();
+</script>
+</body>
+</html>

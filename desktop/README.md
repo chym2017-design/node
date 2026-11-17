@@ -1,6 +1,7 @@
 # UDD 桌面版（Electron）
 
-把 UDD 网页应用打包成 Windows 桌面软件：双击即可打开，双击 `.udd` 文件自动用本软件打开。
+把 UDD 网页应用打包成桌面软件（Windows / macOS）：双击即可打开，双击 `.udd`
+文件自动用本软件打开。
 
 ## 目录结构
 
@@ -8,8 +9,9 @@
 desktop/
   main.js        Electron 主进程（内置服务器、单实例、.udd 文件打开、关联注册）
   preload.js     渲染进程桥接（contextBridge，暴露 window.uddDesktop）
-  build-icon.js  生成应用图标（纯 Node，无依赖）→ build/icon.png + icon.ico
-  edit-exe.js    打包后用 rcedit 给 UDD.exe 补图标/版本信息
+  build-icon.js  生成应用图标（纯 Node，无依赖）
+                 → build/icon.png + icon.ico；macOS 上额外生成 build/icon.icns
+  edit-exe.js    打包后用 rcedit 给 UDD.exe 补图标/版本信息（仅 Windows）
   package.json   electron-builder 配置
   build/         图标产物
   releaseN/      打包产物（git 忽略）
@@ -19,11 +21,11 @@ desktop/
 
 ```bash
 cd desktop
-npm install          # 首次；npm 需用系统 npm（本机 ~/bin/npm 包装器已损坏）
+npm install          # 首次
 npm start            # 开发模式运行
 ```
 
-注意：本机构建需设镜像环境变量（已写入 dist 流程之外，手动构建时执行）：
+网络较慢时用镜像：
 
 ```bash
 export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
@@ -31,6 +33,8 @@ export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-
 ```
 
 ## 打包
+
+### Windows
 
 ```bash
 npm run dist
@@ -43,6 +47,26 @@ npm run dist
 > winCodeSign 缓存包含 macOS 符号链接，非管理员解压必失败（本机实测），
 > 因此 `win.signAndEditExecutable: false` + 手动 rcedit。
 
+### macOS
+
+```bash
+npm run dist:mac          # Apple Silicon（arm64）→ dmg + zip
+npm run dist:mac:x64      # Intel Mac（x64）
+npm run pack:mac          # 只产出 release20/mac-arm64/UDD.app，便于本地调试
+```
+
+产物在 `desktop/release20/`：
+- `UDD-1.0.0-arm64.dmg` —— 拖进「应用程序」即可
+- `UDD-1.0.0-arm64-mac.zip` —— 解压后得到 UDD.app
+
+说明：
+- 默认 `mac.identity: null`，即本机构建**不签名/不公证**。自己构建自己用没问题；
+  分发给别人时对方首次打开需右键 →「打开」，或执行
+  `xattr -dr com.apple.quarantine /Applications/UDD.app`。
+- `.udd` 文件关联通过 `Info.plist`（CFBundleDocumentTypes + 导出的 UTI
+  `com.udd.document`）声明，双击文件由 macOS 的 `open-file` 事件交给应用打开。
+- 首次访问「文档」目录时 macOS 会弹 TCC 授权框（Info.plist 里已带用途说明）。
+
 ## 实现要点
 
 - **内置服务器**：主进程 fork 项目自带的 `server.js`（优先监听 127.0.0.1:47831，
@@ -52,14 +76,15 @@ npm run dist
 - **单实例 + .udd 转发**：不用 Electron 自带 requestSingleInstanceLock——Chromium
   的进程单例在 Windows 上无法序列化含中文的命令行（"Invalid format for start
   command"），双击中文文件名的 .udd 会把第二个实例挂死。改用命名管道
-  `\\.\pipe\udd-desktop-singleton-<user>`，第二个实例把 .udd 路径以 UTF-8 JSON
-  转发给首个实例后立即退出。
+  （Windows `\\.\pipe\udd-desktop-singleton-<user>`，macOS 用 userData 下的
+  Unix socket），第二个实例把 .udd 路径以 UTF-8 JSON 转发给首个实例后立即退出。
 - **页面就绪握手**：页面 init() 注册完 `udd:open-file` 监听后调
   `window.uddDesktop.notifyReady()`，主进程确认后才推送待打开文件，
   避免冷启动时消息早于监听器注册而丢失。
-- **.udd 文件关联**：打包版每次启动幂等检查/注册 HKCU 注册表（无需管理员，
-  免 UAC）；「工具」菜单可手动注册/取消（取消后写 flag 文件，不再自动注册）。
-  便携版用 `PORTABLE_EXECUTABLE_FILE`（原始 exe 路径）注册。
+- **.udd 文件关联**：Windows 打包版每次启动幂等检查/注册 HKCU 注册表（无需
+  管理员，免 UAC）；「工具」菜单可手动注册/取消。便携版用
+  `PORTABLE_EXECUTABLE_FILE`（原始 exe 路径）注册。macOS 由应用包内的
+  `Info.plist` 声明，系统 LaunchServices 负责关联。
 - **系统对话框兼容**：Electron 不支持 window.prompt/confirm。
   confirm 走 `uddConfirm()` → 主进程 `dialog.showMessageBoxSync`（同步 IPC）；
   prompt 走 `uddPrompt()` → 页面内模态输入框（桌面/浏览器通用）。
@@ -70,8 +95,16 @@ npm run dist
 
 ## 无界面自动化测试
 
+Windows：
+
 ```bash
 UDD.exe --hidden --remote-debugging-port=9222
+```
+
+macOS：
+
+```bash
+"release20/mac-arm64/UDD.app/Contents/MacOS/UDD" --hidden --remote-debugging-port=9222
 ```
 
 `--hidden` 不显示窗口、不抢焦点，配合 Chromium 远程调试端口即可用 CDP
@@ -80,6 +113,10 @@ UDD.exe --hidden --remote-debugging-port=9222
 
 ## 打开 .udd 的方式
 
-- 资源管理器双击 .udd →（关联已注册）唤起本应用打开
-- 应用已运行时再双击 → 第二实例转发路径给已有窗口并聚焦（不重复开窗）
-- 命令行 `UDD.exe 文件.udd`
+- 文件管理器/Finder 双击 .udd → 唤起本应用打开
+- 应用已运行时再双击 → 转发路径给已有窗口并聚焦（不重复开窗）
+- 命令行 `UDD.exe 文件.udd` / `open -a UDD 文件.udd`
+
+## 网页版 / 远程访问
+
+同一个 `server.js` 也能直接当网页服务器用，见项目根目录 `WEB.md`。

@@ -1,5 +1,6 @@
 // ================================================================
 //  生成 UDD 应用图标：build/icon.png (256x256) + build/icon.ico
+//  macOS 上额外生成 build/icon.icns（调用系统 iconutil）
 //  纯 Node 实现（zlib + 手写 PNG/ICO 封装），无外部依赖。
 //  图形：圆角蓝底 (#2563eb) + 白色几何 U 形（SDF 抗锯齿）。
 //  用法: node build-icon.js
@@ -7,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { execFileSync } = require('child_process');
 
 const SIZE = 256;
 const OUT_DIR = path.join(__dirname, 'build');
@@ -26,21 +28,22 @@ function sdBox(x, y, cx, cy, hw, hh) {
   return Math.hypot(ax, ay) + Math.min(Math.max(dx, dy), 0);
 }
 
-function render() {
-  const buf = Buffer.alloc(SIZE * SIZE * 4);
+function render(size) {
+  const s = size / 256;                 // 以 256 为设计基准等比缩放
+  const buf = Buffer.alloc(size * size * 4);
   const BG = [0x25, 0x63, 0xeb];   // 品牌蓝
   const FG = [0xff, 0xff, 0xff];   // 白
   // U 形参数：两根竖杠 + 下半圆弧带
-  const cx = 128, topY = 84, botY = 158;
-  const barOff = 52, barHalf = 15;
-  const ringR = barOff, ringHalf = 15;
+  const cx = 128 * s, topY = 84 * s, botY = 158 * s;
+  const barOff = 52 * s, barHalf = 15 * s;
+  const ringR = barOff, ringHalf = 15 * s;
 
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
       const px = x + 0.5, py = y + 0.5;
       let r = 0, g = 0, b = 0, a = 0;
       // 底板
-      const cbg = cov(sdRoundRect(px, py, 128, 128, 124, 124, 58));
+      const cbg = cov(sdRoundRect(px, py, 128 * s, 128 * s, 124 * s, 124 * s, 58 * s));
       if (cbg > 0) { r = BG[0]; g = BG[1]; b = BG[2]; a = cbg; }
       // U 形
       const dLeft = sdBox(px, py, cx - barOff, (topY + botY) / 2, barHalf, (botY - topY) / 2);
@@ -61,7 +64,7 @@ function render() {
           a = aOut;
         }
       }
-      const i = (y * SIZE + x) * 4;
+      const i = (y * size + x) * 4;
       buf[i] = Math.round(r); buf[i + 1] = Math.round(g);
       buf[i + 2] = Math.round(b); buf[i + 3] = Math.round(a * 255);
     }
@@ -131,8 +134,34 @@ function encodeICO(pngBuf) {
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
-const rgba = render();
-const png = encodePNG(rgba, SIZE);
+const png = encodePNG(render(SIZE), SIZE);
 fs.writeFileSync(path.join(OUT_DIR, 'icon.png'), png);
 fs.writeFileSync(path.join(OUT_DIR, 'icon.ico'), encodeICO(png));
 console.log('OK: build/icon.png (' + png.length + ' B), build/icon.ico');
+
+// ---------- macOS .icns（iconset 多尺寸 + 系统 iconutil） ----------
+function buildIcns() {
+  if (process.platform !== 'darwin') return;
+  const iconsetDir = path.join(OUT_DIR, 'icon.iconset');
+  const variants = [
+    ['icon_16x16.png', 16], ['icon_16x16@2x.png', 32],
+    ['icon_32x32.png', 32], ['icon_32x32@2x.png', 64],
+    ['icon_128x128.png', 128], ['icon_128x128@2x.png', 256],
+    ['icon_256x256.png', 256], ['icon_256x256@2x.png', 512],
+    ['icon_512x512.png', 512], ['icon_512x512@2x.png', 1024],
+  ];
+  try {
+    fs.rmSync(iconsetDir, { recursive: true, force: true });
+    fs.mkdirSync(iconsetDir, { recursive: true });
+    for (const [name, px] of variants) {
+      fs.writeFileSync(path.join(iconsetDir, name), encodePNG(render(px), px));
+    }
+    execFileSync('iconutil', ['-c', 'icns', iconsetDir, '-o', path.join(OUT_DIR, 'icon.icns')], { stdio: 'inherit' });
+    console.log('OK: build/icon.icns');
+  } catch (e) {
+    console.warn('跳过 icon.icns: ' + (e && e.message || e));
+  } finally {
+    fs.rmSync(iconsetDir, { recursive: true, force: true });
+  }
+}
+buildIcns();

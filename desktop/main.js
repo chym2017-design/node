@@ -29,6 +29,7 @@ let serverProc = null;
 let serverPort = 0;
 let mainWindow = null;
 let allowClose = false;
+let ownsSingleton = false;
 let rendererReady = false;  // 页面注册完 udd:open-file 监听器后置 true
 const pendingFiles = [];    // 待推送给页面的 .udd 路径
 
@@ -40,7 +41,26 @@ const SINGLETON_PIPE = process.platform === 'win32'
   ? '\\\\.\\pipe\\udd-desktop-singleton-' + (process.env.USERNAME || 'user')
   : path.join(app.getPath('userData'), 'singleton.sock');
 
-function tryBindSingleton() {
+// 进程被强杀后 Unix socket 文件会残留，下次 listen 会 EADDRINUSE。
+// 先探测文件后面是否真有实例：能连上说明另一个实例活着；连不上就是残留，删掉即可。
+function probeSingletonAlive() {
+  return new Promise(resolve => {
+    if (process.platform === 'win32') return resolve(true);
+    const sock = net.connect(SINGLETON_PIPE);
+    let done = false;
+    const finish = alive => {
+      if (done) return;
+      done = true;
+      try { sock.destroy(); } catch (_) {}
+      resolve(alive);
+    };
+    sock.once('connect', () => finish(true));
+    sock.once('error', () => finish(false));
+    setTimeout(() => finish(false), 800);
+  });
+}
+
+function tryBindSingleton(attempt = 0) {
   return new Promise(resolve => {
     const server = net.createServer(conn => {
       let buf = '';
@@ -65,7 +85,17 @@ function tryBindSingleton() {
         }
       });
     });
-    server.once('error', () => resolve(false));
+    server.once('error', err => {
+      if (process.platform !== 'win32' && attempt === 0 && err && err.code === 'EADDRINUSE') {
+        probeSingletonAlive().then(alive => {
+          if (alive) return resolve(false);
+          try { fs.unlinkSync(SINGLETON_PIPE); } catch (e) {}
+          tryBindSingleton(1).then(resolve);
+        });
+        return;
+      }
+      resolve(false);
+    });
     server.listen(SINGLETON_PIPE, () => resolve(true));
   });
 }
@@ -297,8 +327,17 @@ async function ensureUddAssociationOnStartup() {
 }
 
 async function setUddAssociation(register) {
+  if (process.platform === 'darwin') {
+    dialog.showMessageBox({
+      type: 'info',
+      message: register
+        ? 'macOS 版已在应用包中声明 .udd 文件类型：双击 .udd 即可用 UDD 打开。\n如果系统仍用别的程序打开，可在 Finder 里右键 .udd →「显示简介」→「打开方式」选择 UDD。'
+        : 'macOS 的文件关联由系统 LaunchServices 管理，不支持在应用内取消。可在 Finder 的「显示简介 → 打开方式」里改回其他程序。',
+    });
+    return;
+  }
   if (process.platform !== 'win32') {
-    dialog.showMessageBox({ type: 'info', message: '文件关联目前仅支持 Windows。' });
+    dialog.showMessageBox({ type: 'info', message: '文件关联目前仅支持 Windows / macOS。' });
     return;
   }
   let ok;
@@ -320,12 +359,31 @@ async function setUddAssociation(register) {
 }
 
 function buildMenu() {
-  const menu = Menu.buildFromTemplate([
+  const isMac = process.platform === 'darwin';
+  const template = [];
+
+  // macOS 要求第一个菜单是应用菜单（关于/隐藏/退出），否则 Cmd+Q 等行为不自然
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about', label: '关于 UDD' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏 UDD' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '显示全部' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出 UDD' },
+      ],
+    });
+  }
+
+  template.push(
     {
       label: '文件',
-      submenu: [
-        { role: 'quit', label: '退出' },
-      ],
+      submenu: isMac
+        ? [{ role: 'close', label: '关闭窗口' }]
+        : [{ role: 'quit', label: '退出' }],
     },
     {
       label: '编辑',
@@ -354,22 +412,29 @@ function buildMenu() {
         { label: '关联 .udd 文件（用 UDD 打开）', click: () => setUddAssociation(true) },
         { label: '取消 .udd 文件关联', click: () => setUddAssociation(false) },
       ],
-    },
-    {
-      label: '帮助',
-      submenu: [
-        {
-          label: '关于 UDD',
-          click: () => dialog.showMessageBox({
-            type: 'info',
-            title: '关于 UDD',
-            message: 'UDD - 统一数据展示系统',
-            detail: '一份数据，多种展示。\n桌面版 ' + app.getVersion() + '\nElectron ' + process.versions.electron,
-          }),
-        },
-      ],
-    },
-  ]);
+    }
+  );
+
+  if (isMac) {
+    template.push({ role: 'windowMenu', label: '窗口' });
+  }
+
+  template.push({
+    label: '帮助',
+    submenu: [
+      {
+        label: '关于 UDD',
+        click: () => dialog.showMessageBox({
+          type: 'info',
+          title: '关于 UDD',
+          message: 'UDD - 统一数据展示系统',
+          detail: '一份数据，多种展示。\n桌面版 ' + app.getVersion() + '\nElectron ' + process.versions.electron,
+        }),
+      },
+    ],
+  });
+
+  const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 }
 
@@ -425,12 +490,14 @@ ipcMain.handle('udd:open-dialog', async () => {
 (async function bootstrap() {
   const files = collectUddArgs(process.argv);
   const isFirst = await tryBindSingleton();
+  if (isFirst) ownsSingleton = true;
   if (!isFirst) {
     const sent = await forwardToFirstInstance(files);
     if (sent) { app.exit(0); return; }
     // 管道被占但握手失败（残留实例已死或外部进程占用）：再抢一次
     const retry = await tryBindSingleton();
     if (!retry) { app.exit(1); return; }
+    ownsSingleton = true;
   }
   await app.whenReady();
   try {
@@ -458,5 +525,8 @@ app.on('will-quit', () => {
   if (serverProc) {
     try { serverProc.kill(); } catch (_) {}
     serverProc = null;
+  }
+  if (ownsSingleton && process.platform !== 'win32') {
+    try { fs.unlinkSync(SINGLETON_PIPE); } catch (_) {}
   }
 });

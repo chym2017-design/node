@@ -149,7 +149,7 @@
     <!-- Repository panel (left) -->
     <div id="repo-panel">
       <div class="repo-header">
-        <span>仓库</span>
+        <span id="repo-title">仓库</span>
         <span style="display:flex;gap:4px;align-items:center">
           <button onclick="app.toggleRepo()" title="关闭">×</button>
         </span>
@@ -159,7 +159,8 @@
       </div>
       <div style="display:flex;align-items:center;border-bottom:1px solid var(--gray-100)">
         <div id="repo-path" onclick="app.repoPromptDir()" title="点击修改目录" style="flex:1"></div>
-        <button onclick="app.repoGoUp()" title="上级目录" style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:16px;padding:2px 6px">↑</button>
+        <button id="repo-new-folder" onclick="app.repoNewFolder()" title="在当前文件夹下新建文件夹" style="background:none;border:none;cursor:pointer;color:var(--gray-500);font-size:12px;padding:2px 6px;white-space:nowrap">＋文件夹</button>
+        <button id="repo-up" onclick="app.repoGoUp()" title="上级目录" style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:16px;padding:2px 6px">↑</button>
         <button onclick="app.repoRefresh()" title="刷新" style="background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:16px;padding:2px 6px">⟲</button>
       </div>
       <div id="repo-list"></div>

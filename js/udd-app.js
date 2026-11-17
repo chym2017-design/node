@@ -60,6 +60,8 @@ class App {
     this.repoDir = null;
     this.repoServerUrl = '';
     this._repoFiles = [];
+    // 多账号网页版：仓库就是当前账号的个人空间，不能浏览其它目录
+    this.personalSpace = false;
     // 仓库位置跟随文件：本次运行是否已自动设置过 / 用户是否手动干预过仓库位置
     this._repoDirAutoSet = false;
     this._repoDirTouched = false;
@@ -1632,6 +1634,7 @@ class App {
   async _showMediaPicker(nodePath) {
     const MEDIA_EXTS = ['.png','.jpg','.jpeg','.gif','.svg','.webp','.bmp','.mp4','.webm','.ogg','.mov','.avi','.mp3','.wav','.aac','.m4a','.flac'];
     let currentDir = this.repoDir || '';
+    let currentParent = '';
     let selectedItem = null;
 
     const mask = document.createElement('div');
@@ -1651,6 +1654,7 @@ class App {
     const okBtn = picker.querySelector('#mp-ok');
     const cancelBtn = picker.querySelector('#mp-cancel');
     const upBtn = picker.querySelector('#mp-up');
+    if (upBtn) upBtn.style.visibility = 'hidden';
 
     const loadDir = async (dir) => {
       currentDir = dir;
@@ -1663,6 +1667,8 @@ class App {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const json = await resp.json();
         currentDir = json.dir;
+        currentParent = json.parent || '';
+        if (upBtn) upBtn.style.visibility = (currentParent && currentParent !== currentDir) ? 'visible' : 'hidden';
         pathEl.textContent = json.dir;
         listEl.innerHTML = '';
         for (const item of json.items) {
@@ -1728,8 +1734,7 @@ class App {
     };
 
     upBtn.onclick = () => {
-      const parent = currentDir.replace(/[\\/][^\\/]+$/, '');
-      if (parent && parent !== currentDir) loadDir(parent);
+      if (currentParent && currentParent !== currentDir) loadDir(currentParent);
     };
     cancelBtn.onclick = () => mask.remove();
     okBtn.onclick = confirmSelection;
@@ -2448,6 +2453,164 @@ ${clone.innerHTML}
     this._renderOpenDocs();
   }
 
+  // 保存到服务器“我的空间”后，把会话绑定到该路径：后续 Ctrl+S 直接写回。
+  _applySavedPathName(filePath, fileName) {
+    const newName = String(fileName || '').replace(/\.udd$/i, '');
+    if (!newName) return;
+    this.fileName = newName;
+    if (this.data && this.data.meta) this.data.meta.title = newName;
+    const s = this._activeSession;
+    if (s) {
+      s.filePath = filePath;
+      s.fileHandle = null;
+      s.originPath = filePath;
+    }
+    const titleEl = document.getElementById('doc-title');
+    if (titleEl) titleEl.value = newName;
+    document.title = 'UDD - ' + newName;
+    this._renderOpenDocs();
+  }
+
+  // 网页版：在“我的空间”里选择文件夹和文件名。
+  // 返回 { dir, path, fileName }；取消返回 null。
+  async _pickSpaceTarget(defaultName) {
+    const base = this.repoServerUrl || window.location.origin;
+    let startDir = (this._activeSession && this._activeSession.filePath)
+      ? this._activeSession.filePath.replace(/[\\/][^\\/]+$/, '')
+      : (this.repoDir || '');
+    if (!startDir) {
+      try {
+        const r = await fetch(base + '/api/root');
+        if (r.ok) startDir = (await r.json()).root;
+      } catch (e) { /* ignore */ }
+    }
+    if (!startDir) { toast('无法连接个人空间'); return null; }
+
+    const defaultFile = (String(defaultName || '').trim() || '未命名文档').replace(/\.udd$/i, '') + '.udd';
+
+    return new Promise(resolve => {
+      const mask = document.createElement('div');
+      mask.id = 'space-picker-mask';
+      mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:9999;display:flex;align-items:center;justify-content:center';
+      const dlg = document.createElement('div');
+      dlg.id = 'space-picker';
+      dlg.style.cssText = 'background:#fff;border-radius:10px;width:520px;max-width:calc(100vw - 32px);max-height:calc(100vh - 80px);display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.22);overflow:hidden';
+      dlg.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #eee;font-weight:600;font-size:14px">
+          <span>保存到我的空间</span>
+          <button id="sp-close" style="background:none;border:none;font-size:18px;color:#999;cursor:pointer">×</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid #f1f1f1">
+          <button id="sp-up" title="上级目录" style="background:none;border:none;cursor:pointer;color:#888;font-size:16px">↑</button>
+          <span id="sp-path" style="flex:1;font-size:12px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <button id="sp-newdir" style="background:none;border:1px solid #ddd;border-radius:5px;padding:2px 8px;font-size:12px;color:#555;cursor:pointer">＋ 新建文件夹</button>
+        </div>
+        <div id="sp-list" style="flex:1;min-height:180px;max-height:320px;overflow:auto;padding:6px"></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid #eee">
+          <label style="font-size:12px;color:#666">文件名</label>
+          <input id="sp-name" style="flex:1;border:1px solid #ddd;border-radius:5px;padding:6px 8px;font-size:13px;outline:none">
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;padding:0 14px 14px">
+          <button id="sp-cancel" style="padding:6px 16px;border:1px solid #ddd;border-radius:5px;background:#fff;cursor:pointer">取消</button>
+          <button id="sp-ok" style="padding:6px 16px;border:none;border-radius:5px;background:var(--primary);color:#fff;cursor:pointer">保存</button>
+        </div>`;
+      mask.appendChild(dlg);
+      document.body.appendChild(mask);
+
+      const listEl = dlg.querySelector('#sp-list');
+      const pathEl = dlg.querySelector('#sp-path');
+      const upBtn = dlg.querySelector('#sp-up');
+      const nameEl = dlg.querySelector('#sp-name');
+      nameEl.value = defaultFile;
+      pathEl.textContent = startDir;
+      upBtn.style.visibility = 'hidden';
+
+      let currentDir = '';
+      let currentParent = '';
+      let done = false;
+      const finish = v => { if (done) return; done = true; mask.remove(); resolve(v); };
+
+      const showMessage = (msg, color) => {
+        listEl.innerHTML = '';
+        const d = document.createElement('div');
+        d.style.cssText = 'padding:18px;text-align:center;font-size:12px;color:' + (color || '#999');
+        d.textContent = msg;
+        listEl.appendChild(d);
+      };
+
+      const loadDir = async (dir) => {
+        showMessage('加载中...');
+        try {
+          const resp = await fetch(base + '/api/files?dir=' + encodeURIComponent(dir));
+          const json = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(json.error || ('HTTP ' + resp.status));
+          currentDir = json.dir;
+          currentParent = json.parent || '';
+          pathEl.textContent = currentDir;
+          pathEl.title = currentDir;
+          upBtn.style.visibility = (currentParent && currentParent !== currentDir) ? 'visible' : 'hidden';
+          listEl.innerHTML = '';
+          const dirs = (json.items || []).filter(i => i.type === 'dir');
+          for (const item of dirs) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#333';
+            row.onmouseenter = () => { row.style.background = '#f5f7fb'; };
+            row.onmouseleave = () => { row.style.background = 'transparent'; };
+            const icon = document.createElement('span');
+            icon.textContent = '📁';
+            row.appendChild(icon);
+            const n = document.createElement('span');
+            n.textContent = item.name;
+            row.appendChild(n);
+            row.onclick = () => loadDir(item.path);
+            listEl.appendChild(row);
+          }
+          if (!dirs.length) showMessage('当前文件夹下没有子文件夹');
+        } catch (e) {
+          showMessage('加载失败: ' + e.message, '#ef4444');
+        }
+      };
+
+      upBtn.onclick = () => { if (currentParent && currentParent !== currentDir) loadDir(currentParent); };
+      dlg.querySelector('#sp-newdir').onclick = async () => {
+        const name = (await uddPrompt('新建文件夹名称:', '') || '').trim();
+        if (!name) return;
+        try {
+          const resp = await fetch(base + '/api/mkdir?dir=' + encodeURIComponent(currentDir)
+            + '&name=' + encodeURIComponent(name), { method: 'POST' });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+          await loadDir(data.path);
+        } catch (e) {
+          toast('新建文件夹失败: ' + e.message);
+        }
+      };
+      dlg.querySelector('#sp-cancel').onclick = () => finish(null);
+      dlg.querySelector('#sp-close').onclick = () => finish(null);
+      mask.onclick = e => { if (e.target === mask) finish(null); };
+      dlg.querySelector('#sp-ok').onclick = async () => {
+        let file = String(nameEl.value || '').trim();
+        if (!file) { toast('请输入文件名'); return; }
+        if (/[\\/:*?"<>|]/.test(file)) { toast('文件名包含非法字符'); return; }
+        if (!/\.udd$/i.test(file)) file += '.udd';
+        try {
+          const resp = await fetch(base + '/api/files?dir=' + encodeURIComponent(currentDir));
+          if (resp.ok) {
+            const json = await resp.json();
+            const exists = (json.items || []).some(i => i.type === 'file' && i.name === file);
+            if (exists && !uddConfirm('同名文件已存在，是否覆盖？', file)) return;
+          }
+        } catch (e) { /* 继续保存 */ }
+        const targetPath = currentDir.replace(/[\\/]+$/, '') + '/' + file;
+        finish({ dir: currentDir, path: targetPath, fileName: file.replace(/\.udd$/i, '') });
+      };
+      nameEl.addEventListener('keydown', e => { if (e.key === 'Enter') dlg.querySelector('#sp-ok').click(); });
+
+      loadDir(startDir);
+      setTimeout(() => nameEl.focus(), 50);
+    });
+  }
+
   async saveFile() {
     if (this._saveDialogOpen) return; // re-entry guard（保险：防止多次点击/Ctrl+S 连击）
     if (this.currentView === 'outline') this.outlineView.syncAll();
@@ -2461,7 +2624,15 @@ ${clone.innerHTML}
     try { opts = await this._showSaveOptions(); }
     finally { this._saveDialogOpen = false; }
     if (!opts) return;
-    await this._doSave(opts, false);
+
+    // 网页版：未绑定任何文件的新文档，保存时落到“我的空间”。
+    let target = null;
+    const s = this._activeSession;
+    if (!window.uddDesktop && this.repoServerUrl && s && !s.fileHandle && !s.filePath) {
+      target = await this._pickSpaceTarget(this.fileName);
+      if (!target) return;
+    }
+    await this._doSave(opts, false, target);
   }
 
   async saveFileAs() {
@@ -2477,19 +2648,47 @@ ${clone.innerHTML}
     try { opts = await this._showSaveOptions(); }
     finally { this._saveDialogOpen = false; }
     if (!opts) return;
-    await this._doSave(opts, true);
+
+    // 网页版“另存为”直接保存到“我的空间”（可新建/选择文件夹）；
+    // 桌面版保持系统文件对话框。
+    let target = null;
+    if (!window.uddDesktop && this.repoServerUrl) {
+      target = await this._pickSpaceTarget(this.fileName);
+      if (!target) return;
+    }
+    await this._doSave(opts, true, target);
   }
 
   // 把"询问 embed 选项"和"实际写入"拆开，避免 saveFile 询问 opts 后再 fall-through 到
   // saveFileAs 时被二次询问（用户表现为"点两次保存才弹系统对话框"）。
   // forceAs=true → 始终走 showSaveFilePicker（另存为）。
   // forceAs=false → 优先走 fileHandle / 服务器；都没有时再回退到 showSaveFilePicker，opts 沿用本次。
-  async _doSave(opts, forceAs) {
+  async _doSave(opts, forceAs, spaceTarget) {
     try {
       toast('正在保存...');
-      const blob = await createUDDBlob(this.data, opts);
+      // 保存到“我的空间”时，先按目标文件名生成 .udd 内容
+      let dataForBlob = this.data;
+      if (spaceTarget) {
+        dataForBlob = deepClone(this.data);
+        if (dataForBlob.meta) dataForBlob.meta.title = spaceTarget.fileName;
+      }
+      const blob = await createUDDBlob(dataForBlob, opts);
 
-      if (!forceAs && this.fileHandle) {
+      if (spaceTarget) {
+        const resp = await fetch(this.repoServerUrl + '/api/writefile?path=' + encodeURIComponent(spaceTarget.path), {
+          method: 'POST', body: blob
+        });
+        if (!resp.ok) {
+          let msg = 'HTTP ' + resp.status;
+          try { const j = await resp.json(); if (j && j.error) msg = j.error; } catch (e) {}
+          throw new Error('服务器写入失败: ' + msg);
+        }
+        this._applySavedPathName(spaceTarget.path, spaceTarget.fileName);
+        this._repoDirTouched = true;
+        this.repoDir = spaceTarget.dir;
+        try { localStorage.setItem('udd_repo_dir', this.repoDir); } catch (e) {}
+        this._renderRepoList();
+      } else if (!forceAs && this.fileHandle) {
         try {
           if (this.fileHandle.requestPermission) {
             const perm = await this.fileHandle.requestPermission({ mode: 'readwrite' });
@@ -2618,10 +2817,15 @@ ${clone.innerHTML}
         if (resp.ok) {
           const json = await resp.json();
           this.repoServerUrl = base;
+          this.personalSpace = !!json.personal;
+          try { localStorage.setItem('udd_personal_space', this.personalSpace ? '1' : '0'); } catch (e) {}
+          const titleEl = document.getElementById('repo-title');
+          if (titleEl) titleEl.textContent = this.personalSpace ? '我的空间' : '仓库';
           let root = json.root;
+          // 多账号网页版：仓库根固定为当前账号的个人空间，忽略 localStorage 里的旧路径
           // 桌面版：仓库面板默认打开用户「文档」目录（保留用户手动改过的目录），
           // 而不是安装目录 resources/udd-web（旧版本可能已把它写进 localStorage，需迁移）。
-          if (window.uddDesktop && window.uddDesktop.getDocumentsDir) {
+          if (!this.personalSpace && window.uddDesktop && window.uddDesktop.getDocumentsDir) {
             try {
               let savedDir = localStorage.getItem('udd_repo_dir');
               if (savedDir && /[\\\/]resources[\\\/]udd-web/i.test(savedDir)) savedDir = null;
@@ -2640,7 +2844,10 @@ ${clone.innerHTML}
     const savedUrl = localStorage.getItem('udd_server_url');
     if (savedUrl) {
       this.repoServerUrl = savedUrl;
+      this.personalSpace = localStorage.getItem('udd_personal_space') === '1';
       this.repoDir = localStorage.getItem('udd_repo_dir') || '';
+      const titleEl = document.getElementById('repo-title');
+      if (titleEl) titleEl.textContent = this.personalSpace ? '我的空间' : '仓库';
     }
     document.getElementById('repo-status').textContent = '未连接服务器。运行: node server.js';
     document.getElementById('repo-path').textContent = '点击此处配置服务器地址';
@@ -2663,7 +2870,27 @@ ${clone.innerHTML}
     this._renderRepoList();
   }
 
+  async repoNewFolder() {
+    if (!this.repoServerUrl) { toast('请先连接服务器'); return; }
+    const name = (await uddPrompt('新建文件夹名称:', '') || '').trim();
+    if (!name) return;
+    try {
+      const resp = await fetch(this.repoServerUrl + '/api/mkdir?dir=' + encodeURIComponent(this.repoDir || '')
+        + '&name=' + encodeURIComponent(name), { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+      toast('已创建文件夹');
+      this._renderRepoList();
+    } catch (e) {
+      toast('新建文件夹失败: ' + e.message);
+    }
+  }
+
   async repoPromptDir() {
+    if (this.personalSpace) {
+      toast('“我的空间”就是当前账号的个人目录，不能切换到其他位置');
+      return;
+    }
     const newDir = await uddPrompt('输入目录路径:', this.repoDir || 'D:\\projects\\node');
     if (newDir) {
       this._repoDirTouched = true; // 用户手动选定位置，首个文件不再自动覆盖
@@ -2685,8 +2912,13 @@ ${clone.innerHTML}
     const listEl = document.getElementById('repo-list');
     const pathEl = document.getElementById('repo-path');
     const statusEl = document.getElementById('repo-status');
+    const titleEl = document.getElementById('repo-title');
+    const upBtn = document.getElementById('repo-up');
+    if (titleEl) titleEl.textContent = this.personalSpace ? '我的空间' : '仓库';
+    if (pathEl) pathEl.title = this.personalSpace ? '个人空间目录（由账号决定，不可修改）' : '点击修改目录';
     if (!this.repoDir || !this.repoServerUrl) {
       pathEl.textContent = '点击配置目录';
+      if (upBtn) upBtn.style.visibility = 'hidden';
       listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--gray-400);font-size:12px">请先运行 node server.js<br>然后刷新此页面</div>';
       return;
     }
@@ -2697,6 +2929,7 @@ ${clone.innerHTML}
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const json = await resp.json();
       this.repoDir = json.dir;
+      if (upBtn) upBtn.style.visibility = (json.parent && json.parent !== json.dir) ? 'visible' : 'hidden';
       this._repoFiles = json.items;
       listEl.innerHTML = '';
 

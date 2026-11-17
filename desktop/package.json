@@ -10,7 +10,10 @@
     "icon": "node build-icon.js",
     "start": "electron .",
     "pack": "node build-icon.js && electron-builder --win dir",
-    "dist": "node build-icon.js && electron-builder --win dir && node edit-exe.js && electron-builder --win nsis portable --prepackaged release20/win-unpacked"
+    "dist": "node build-icon.js && electron-builder --win dir && node edit-exe.js && electron-builder --win nsis portable --prepackaged release20/win-unpacked",
+    "pack:mac": "node build-icon.js && electron-builder --mac dir",
+    "dist:mac": "node build-icon.js && electron-builder --mac dmg zip",
+    "dist:mac:x64": "node build-icon.js && electron-builder --mac dmg zip --x64"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -36,6 +39,10 @@
       {
         "from": "../server.js",
         "to": "udd-web/server.js"
+      },
+      {
+        "from": "../accounts-lib.js",
+        "to": "udd-web/accounts-lib.js"
       },
       {
         "from": "../css",
@@ -73,6 +80,64 @@
     },
     "portable": {
       "artifactName": "UDD-Portable-${version}.exe"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "artifactName": "UDD-${version}-${arch}.${ext}",
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "UDD 需要访问「文档」目录，用于打开和保存你的数据文档。",
+        "NSDownloadsFolderUsageDescription": "UDD 需要访问「下载」目录，用于打开下载的数据文档。",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "UDD 统一数据文档",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Owner",
+            "LSItemContentTypes": [
+              "com.udd.document"
+            ],
+            "CFBundleTypeExtensions": [
+              "udd"
+            ]
+          }
+        ],
+        "UTExportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "com.udd.document",
+            "UTTypeDescription": "UDD 统一数据文档",
+            "UTTypeConformsTo": [
+              "public.data",
+              "public.content"
+            ],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": [
+                "udd"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "dmg": {
+      "title": "UDD ${version}",
+      "artifactName": "UDD-${version}-${arch}.dmg"
     }
   }
 }
