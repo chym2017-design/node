@@ -41,6 +41,18 @@
         "to": "udd-web/server.js"
       },
       {
+        "from": "../files.html",
+        "to": "udd-web/files.html"
+      },
+      {
+        "from": "../files.css",
+        "to": "udd-web/files.css"
+      },
+      {
+        "from": "../files.js",
+        "to": "udd-web/files.js"
+      },
+      {
         "from": "../accounts-lib.js",
         "to": "udd-web/accounts-lib.js"
       },

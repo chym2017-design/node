@@ -382,7 +382,7 @@ async function handleFileApi(req, res, pathname, params, ctx) {
     try {
       const resolved = resolveSandboxed(dir, rootReal, sandbox);
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
-      const meta = ctx.personal ? space.readMeta(rootDir) : null;
+      const meta = space.readMeta(rootDir);
       const items = entries
         .filter(e => !e.name.startsWith('.'))
         .map(e => {
@@ -569,13 +569,8 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   // ================================================================
-  //  文件整理 / 标签 / 回收站（仅个人空间）
+  //  文件整理 / 标签 / 回收站（个人空间与本地仓库）
   // ================================================================
-  const personalOnly = () => {
-    if (ctx.personal) return true;
-    sendError(res, '该功能仅在个人空间可用', 404);
-    return false;
-  };
   const readJson = async () => {
     try { return await readJsonBody(req); }
     catch (e) { sendError(res, e.message, e.statusCode || 400); return null; }
@@ -589,7 +584,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
 
   // --- 标签 ---
   if (pathname === '/api/tags' && req.method === 'GET') {
-    if (!personalOnly()) return true;
     const meta = space.readMeta(rootDir);
     const counts = {};
     for (const [rel, ids] of Object.entries(meta.items)) {
@@ -603,7 +597,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   if (pathname === '/api/tags/create' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const name = String(body.name || '').trim();
     const color = String(body.color || '#3b82f6');
@@ -625,7 +618,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   if (pathname === '/api/tags/update' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const id = String(body.id || '');
     try {
@@ -646,7 +638,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   if (pathname === '/api/tags/delete' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const id = String(body.id || '');
     try {
@@ -666,7 +657,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   if (pathname === '/api/tags/assign' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const paths = Array.isArray(body.paths) ? body.paths.slice(0, 500) : [];
     if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
@@ -690,7 +680,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   if (pathname === '/api/tag-items' && req.method === 'GET') {
-    if (!personalOnly()) return true;
     const tagId = String(params.get('tag') || '');
     const meta = space.readMeta(rootDir);
     if (!meta.tags[tagId]) { sendError(res, '标签不存在', 404); return true; }
@@ -724,7 +713,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
 
   // --- 重命名 ---
   if (pathname === '/api/rename' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const name = validEntryName(body.name);
     if (!name) { sendError(res, '名称不合法', 400); return true; }
@@ -748,7 +736,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
 
   // --- 移动 ---
   if (pathname === '/api/move' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const paths = Array.isArray(body.paths) ? body.paths.slice(0, 200) : [];
     if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
@@ -786,7 +773,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
 
   // --- 复制 ---
   if (pathname === '/api/copy' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const paths = Array.isArray(body.paths) ? body.paths.slice(0, 200) : [];
     if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
@@ -822,7 +808,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
 
   // --- 删除（移到回收站） ---
   if (pathname === '/api/delete' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const paths = Array.isArray(body.paths) ? body.paths.slice(0, 200) : [];
     if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
@@ -841,7 +826,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
 
   // --- 回收站 ---
   if (pathname === '/api/trash' && req.method === 'GET') {
-    if (!personalOnly()) return true;
     const items = space.listTrash(rootDir).map(e => ({
       id: e.id,
       name: e.name,
@@ -854,7 +838,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   if (pathname === '/api/trash/restore' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     const body = await readJson(); if (!body) return true;
     const ids = Array.isArray(body.ids) ? body.ids : (body.id ? [body.id] : []);
     if (!ids.length) { sendError(res, '未选择回收站项目', 400); return true; }
@@ -871,7 +854,6 @@ async function handleFileApi(req, res, pathname, params, ctx) {
   }
 
   if (pathname === '/api/trash/empty' && req.method === 'POST') {
-    if (!personalOnly()) return true;
     try {
       await withFsLock(() => space.emptyTrash(rootDir));
       sendJSON(res, { ok: true });
@@ -1128,7 +1110,7 @@ async function handleLegacy(req, res, pathname, params) {
     return sendJSON(res, { error: 'Not found' }, 404);
   }
 
-  if (pathname === '/files' || pathname === '/files.html') return redirect(res, '/');
+  if (pathname === '/files' || pathname === '/files.html') return serveFilesPage(res);
 
   return serveStatic(req, res, pathname);
 }

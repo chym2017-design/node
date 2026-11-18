@@ -2927,8 +2927,6 @@ ${clone.innerHTML}
     const statusEl = document.getElementById('repo-status');
     const titleEl = document.getElementById('repo-title');
     const upBtn = document.getElementById('repo-up');
-    const mgrBtn = document.getElementById('repo-manager');
-    if (mgrBtn) mgrBtn.style.display = this.personalSpace ? '' : 'none';
     if (titleEl) titleEl.textContent = this.personalSpace ? '我的空间' : '仓库';
     if (pathEl) pathEl.title = this.personalSpace ? '个人空间目录（由账号决定，不可修改）' : '点击修改目录';
     if (!this.repoDir || !this.repoServerUrl) {
