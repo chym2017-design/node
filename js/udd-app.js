@@ -497,6 +497,15 @@ class App {
     try { await this._detectServer(); } catch (e) { /* 无服务器时静默 */ }
     this._refreshSessionsFromDisk().catch(() => {});
 
+    // 文件管理页通过 /?open=<绝对路径> 打开 .udd
+    try {
+      const openPath = new URLSearchParams(location.search).get('open');
+      if (openPath && this.repoServerUrl) {
+        history.replaceState(null, '', location.pathname);
+        this.openUddPath(openPath).catch(err => toast('打开文件失败: ' + err.message));
+      }
+    } catch (e) { /* ignore */ }
+
     // Electron 桌面端桥接：主进程把「双击 .udd 文件打开本应用」的路径发过来。
     // 页面由内置本地服务器提供，window.location.origin 即服务器地址。
     // 注册完监听器后 notifyReady()，主进程确认就绪才开始推送（避免冷启动竞态丢消息）。
@@ -2803,6 +2812,10 @@ ${clone.innerHTML}
     }
   }
 
+  openFileManager() {
+    window.open('/files', '_blank');
+  }
+
   async _detectServer() {
     // Try to detect local server
     const tryUrls = [
@@ -2914,6 +2927,8 @@ ${clone.innerHTML}
     const statusEl = document.getElementById('repo-status');
     const titleEl = document.getElementById('repo-title');
     const upBtn = document.getElementById('repo-up');
+    const mgrBtn = document.getElementById('repo-manager');
+    if (mgrBtn) mgrBtn.style.display = this.personalSpace ? '' : 'none';
     if (titleEl) titleEl.textContent = this.personalSpace ? '我的空间' : '仓库';
     if (pathEl) pathEl.title = this.personalSpace ? '个人空间目录（由账号决定，不可修改）' : '点击修改目录';
     if (!this.repoDir || !this.repoServerUrl) {
@@ -3017,6 +3032,75 @@ ${clone.innerHTML}
     this._resolveAsyncRefs(this.currentView === 'outline' ? this.outlineView.el : this.documentView.el);
   }
 }
+
+// ================================================================
+//  TOOLBAR OVERFLOW — only moves existing controls; no document behavior changes
+// ================================================================
+(function() {
+  const toolbar = document.getElementById('toolbar');
+  const items = document.getElementById('toolbar-items');
+  const viewTools = document.getElementById('view-tools');
+  const more = document.getElementById('toolbar-more');
+  const moreList = document.getElementById('toolbar-more-list');
+  if (!toolbar || !items || !viewTools || !more || !moreList) return;
+
+  const overflowEnd = Array.from(moreList.childNodes).find(node =>
+    node.nodeType === Node.COMMENT_NODE && node.nodeValue === 'toolbar-overflow-end'
+  );
+  if (!overflowEnd) return;
+
+  const records = Array.from(toolbar.querySelectorAll('[data-toolbar-item]')).map(item => {
+    const marker = document.createComment('toolbar-item');
+    item.parentNode.insertBefore(marker, item);
+    return { item, marker, parent: item.parentNode };
+  });
+  let timer = 0;
+
+  function hasOverflow() {
+    return items.scrollWidth > items.clientWidth + 1 ||
+      viewTools.scrollWidth > viewTools.clientWidth + 1 ||
+      toolbar.scrollWidth > toolbar.clientWidth + 1;
+  }
+
+  function update() {
+    timer = 0;
+    if (!toolbar.offsetWidth) return;
+
+    for (const { item, marker, parent } of records) {
+      if (item.parentNode !== parent) parent.insertBefore(item, marker.nextSibling);
+    }
+
+    const movable = records.filter(({ item }) => getComputedStyle(item).display !== 'none');
+    for (let i = movable.length - 1; i >= 0; i--) {
+      if (!hasOverflow()) break;
+      moreList.insertBefore(movable[i].item, moreList.firstChild);
+    }
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    timer = setTimeout(update, 16);
+  }
+
+  if (window.ResizeObserver) new ResizeObserver(schedule).observe(toolbar);
+  window.addEventListener('resize', schedule);
+  schedule();
+
+  const menus = [document.getElementById('export-menu'), document.getElementById('format-menu'), more].filter(Boolean);
+  document.addEventListener('click', event => {
+    for (const menu of menus) {
+      if (menu.open && !menu.contains(event.target)) menu.open = false;
+    }
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    for (const menu of menus) {
+      if (!menu.open) continue;
+      menu.open = false;
+      menu.querySelector('summary')?.focus();
+    }
+  });
+})();
 
 // ================================================================
 //  PWA MANIFEST (inline)

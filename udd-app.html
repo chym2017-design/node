@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#2563eb">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>UDD - 统一数据展示系统</title>
@@ -15,132 +15,133 @@
   <!-- ===== HEADER: Menu bar, toolbar, format switches, view tabs ===== -->
   <header id="header">
     <div id="menu-bar">
-      <span class="logo">UDD</span>
-      <input id="doc-title" class="doc-title" value="未命名文档" spellcheck="false">
-      <button class="menu-btn primary" onmousedown="event.preventDefault()" onclick="app.newBlankFile()" title="新建一篇空白文档">新建空白文档</button>
-      <button class="menu-btn primary" onmousedown="event.preventDefault()" onclick="app.newFile()" title="Ctrl+N">新建</button>
-      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.openFile()" title="Ctrl+O">打开</button>
-      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.saveFile()" title="Ctrl+S">保存</button>
-      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.saveFileAs()">另存为</button>
-      <div class="menu-sep"></div>
-      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportPDF()" title="导出为 PDF（使用浏览器打印对话框，选择&quot;另存为 PDF&quot;）">PDF</button>
-      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportWord()" title="导出为 Word .doc">Word</button>
-      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportJSON()">导出JSON</button>
-      <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.importJSON()">导入JSON</button>
+      <div id="view-tabs">
+        <button id="repo-toggle" onclick="app.toggleRepo()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">仓库</button>
+        <button class="view-tab active" data-view="outline" onclick="app.switchView('outline')">大纲</button>
+        <button class="view-tab" data-view="mindmap" onclick="app.switchView('mindmap')">思维导图</button>
+        <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
+        <button class="view-tab" data-view="sheet" onclick="app.switchView('sheet')">表格</button>
+        <button class="view-tab" data-view="ppt" onclick="app.switchView('ppt')">演示</button>
+        <button class="view-tab" data-view="graph" onclick="app.switchView('graph')">图谱</button>
+        <button id="back-btn" onclick="app.goBack()" style="display:none;background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">← 返回</button>
+      </div>
+      <div class="brand-title">
+        <span class="logo">UDD</span>
+        <input id="doc-title" class="doc-title" value="未命名文档" spellcheck="false">
+      </div>
+      <div id="menu-actions">
+        <button class="menu-btn primary" onmousedown="event.preventDefault()" onclick="app.newBlankFile()" title="新建一篇空白文档">新建空白文档</button>
+        <button class="menu-btn primary" onmousedown="event.preventDefault()" onclick="app.newFile()" title="Ctrl+N">新建</button>
+        <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.openFile()" title="Ctrl+O">打开</button>
+        <button id="repo-manager" class="menu-btn" onclick="app.openFileManager()" title="打开文件管理页面" style="display:none">文件管理</button>
+        <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.saveFile()" title="Ctrl+S">保存</button>
+        <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.saveFileAs()">另存为</button>
+        <details id="export-menu" class="toolbar-popup menu-popup">
+          <summary class="menu-btn">导出 / 导入</summary>
+          <div class="toolbar-popup-panel menu-popup-panel">
+            <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportPDF()" title="导出为 PDF（使用浏览器打印对话框，选择&quot;另存为 PDF&quot;）">PDF</button>
+            <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportWord()" title="导出为 Word .doc">Word</button>
+            <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.exportJSON()">导出JSON</button>
+            <button class="menu-btn" onmousedown="event.preventDefault()" onclick="app.importJSON()">导入JSON</button>
+          </div>
+        </details>
+      </div>
     </div>
     <div id="toolbar">
-      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.undo()" title="撤销 Ctrl+Z">↩</button>
-      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.redo()" title="重做 Ctrl+Shift+Z">↪</button>
-      <div class="tool-sep"></div>
-      <select id="tool-font" class="tool-select" onchange="app.setNodeStyle('font',this.value)" title="字体">
-        <option value="微软雅黑">微软雅黑</option>
-        <option value="宋体">宋体</option>
-        <option value="黑体">黑体</option>
-        <option value="楷体">楷体</option>
-        <option value="仿宋">仿宋</option>
-        <option value="Arial">Arial</option>
-        <option value="Times New Roman">Times New Roman</option>
-      </select>
-      <select id="tool-size" class="tool-select" onchange="app.setNodeStyle('font_size',+this.value)" title="字号" style="width:60px">
-        <option value="12">12</option><option value="14">14</option><option value="16">16</option>
-        <option value="18">18</option><option value="20">20</option><option value="24">24</option>
-        <option value="28">28</option><option value="32">32</option><option value="36">36</option>
-      </select>
-      <div class="tool-sep"></div>
-      <button id="tool-bold" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('bold')" title="加粗 Ctrl+B"><b>B</b></button>
-      <button id="tool-italic" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('italic')" title="斜体 Ctrl+I"><i>I</i></button>
-      <button id="tool-underline" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('underline')" title="下划线 Ctrl+U"><u>U</u></button>
-      <button id="tool-strike" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('strikethrough')" title="删除线"><s>S</s></button>
-      <div class="tool-sep"></div>
-      <div class="tool-color-wrap" id="color-wrap-fg">
-        <button type="button" class="tool-color-btn" id="tool-color-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('fg')" title="字体颜色">
-          <span class="tool-color-preview" id="tool-color-preview" style="background:#1e293b"></span>
-        </button>
-        <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('fg')">▾</button>
-        <div class="color-palette" id="palette-fg"></div>
-      </div>
-      <div class="tool-color-wrap" id="color-wrap-bg">
-        <button type="button" class="tool-color-btn" id="tool-bg-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('bg')" title="背景色">
-          <span class="tool-color-preview" id="tool-bg-preview" style="background:#ffffff;border:1px solid var(--gray-200)"></span>
-        </button>
-        <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('bg')">▾</button>
-        <div class="color-palette" id="palette-bg"></div>
-      </div>
-      <div class="tool-color-wrap" id="color-wrap-ref">
-        <button type="button" class="tool-color-btn" id="tool-ref-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('ref')" title="引用背景色（▾ 含"无设置"恢复默认浅蓝）">
-          <span class="tool-color-preview" id="tool-ref-preview" style="background:#eff6ff;border:1px solid var(--blue-200)"></span>
-        </button>
-        <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('ref')">▾</button>
-        <div class="color-palette" id="palette-ref"></div>
-      </div>
-      <div class="tool-sep"></div>
-      <select id="tool-page-size" class="tool-select" onchange="app.setPageSize(this.value)" title="文档视图页面尺寸（分页）" style="width:90px">
-        <option value="">不分页</option>
-        <option value="A4">A4</option>
-        <option value="A3">A3</option>
-        <option value="A5">A5</option>
-        <option value="letter">Letter</option>
-        <option value="legal">Legal</option>
-        <option value="B5">B5</option>
-      </select>
-      <div class="tool-sep"></div>
-      <button id="tool-align-left" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','left')" title="左对齐">≡</button>
-      <button id="tool-align-center" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','center')" title="居中">≡</button>
-      <button id="tool-align-right" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','right')" title="右对齐">≡</button>
-      <div class="tool-sep"></div>
-      <select id="tool-numbering" class="tool-select" onchange="app.setNumbering(this.value)" title="编号样式" style="width:90px">
-        <option value="1.1.1">1.1.1</option>
-        <option value="一.1.1">一.1.1</option>
-        <option value="I.A.1">I.A.1</option>
-        <option value="bullet">无序</option>
-        <option value="bullet-uniform">统一无序</option>
-        <option value="none">无编号</option>
-      </select>
-      <button id="tool-no-number" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleNoNumber()" title="此节点不显示编号（且不占编号位）">⊘</button>
-      <button id="tool-restart-number" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleRestartNumber()" title="从此节点起在同级重新编号">↺1</button>
-      <div class="tool-sep"></div>
-      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.insertMedia()" title="插入媒体">🖼</button>
-      <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.insertTableRef()" title="插入表格引用">☐</button>
-    </div>
-    <div class="fmt-sw" id="fmt-switches">
-      <label><input type="checkbox" data-fmt="font" checked>字体</label>
-      <label><input type="checkbox" data-fmt="font_size" checked>字号</label>
-      <label><input type="checkbox" data-fmt="color" checked>颜色</label>
-      <label><input type="checkbox" data-fmt="bold" checked>加粗</label>
-      <label><input type="checkbox" data-fmt="ref_icon" checked>引用标识</label>
-      <label><input type="checkbox" data-fmt="italic" checked>斜体</label>
-      <label><input type="checkbox" data-fmt="underline" checked>下划线</label>
-      <label><input type="checkbox" data-fmt="strikethrough" checked>删除线</label>
-      <label><input type="checkbox" data-fmt="background_color" checked>背景色</label>
-      <label><input type="checkbox" data-fmt="text_align">对齐</label>
-      <label><input type="checkbox" data-fmt="tree_lines">树线</label>
-      <label><input type="checkbox" data-fmt="body_border">正文线</label>
-
-    </div>
-    <div id="view-tabs">
-      <button id="repo-toggle" onclick="app.toggleRepo()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">仓库</button>
-      <button class="view-tab active" data-view="outline" onclick="app.switchView('outline')">大纲</button>
-      <button class="view-tab" data-view="mindmap" onclick="app.switchView('mindmap')">思维导图</button>
-      <button class="view-tab" data-view="document" onclick="app.switchView('document')">文档</button>
-      <button class="view-tab" data-view="sheet" onclick="app.switchView('sheet')">表格</button>
-      <button class="view-tab" data-view="ppt" onclick="app.switchView('ppt')">演示</button>
-      <button class="view-tab" data-view="graph" onclick="app.switchView('graph')">图谱</button>
-      <button id="back-btn" onclick="app.goBack()" style="display:none;background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">← 返回</button>
-      <div class="spacer"></div>
-      <button id="render-toggle" onclick="app.toggleRenderMode()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染 on</button>
-      <span style="position:relative;display:inline-block;margin-left:4px">
-        <button id="render-more" onclick="app.toggleRenderMore(event)" title="渲染选项" style="background:none;border:1px solid var(--gray-200);padding:3px 8px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">更多 ▾</button>
-        <div id="render-more-pop" hidden style="position:absolute;top:100%;right:0;margin-top:4px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:6px 10px;font-size:12px;z-index:200;white-space:nowrap">
-          <label style="display:block;padding:2px 0;cursor:pointer"><input type="checkbox" id="opt-render-md" style="vertical-align:middle;margin-right:6px"> md</label>
-          <label style="display:block;padding:2px 0;cursor:pointer"><input type="checkbox" id="opt-render-html" style="vertical-align:middle;margin-right:6px"> html</label>
+      <div id="toolbar-items">
+        <div class="tool-group" data-toolbar-item>
+          <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.undo()" title="撤销 Ctrl+Z">↩</button>
+          <button class="tool-btn" onmousedown="event.preventDefault()" onclick="app.redo()" title="重做 Ctrl+Shift+Z">↪</button>
         </div>
-      </span>
-      <button id="refresh-view" onclick="app.refreshCurrentView()" title="刷新当前视图（强制重新渲染，引用/媒体重新读取）" style="background:none;border:1px solid var(--gray-200);padding:3px 8px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius);margin-left:4px">🔄 刷新</button>
-      <button id="source-toggle" onclick="app.toggleContentSource()" style="display:none;background:var(--blue-50);border:1px solid var(--blue-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">来源:嵌入</button>
-      <input id="tool-fold-n" type="number" value="5" min="1" max="20" title="展开层数">
-      <button id="fold-level-btn" onclick="app.expandToLevel()">展开n层</button>
-      <button id="fold-all-btn" onclick="app.expandAll()">全部展开</button>
-      <button id="sidebar-toggle" onclick="app.toggleSidebar()">侧边栏</button>
+        <div class="tool-sep"></div>
+        <div class="tool-group" data-toolbar-item>
+          <select id="tool-font" class="tool-select" onchange="app.setNodeStyle('font',this.value)" title="字体">
+            <option value="微软雅黑">微软雅黑</option>
+            <option value="宋体">宋体</option>
+            <option value="黑体">黑体</option>
+            <option value="楷体">楷体</option>
+            <option value="仿宋">仿宋</option>
+            <option value="Arial">Arial</option>
+            <option value="Times New Roman">Times New Roman</option>
+          </select>
+          <select id="tool-size" class="tool-select" onchange="app.setNodeStyle('font_size',+this.value)" title="字号" style="width:60px">
+            <option value="12">12</option><option value="14">14</option><option value="16">16</option>
+            <option value="18">18</option><option value="20">20</option><option value="24">24</option>
+            <option value="28">28</option><option value="32">32</option><option value="36">36</option>
+          </select>
+        </div>
+        <div class="tool-sep"></div>
+        <div class="tool-group" data-toolbar-item>
+          <button id="tool-bold" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('bold')" title="加粗 Ctrl+B"><b>B</b></button>
+          <button id="tool-italic" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('italic')" title="斜体 Ctrl+I"><i>I</i></button>
+          <button id="tool-underline" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('underline')" title="下划线 Ctrl+U"><u>U</u></button>
+          <button id="tool-strike" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.toggleStyle('strikethrough')" title="删除线"><s>S</s></button>
+        </div>
+        <div class="tool-sep"></div>
+        <div class="tool-color-wrap" id="color-wrap-fg" data-toolbar-item>
+          <button type="button" class="tool-color-btn" id="tool-color-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('fg')" title="字体颜色">
+            <span class="tool-color-preview" id="tool-color-preview" style="background:#1e293b"></span>
+          </button>
+          <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('fg')" aria-label="选择字体颜色">▾</button>
+          <div class="color-palette" id="palette-fg"></div>
+        </div>
+        <div class="tool-color-wrap" id="color-wrap-bg" data-toolbar-item>
+          <button type="button" class="tool-color-btn" id="tool-bg-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('bg')" title="背景色">
+            <span class="tool-color-preview" id="tool-bg-preview" style="background:#ffffff;border:1px solid var(--gray-200)"></span>
+          </button>
+          <button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('bg')" aria-label="选择背景颜色">▾</button>
+          <div class="color-palette" id="palette-bg"></div>
+        </div>
+        <button class="tool-btn" data-toolbar-item onmousedown="event.preventDefault()" onclick="app.insertMedia()" title="插入媒体" aria-label="插入媒体">🖼</button>
+        <button class="tool-btn" data-toolbar-item onmousedown="event.preventDefault()" onclick="app.insertTableRef()" title="插入表格引用" aria-label="插入表格引用">☐</button>
+        <button id="tool-no-number" class="tool-btn" data-toolbar-item onmousedown="event.preventDefault()" onclick="app.toggleNoNumber()" title="此节点不显示编号（且不占编号位）" aria-label="此段不编号">⊘</button>
+        <button id="tool-restart-number" class="tool-btn" data-toolbar-item onmousedown="event.preventDefault()" onclick="app.toggleRestartNumber()" title="从此节点起在同级重新编号" aria-label="重新编号">↺1</button>
+      </div>
+      <div id="view-tools">
+        <button id="render-toggle" data-toolbar-item onclick="app.toggleRenderMode()" style="background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染 on</button>
+        <button id="refresh-view" data-toolbar-item onclick="app.refreshCurrentView()" title="刷新当前视图（强制重新渲染，引用/媒体重新读取）" style="background:none;border:1px solid var(--gray-200);padding:3px 8px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius);margin-left:4px">🔄 刷新</button>
+        <button id="source-toggle" data-toolbar-item onclick="app.toggleContentSource()" style="display:none;background:var(--blue-50);border:1px solid var(--blue-200);padding:3px 10px;font-size:12px;color:var(--primary);cursor:pointer;border-radius:var(--radius);margin-left:4px">来源:嵌入</button>
+        <input id="tool-fold-n" data-toolbar-item type="number" value="5" min="1" max="20" title="展开层数">
+        <button id="fold-level-btn" data-toolbar-item onclick="app.expandToLevel()">展开n层</button>
+        <button id="fold-all-btn" data-toolbar-item onclick="app.expandAll()">全部展开</button>
+        <button id="sidebar-toggle" data-toolbar-item onclick="app.toggleSidebar()">侧边栏</button>
+      </div>
+      <details id="format-menu" class="toolbar-popup">
+        <summary class="tool-btn toolbar-text-btn">格式</summary>
+        <div class="toolbar-popup-panel format-panel">
+          <label class="format-row"><span>纸张</span><select id="tool-page-size" class="tool-select" onchange="app.setPageSize(this.value)" title="文档视图页面尺寸（分页）"><option value="">不分页</option><option value="A4">A4</option><option value="A3">A3</option><option value="A5">A5</option><option value="letter">Letter</option><option value="legal">Legal</option><option value="B5">B5</option></select></label>
+          <div class="format-row"><span>对齐</span><div class="tool-group"><button id="tool-align-left" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','left')" title="左对齐">≡</button><button id="tool-align-center" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','center')" title="居中">≡</button><button id="tool-align-right" class="tool-btn" onmousedown="event.preventDefault()" onclick="app.setNodeStyle('text_align','right')" title="右对齐">≡</button></div></div>
+          <label class="format-row"><span>编号格式</span><select id="tool-numbering" class="tool-select" onchange="app.setNumbering(this.value)" title="编号样式"><option value="1.1.1">1.1.1</option><option value="一.1.1">一.1.1</option><option value="I.A.1">I.A.1</option><option value="bullet">无序</option><option value="bullet-uniform">统一无序</option><option value="none">无编号</option></select></label>
+          <div class="format-row"><span>引用背景色</span><div class="tool-color-wrap" id="color-wrap-ref"><button type="button" class="tool-color-btn" id="tool-ref-btn" onmousedown="event.preventDefault()" onclick="app.applyLastColor('ref')" title="引用背景色"><span class="tool-color-preview" id="tool-ref-preview" style="background:#eff6ff;border:1px solid var(--blue-200)"></span></button><button type="button" class="tool-color-arrow" onmousedown="event.preventDefault()" onclick="app.toggleColorPalette('ref')" aria-label="选择引用背景色">▾</button><div class="color-palette" id="palette-ref"></div></div></div>
+          <div class="fmt-sw" id="fmt-switches">
+            <label><input type="checkbox" data-fmt="font" checked>字体</label>
+            <label><input type="checkbox" data-fmt="font_size" checked>字号</label>
+            <label><input type="checkbox" data-fmt="color" checked>颜色</label>
+            <label><input type="checkbox" data-fmt="bold" checked>加粗</label>
+            <label><input type="checkbox" data-fmt="ref_icon" checked>引用标识</label>
+            <label><input type="checkbox" data-fmt="italic" checked>斜体</label>
+            <label><input type="checkbox" data-fmt="underline" checked>下划线</label>
+            <label><input type="checkbox" data-fmt="strikethrough" checked>删除线</label>
+            <label><input type="checkbox" data-fmt="background_color" checked>背景色</label>
+            <label><input type="checkbox" data-fmt="text_align">对齐</label>
+            <label><input type="checkbox" data-fmt="tree_lines">树线</label>
+            <label><input type="checkbox" data-fmt="body_border">正文线</label>
+          </div>
+        </div>
+      </details>
+      <details id="toolbar-more" class="toolbar-popup">
+        <summary class="tool-btn toolbar-text-btn">更多</summary>
+        <div id="toolbar-more-list" class="toolbar-popup-panel">
+          <!--toolbar-overflow-end-->
+          <span id="render-options" style="position:relative;display:inline-flex;margin-left:4px">
+            <button id="render-more" onclick="app.toggleRenderMore(event)" title="渲染选项" style="background:none;border:1px solid var(--gray-200);padding:3px 8px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)">渲染选项 ▾</button>
+            <div id="render-more-pop" hidden style="position:absolute;top:100%;right:0;margin-top:4px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:6px 10px;font-size:12px;z-index:200;white-space:nowrap">
+              <label style="display:block;padding:2px 0;cursor:pointer"><input type="checkbox" id="opt-render-md" style="vertical-align:middle;margin-right:6px"> md</label>
+              <label style="display:block;padding:2px 0;cursor:pointer"><input type="checkbox" id="opt-render-html" style="vertical-align:middle;margin-right:6px"> html</label>
+            </div>
+          </span>
+        </div>
+      </details>
     </div>
   </header>
 

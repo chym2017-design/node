@@ -60,6 +60,7 @@ js/
   浏览器打开 http://localhost:8080
 
   远程网页版（登录认证 + 目录沙箱 + 公网隧道 / 开机自启）见 WEB.md
+  多账号文件管理页：http://localhost:8080/files
   macOS 桌面端打包见 desktop/README.md
 
 跨文档表格引用（内嵌语义）

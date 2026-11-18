@@ -12,9 +12,9 @@ DEST="$HOME/Library/Application Support/UDD-Web/app"
 mkdir -p "$DEST"
 
 rsync -a --delete \
-  udd-app.html login.html account-ui.js \
+  udd-app.html login.html account-ui.js files.html files.css files.js \
   css js \
-  server.js accounts-lib.js accounts-admin.js \
+  server.js accounts-lib.js accounts-admin.js space-lib.js \
   start-web.sh start-tunnel.sh \
   使用说明书.udd \
   "$DEST/"

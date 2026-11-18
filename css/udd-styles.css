@@ -19,17 +19,40 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* ===== LAYOUT ===== */
 #app{display:flex;flex-direction:column;height:100%;background:var(--bg)}
 #header{flex-shrink:0;border-bottom:1px solid var(--border);background:var(--bg)}
-#menu-bar{display:flex;align-items:center;height:40px;padding:0 12px;gap:2px;border-bottom:1px solid var(--gray-100)}
+#menu-bar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;min-height:40px;padding:4px 12px;gap:4px 12px;border-bottom:1px solid var(--gray-100)}
+.brand-title{display:flex;align-items:center;justify-content:center;min-width:0}
 #menu-bar .logo{font-weight:700;font-size:15px;color:var(--primary);margin-right:12px;letter-spacing:1px}
-#menu-bar .doc-title{flex:1;font-size:13px;color:var(--gray-600);border:none;background:none;outline:none;padding:4px 8px;border-radius:var(--radius);min-width:120px}
+#menu-bar .doc-title{flex:0 1 160px;width:160px;font-size:13px;color:var(--gray-600);border:none;background:none;outline:none;padding:4px 8px;border-radius:var(--radius);min-width:80px}
 #menu-bar .doc-title:hover{background:var(--gray-50)}
 #menu-bar .doc-title:focus{background:var(--blue-50);color:var(--text)}
+#menu-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:2px;justify-self:end}
 .menu-btn{background:none;border:none;padding:4px 10px;font-size:13px;color:var(--gray-600);cursor:pointer;border-radius:var(--radius);white-space:nowrap}
 .menu-btn:hover{background:var(--gray-100);color:var(--text)}
 .menu-btn.primary{color:var(--primary);font-weight:600}
 .menu-sep{width:1px;height:18px;background:var(--gray-200);margin:0 4px}
+.menu-popup-panel{display:flex;flex-direction:column;min-width:120px;padding:4px}
+.menu-popup-panel .menu-btn{width:100%;text-align:left}
 
-#toolbar{display:flex;align-items:center;height:38px;padding:0 12px;gap:2px;overflow-x:auto}
+#toolbar{display:flex;align-items:center;flex-wrap:nowrap;height:38px;padding:0 12px;gap:4px;overflow:visible;position:relative;z-index:30}
+#toolbar-items{display:flex;align-items:center;gap:2px;flex:1;min-width:0;height:38px;overflow:hidden}
+#view-tools{display:flex;align-items:center;justify-content:flex-end;flex-wrap:nowrap;gap:4px;flex:0 0 auto;min-width:0}
+#toolbar-more-list>#render-options{align-items:center;justify-content:center;min-height:32px}
+.tool-group{display:flex;align-items:center;gap:2px;flex:0 0 auto}
+#toolbar-items>[data-toolbar-item]{flex:0 0 auto}
+.toolbar-popup{position:relative;flex:0 0 auto}
+.toolbar-popup>summary{list-style:none;user-select:none}
+.toolbar-popup>summary::-webkit-details-marker{display:none}
+.toolbar-popup[open]>summary{background:var(--gray-100);border-color:var(--gray-200)}
+.toolbar-popup>.toolbar-text-btn{width:auto;padding:0 10px;font-size:12px;white-space:nowrap}
+.toolbar-popup-panel{position:absolute;top:calc(100% + 4px);right:0;z-index:300;background:var(--bg);border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,.12);padding:8px}
+.format-panel{width:280px;max-height:70vh;overflow:auto}
+.format-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:38px;padding:4px;font-size:12px;color:var(--gray-600)}
+.format-row .tool-select{width:132px}
+.format-panel .fmt-sw{padding:6px 4px 0;border-top:1px solid var(--gray-100)}
+#toolbar-more-list{display:grid;grid-template-columns:repeat(4,auto);gap:5px;min-width:150px;max-width:calc(100vw - 24px)}
+#toolbar-more-list>[data-toolbar-item]{display:flex;align-items:center;justify-content:center;gap:2px;min-height:32px}
+#toolbar-more-list .tool-select{max-width:130px}
+#toolbar-more[hidden]{display:none}
 .tool-btn{background:none;border:1px solid transparent;width:32px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:var(--radius);font-size:14px;color:var(--gray-600)}
 .tool-btn:hover{background:var(--gray-100);border-color:var(--gray-200)}
 .tool-btn.active{background:var(--blue-50);color:var(--primary);border-color:var(--blue-200)}
@@ -41,11 +64,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .tool-color::-webkit-color-swatch{border:none;border-radius:3px}
 .tool-sep{width:1px;height:20px;background:var(--gray-200);margin:0 4px;flex-shrink:0}
 
-#view-tabs{display:flex;align-items:center;height:34px;padding:0 12px;gap:0;background:var(--gray-50);border-bottom:1px solid var(--border)}
+#view-tabs{display:flex;align-items:center;flex-wrap:wrap;height:auto;min-height:34px;padding:0;row-gap:4px;background:transparent;justify-self:start}
 .view-tab{background:none;border:none;padding:6px 16px;font-size:13px;color:var(--gray-500);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
 .view-tab:hover{color:var(--text)}
 .view-tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
-#view-tabs .spacer{flex:1}
 #sidebar-toggle{background:none;border:1px solid var(--gray-200);padding:3px 10px;font-size:12px;color:var(--gray-500);cursor:pointer;border-radius:var(--radius)}
 #sidebar-toggle:hover{background:var(--gray-100);color:var(--text)}
 #sidebar-toggle.active{background:var(--blue-50);color:var(--primary);border-color:var(--blue-200)}
@@ -354,12 +376,28 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #graph-view .graph-node:hover circle{filter:brightness(0.92)}
 
 /* ===== RESPONSIVE ===== */
+@media(max-width:1100px){
+  #menu-bar{display:flex;flex-wrap:wrap}
+  .brand-title{order:-1;width:100%;margin-bottom:4px}
+  #view-tabs{flex:1;min-width:0}
+  #menu-actions{margin-left:auto;flex:0 1 auto}
+}
 @media(max-width:768px){
   #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:100;box-shadow:-4px 0 20px rgba(0,0,0,.1)}
   #repo-panel{position:absolute;left:0;top:0;bottom:0;z-index:100;box-shadow:4px 0 20px rgba(0,0,0,.1)}
   .doc-page{padding:24px 20px;margin:10px}
   #outline-view{padding:10px 8px 60px}
-  #toolbar{padding:0 6px}
+  #toolbar{padding:0 6px;height:48px}
+  #toolbar-items{height:48px}
+  #menu-bar .menu-btn{min-height:44px}
+  #toolbar .tool-btn{min-width:44px;height:44px}
+  #toolbar .toolbar-text-btn{width:auto;min-width:44px}
+  #toolbar .tool-select,#toolbar .tool-color-btn,#toolbar .tool-color-arrow{height:44px}
+  #toolbar-more-list{display:flex;flex-wrap:wrap;width:280px;min-width:0;max-width:calc(100vw - 32px)}
+  #toolbar-more-list>[data-toolbar-item]{flex:0 0 auto}
+  .toolbar-popup-panel{max-height:60vh;overflow:auto}
+  #view-tabs button,#view-tools button,#toolbar-more-list button{min-height:44px}
+  #view-tools input,#toolbar-more-list input{height:44px}
 }
 
 /* ===== MARQUEE 矩形框选（跨节点选中，见 js/udd-marquee.js） ===== */

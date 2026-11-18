@@ -45,6 +45,10 @@
         "to": "udd-web/accounts-lib.js"
       },
       {
+        "from": "../space-lib.js",
+        "to": "udd-web/space-lib.js"
+      },
+      {
         "from": "../css",
         "to": "udd-web/css"
       },

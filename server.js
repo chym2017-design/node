@@ -26,6 +26,7 @@ const crypto = require('crypto');
 const path = require('path');
 const zlib = require('zlib');
 const accounts = require('./accounts-lib');
+const space = require('./space-lib');
 
 const APP_DIR = __dirname;
 const PORT = parseInt(process.env.UDD_PORT, 10) || parseInt(process.argv[2], 10) || 8080;
@@ -288,7 +289,22 @@ function resolveSandboxed(p, rootReal, enabled) {
     err.statusCode = 403;
     throw err;
   }
+  // 标签元数据与回收站属于系统内部文件，不允许普通文件 API 读写
+  const rel = path.relative(rootReal, target).split(path.sep).join('/');
+  if (space.isReservedRel(rel)) {
+    const err = new Error('该路径不可访问');
+    err.statusCode = 403;
+    throw err;
+  }
   return resolved;
+}
+
+// 文件整理操作与标签写入串行执行，避免并发改名/移动把元数据写乱
+let fsQueue = Promise.resolve();
+function withFsLock(fn) {
+  const run = fsQueue.then(fn, fn);
+  fsQueue = run.catch(() => {});
+  return run;
 }
 
 const MIME_TYPES = {
@@ -326,7 +342,7 @@ const STATIC_EXTS = new Set([
 
 // ---------------- 文件 API（桌面/单用户/多用户共用） ----------------
 
-function handleFileApi(req, res, pathname, params, ctx) {
+async function handleFileApi(req, res, pathname, params, ctx) {
   const { rootDir, rootReal, sandbox } = ctx;
 
   // === Get server root dir ===
@@ -366,14 +382,24 @@ function handleFileApi(req, res, pathname, params, ctx) {
     try {
       const resolved = resolveSandboxed(dir, rootReal, sandbox);
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
+      const meta = ctx.personal ? space.readMeta(rootDir) : null;
       const items = entries
         .filter(e => !e.name.startsWith('.'))
-        .map(e => ({
-          name: e.name,
-          type: e.isDirectory() ? 'dir' : 'file',
-          ext: e.isFile() ? path.extname(e.name).toLowerCase() : '',
-          path: path.join(resolved, e.name),
-        }))
+        .map(e => {
+          const abs = path.join(resolved, e.name);
+          let st = null;
+          try { st = fs.statSync(abs); } catch (err) { /* ignore */ }
+          const rel = space.relOf(rootDir, abs);
+          return {
+            name: e.name,
+            type: e.isDirectory() || (st && st.isDirectory()) ? 'dir' : 'file',
+            ext: e.isFile() ? path.extname(e.name).toLowerCase() : '',
+            path: abs,
+            mtime: st ? st.mtimeMs : 0,
+            size: st && st.isFile() ? st.size : 0,
+            tags: meta ? (meta.items[rel] || []) : [],
+          };
+        })
         .sort((a, b) => {
           if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
           return a.name.localeCompare(b.name, 'zh-CN');
@@ -397,6 +423,9 @@ function handleFileApi(req, res, pathname, params, ctx) {
       const resolved = resolveSandboxed(filePath, rootReal, sandbox);
       const stat = fs.statSync(resolved);
       if (!stat.isFile()) { sendError(res, 'Not a file', 400); return true; }
+      const disposition = params.get('download') === '1'
+        ? { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(path.basename(resolved)) }
+        : {};
 
       if (entryPath) {
         const zipBuf = fs.readFileSync(resolved);
@@ -450,6 +479,7 @@ function handleFileApi(req, res, pathname, params, ctx) {
           'Content-Range': `bytes ${start}-${end}/${total}`,
           'Accept-Ranges': 'bytes',
           'Content-Length': end - start + 1,
+          ...disposition,
         });
         fs.createReadStream(resolved, { start, end }).pipe(res);
       } else {
@@ -457,6 +487,7 @@ function handleFileApi(req, res, pathname, params, ctx) {
           'Content-Type': mime,
           'Content-Length': total,
           'Accept-Ranges': 'bytes',
+          ...disposition,
         });
         fs.createReadStream(resolved).pipe(res);
       }
@@ -537,6 +568,317 @@ function handleFileApi(req, res, pathname, params, ctx) {
     return true;
   }
 
+  // ================================================================
+  //  文件整理 / 标签 / 回收站（仅个人空间）
+  // ================================================================
+  const personalOnly = () => {
+    if (ctx.personal) return true;
+    sendError(res, '该功能仅在个人空间可用', 404);
+    return false;
+  };
+  const readJson = async () => {
+    try { return await readJsonBody(req); }
+    catch (e) { sendError(res, e.message, e.statusCode || 400); return null; }
+  };
+  const validEntryName = name => {
+    const s = String(name || '').trim();
+    return s && s !== '.' && s !== '..' && !s.startsWith('.')
+      && s.length <= 200 && !/[\\/:*?"<>|\x00-\x1f]/.test(s) ? s : null;
+  };
+  const failJson = e => sendError(res, e.message, e.statusCode || 500);
+
+  // --- 标签 ---
+  if (pathname === '/api/tags' && req.method === 'GET') {
+    if (!personalOnly()) return true;
+    const meta = space.readMeta(rootDir);
+    const counts = {};
+    for (const [rel, ids] of Object.entries(meta.items)) {
+      let ok = false;
+      try { resolveSandboxed(space.absOf(rootDir, rel), rootReal, true); ok = true; } catch (e) {}
+      if (!ok) continue;
+      for (const id of ids) counts[id] = (counts[id] || 0) + 1;
+    }
+    sendJSON(res, { tags: meta.tags, counts });
+    return true;
+  }
+
+  if (pathname === '/api/tags/create' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const name = String(body.name || '').trim();
+    const color = String(body.color || '#3b82f6');
+    if (!name || name.length > 24) { sendError(res, '标签名称需为 1–24 个字符', 400); return true; }
+    if (!/^#[0-9a-fA-F]{6}$/.test(color)) { sendError(res, '标签颜色格式不正确', 400); return true; }
+    try {
+      const tag = await withFsLock(() => {
+        const meta = space.readMeta(rootDir);
+        const dup = Object.values(meta.tags).some(t => String(t.name).toLowerCase() === name.toLowerCase());
+        if (dup) { const err = new Error('同名标签已存在'); err.statusCode = 409; throw err; }
+        const id = 't_' + crypto.randomBytes(4).toString('hex');
+        meta.tags[id] = { name, color, createdAt: new Date().toISOString() };
+        space.writeMeta(rootDir, meta);
+        return { id, name, color };
+      });
+      sendJSON(res, { ok: true, tag });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  if (pathname === '/api/tags/update' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const id = String(body.id || '');
+    try {
+      const tag = await withFsLock(() => {
+        const meta = space.readMeta(rootDir);
+        if (!meta.tags[id]) { const err = new Error('标签不存在'); err.statusCode = 404; throw err; }
+        const name = body.name != null ? String(body.name).trim() : meta.tags[id].name;
+        const color = body.color != null ? String(body.color) : meta.tags[id].color;
+        if (!name || name.length > 24) { const err = new Error('标签名称需为 1–24 个字符'); err.statusCode = 400; throw err; }
+        if (!/^#[0-9a-fA-F]{6}$/.test(color)) { const err = new Error('标签颜色格式不正确'); err.statusCode = 400; throw err; }
+        meta.tags[id] = { ...meta.tags[id], name, color };
+        space.writeMeta(rootDir, meta);
+        return { id, name, color };
+      });
+      sendJSON(res, { ok: true, tag });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  if (pathname === '/api/tags/delete' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const id = String(body.id || '');
+    try {
+      await withFsLock(() => {
+        const meta = space.readMeta(rootDir);
+        delete meta.tags[id];
+        for (const rel of Object.keys(meta.items)) {
+          const next = meta.items[rel].filter(t => t !== id);
+          if (next.length) meta.items[rel] = next;
+          else delete meta.items[rel];
+        }
+        space.writeMeta(rootDir, meta);
+      });
+      sendJSON(res, { ok: true });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  if (pathname === '/api/tags/assign' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const paths = Array.isArray(body.paths) ? body.paths.slice(0, 500) : [];
+    if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
+    try {
+      const rels = [];
+      for (const p of paths) {
+        const abs = resolveSandboxed(String(p), rootReal, true);
+        try { if (fs.statSync(abs)) rels.push(space.relOf(rootDir, abs)); } catch (e) {}
+      }
+      const result = await withFsLock(() => {
+        const meta = space.readMeta(rootDir);
+        const add = (Array.isArray(body.add) ? body.add : []).filter(id => meta.tags[id]);
+        const remove = (Array.isArray(body.remove) ? body.remove : []).filter(id => meta.tags[id]);
+        space.assignTags(meta, rels, add, remove);
+        space.writeMeta(rootDir, meta);
+        return { updated: rels.length };
+      });
+      sendJSON(res, { ok: true, ...result });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  if (pathname === '/api/tag-items' && req.method === 'GET') {
+    if (!personalOnly()) return true;
+    const tagId = String(params.get('tag') || '');
+    const meta = space.readMeta(rootDir);
+    if (!meta.tags[tagId]) { sendError(res, '标签不存在', 404); return true; }
+    const items = [];
+    for (const rel of Object.keys(meta.items)) {
+      if (!meta.items[rel].includes(tagId)) continue;
+      const abs = space.absOf(rootDir, rel);
+      let st = null;
+      try {
+        if (resolveSandboxed(abs, rootReal, true)) st = fs.statSync(abs);
+      } catch (e) { st = null; }
+      if (!st) continue;
+      items.push({
+        name: path.basename(abs),
+        type: st.isDirectory() ? 'dir' : 'file',
+        ext: st.isFile() ? path.extname(abs).toLowerCase() : '',
+        path: abs,
+        dir: space.relOf(rootDir, path.dirname(abs)),
+        mtime: st.mtimeMs,
+        size: st.isFile() ? st.size : 0,
+        tags: meta.items[rel],
+      });
+    }
+    items.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
+    sendJSON(res, { tag: { id: tagId, ...meta.tags[tagId] }, items });
+    return true;
+  }
+
+  // --- 重命名 ---
+  if (pathname === '/api/rename' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const name = validEntryName(body.name);
+    if (!name) { sendError(res, '名称不合法', 400); return true; }
+    try {
+      const src = resolveSandboxed(String(body.path || ''), rootReal, true);
+      const st = fs.statSync(src);
+      const dst = path.join(path.dirname(src), name);
+      if (dst === src) { sendJSON(res, { ok: true, path: src }); return true; }
+      resolveSandboxed(dst, rootReal, true);
+      await withFsLock(() => {
+        if (fs.existsSync(dst)) { const err = new Error('同名文件或文件夹已存在'); err.statusCode = 409; throw err; }
+        fs.renameSync(src, dst);
+        const meta = space.readMeta(rootDir);
+        space.remapTags(meta, space.relOf(rootDir, src), space.relOf(rootDir, dst));
+        space.writeMeta(rootDir, meta);
+      });
+      sendJSON(res, { ok: true, path: dst, type: st.isDirectory() ? 'dir' : 'file' });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  // --- 移动 ---
+  if (pathname === '/api/move' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const paths = Array.isArray(body.paths) ? body.paths.slice(0, 200) : [];
+    if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
+    try {
+      const destDir = resolveSandboxed(String(body.destDir || ''), rootReal, true);
+      if (!fs.statSync(destDir).isDirectory()) { sendError(res, '目标不是文件夹', 400); return true; }
+      const rels = space.filterTopLevel(paths.map(p => space.relOf(rootDir, resolveSandboxed(String(p), rootReal, true))));
+      const moves = [];
+      const seen = new Set();
+      for (const rel of rels) {
+        const src = space.absOf(rootDir, rel);
+        const st = fs.statSync(src);
+        if (st.isDirectory() && (destDir === src || destDir.startsWith(src + path.sep))) {
+          sendError(res, '不能把文件夹移动到它自己里面', 400);
+          return true;
+        }
+        const target = path.join(destDir, path.basename(src));
+        if (seen.has(target) || fs.existsSync(target)) {
+          sendError(res, '目标位置已存在同名文件: ' + path.basename(src), 409);
+          return true;
+        }
+        seen.add(target);
+        moves.push({ src, target, fromRel: rel, toRel: space.relOf(rootDir, target) });
+      }
+      await withFsLock(() => {
+        for (const m of moves) fs.renameSync(m.src, m.target);
+        const meta = space.readMeta(rootDir);
+        for (const m of moves) space.remapTags(meta, m.fromRel, m.toRel);
+        space.writeMeta(rootDir, meta);
+      });
+      sendJSON(res, { ok: true, paths: moves.map(m => m.target) });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  // --- 复制 ---
+  if (pathname === '/api/copy' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const paths = Array.isArray(body.paths) ? body.paths.slice(0, 200) : [];
+    if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
+    try {
+      const destDir = resolveSandboxed(String(body.destDir || ''), rootReal, true);
+      if (!fs.statSync(destDir).isDirectory()) { sendError(res, '目标不是文件夹', 400); return true; }
+      const rels = space.filterTopLevel(paths.map(p => space.relOf(rootDir, resolveSandboxed(String(p), rootReal, true))));
+      const copies = [];
+      for (const rel of rels) {
+        const src = space.absOf(rootDir, rel);
+        const st = fs.statSync(src);
+        if (st.isDirectory() && (destDir === src || destDir.startsWith(src + path.sep))) {
+          sendError(res, '不能把文件夹复制到它自己里面', 400);
+          return true;
+        }
+        const targetName = space.uniqueNameInDir(destDir, path.basename(src));
+        const target = path.join(destDir, targetName);
+        copies.push({ src, target, isDir: st.isDirectory(), fromRel: rel, toRel: space.relOf(rootDir, target) });
+      }
+      await withFsLock(() => {
+        for (const c of copies) {
+          if (c.isDir) fs.cpSync(c.src, c.target, { recursive: true, force: false, errorOnExist: true, preserveTimestamps: true });
+          else fs.copyFileSync(c.src, c.target);
+        }
+        const meta = space.readMeta(rootDir);
+        for (const c of copies) space.copyTags(meta, c.fromRel, c.toRel);
+        space.writeMeta(rootDir, meta);
+      });
+      sendJSON(res, { ok: true, paths: copies.map(c => c.target) });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  // --- 删除（移到回收站） ---
+  if (pathname === '/api/delete' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const paths = Array.isArray(body.paths) ? body.paths.slice(0, 200) : [];
+    if (!paths.length) { sendError(res, '未选择文件', 400); return true; }
+    try {
+      const rels = space.filterTopLevel(paths.map(p => space.relOf(rootDir, resolveSandboxed(String(p), rootReal, true))));
+      const trashed = await withFsLock(() => {
+        const meta = space.readMeta(rootDir);
+        const entries = space.trashPaths(rootDir, meta, rels);
+        space.writeMeta(rootDir, meta);
+        return entries.map(e => ({ id: e.id, name: e.name, originalRel: e.originalRel }));
+      });
+      sendJSON(res, { ok: true, trashed });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  // --- 回收站 ---
+  if (pathname === '/api/trash' && req.method === 'GET') {
+    if (!personalOnly()) return true;
+    const items = space.listTrash(rootDir).map(e => ({
+      id: e.id,
+      name: e.name,
+      originalRel: e.originalRel,
+      type: e.type,
+      deletedAt: e.deletedAt,
+    }));
+    sendJSON(res, { items, count: items.length });
+    return true;
+  }
+
+  if (pathname === '/api/trash/restore' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    const body = await readJson(); if (!body) return true;
+    const ids = Array.isArray(body.ids) ? body.ids : (body.id ? [body.id] : []);
+    if (!ids.length) { sendError(res, '未选择回收站项目', 400); return true; }
+    try {
+      const restored = await withFsLock(() => {
+        const meta = space.readMeta(rootDir);
+        const out = space.restoreTrash(rootDir, meta, ids.map(String));
+        space.writeMeta(rootDir, meta);
+        return out;
+      });
+      sendJSON(res, { ok: true, restored });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
+  if (pathname === '/api/trash/empty' && req.method === 'POST') {
+    if (!personalOnly()) return true;
+    try {
+      await withFsLock(() => space.emptyTrash(rootDir));
+      sendJSON(res, { ok: true });
+    } catch (e) { failJson(e); }
+    return true;
+  }
+
   return false;
 }
 
@@ -596,6 +938,16 @@ function serveStatic(req, res, pathname) {
 function serveLoginPage(res) {
   const p = path.join(APP_DIR, 'login.html');
   if (!fs.existsSync(p)) { res.writeHead(500); res.end('login.html missing'); return; }
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  fs.createReadStream(p).pipe(res);
+}
+
+function serveFilesPage(res) {
+  const p = path.join(APP_DIR, 'files.html');
+  if (!fs.existsSync(p)) { res.writeHead(500); res.end('files.html missing'); return; }
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -731,24 +1083,26 @@ async function handleMultiuser(req, res, pathname, params) {
 
   const session = getSession(req);
   const isApp = pathname === '/' || pathname === '/udd-app.html' || pathname === '/index.html';
+  const isFiles = pathname === '/files' || pathname === '/files.html';
 
   if (!session) {
     if (pathname.startsWith('/api/')) {
       return sendJSON(res, { error: '未登录', login: true }, 401);
     }
-    if (isApp) {
-      const next = encodeURIComponent(pathname === '/' ? '/' : pathname);
+    if (isApp || isFiles) {
+      const next = encodeURIComponent(isFiles ? '/files' : (pathname === '/' ? '/' : pathname));
       return redirect(res, '/login?next=' + next);
     }
     return serveStatic(req, res, pathname);
   }
 
+  if (isFiles) return serveFilesPage(res);
   if (isApp) return serveAppHtml(res, session.user);
 
   if (pathname.startsWith('/api/')) {
     const w = workspaceFor(session.user);
     const ctx = { rootDir: w.dir, rootReal: w.real, sandbox: true, personal: true };
-    if (handleFileApi(req, res, pathname, params, ctx)) return;
+    if (await handleFileApi(req, res, pathname, params, ctx)) return;
     return sendJSON(res, { error: 'Not found' }, 404);
   }
 
@@ -770,9 +1124,11 @@ async function handleLegacy(req, res, pathname, params) {
 
   if (pathname.startsWith('/api/')) {
     const ctx = { rootDir: LEGACY_ROOT_DIR, rootReal: LEGACY_ROOT_REAL, sandbox: SANDBOX, personal: false };
-    if (handleFileApi(req, res, pathname, params, ctx)) return;
+    if (await handleFileApi(req, res, pathname, params, ctx)) return;
     return sendJSON(res, { error: 'Not found' }, 404);
   }
+
+  if (pathname === '/files' || pathname === '/files.html') return redirect(res, '/');
 
   return serveStatic(req, res, pathname);
 }
